@@ -50,6 +50,8 @@ def reference_bthd(output, seq, heads):
     """Make a [S,H,128] view of the original optimized_attention return."""
     if not isinstance(output,torch.Tensor):
         raise TypeError("Original attention must return a Tensor")
+    if output.device.type!="cuda":
+        raise ValueError("Original attention output must remain CUDA-resident")
     if output.ndim == 3 and tuple(output.shape)==(1,seq,heads*128):
         return output.detach()[0].view(seq,heads,128)
     if output.ndim == 4 and tuple(output.shape)==(1,seq,heads,128):
@@ -296,15 +298,18 @@ def run_model_shadow(
                     )
                     del cached,ws,tails
                     gc.collect()
-                except torch.cuda.OutOfMemoryError:
-                    del cached,ws
+                except torch.cuda.OutOfMemoryError as exc:
+                    # A CUDA OOM during a live model block can leave partially
+                    # initialized graph/kernel state. DO NOT retry same model
+                    # invocation or accidentally count a partial group.
                     gc.collect()
-                    if group_size==1:
-                        raise
-                    group_size=max(1,group_size//2)
-                    case.setdefault("oom_retries",[]).append({
-                        "head_index":pos,"retry_group_size":group_size
-                    })
+                    case["oom_at_head"]=pos
+                    case["head_group_size_at_oom"]=group_size
+                    raise MemoryError(
+                        "Model-resident shadow OOM; original model attention "
+                        "output remains authoritative; lower --budget-mib "
+                        "or reduce --head-cases for a separate test"
+                    ) from exc
             case["quality"]={
                 "rel_l2_vs_original_attention":math.sqrt(total_err/max(total_ref,1e-30)),
                 "max_abs_vs_original_attention":largest_abs,
