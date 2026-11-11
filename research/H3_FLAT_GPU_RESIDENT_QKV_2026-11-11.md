@@ -83,18 +83,47 @@ git fetch htrc
 git switch --detach htrc/experiment/flat-gpu-resident-qkv-20261111
 $py = "C:\Users\Misya\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\.venv\Scripts\python.exe"
 & $py -m py_compile tools\benchmark_h3_flat_gpu_quant_isolation.py
-& $py -B tools\benchmark_h3_flat_gpu_quant_isolation.py --heads 4 --mode fast --tiles 16 --budget-mib 1024 --reserve-mib 256 --rounds 4 --warmups 1
-& $py -B tools\benchmark_h3_flat_gpu_quant_isolation.py --heads 56 --repeat-available-heads --mode fast --tiles 16 --budget-mib 1024 --reserve-mib 256 --rounds 4 --warmups 1
+& $py -B tools\benchmark_h3_flat_gpu_quant_isolation.py --head-cases 4,56 --repeat-available-heads --mode fast --tiles 16 --budget-mib 1024 --reserve-mib 256 --rounds 4 --warmups 1
 ```
 
-Output `flat_gpu_quant_isolation_ab_*.json` records quant exact
-gates, pairwise bit parity against pinned, independent full Flat
-oracles, ABBA samples, preparation/Tile+Merge/full-group medians
-and incremental PyTorch peak per group. 56-head run still repeats
-only four native heads.
+Since `3ef7f1c6e887c508a5921b0bdced42dfb5c14dd0`,
+`--head-cases 4,56` runs both cases with one user command, bundles
+the full results and a summary in **one persistent**
+`flat_gpu_quant_isolation_combined_*.json` file. Each child case
+executes separately to avoid GPU process contamination; its intermediate
+JSON lives only in a temporary folder and is removed. Original
+`--heads N` single-case mode remains supported. The 56-head case
+still repeats only four native heads.
 
-Validation status: exact authored Python source compiled successfully
-in isolated local CPU syntax check and its Git blob was verified
-identical (`961dfa0ce448741c546cbdda53695772ba52d756`).
-**GPU execution UNRUN**; no user-facing GPU claim about fused K8
-in isolation. No model or production changes.
+## Measured results: isolated GPU fused K8 vs PyTorch K8
+
+Reports received 2026-11-11, both running candidate exact SHA
+`4bb9d6bcb807235334f4c6a7bf459117dc820cdc`:
+`flat_gpu_quant_isolation_ab_20261111-215819.json` (4 distinct
+heads) and `flat_gpu_quant_isolation_ab_20261111-215827.json`
+(56 logical repeated heads). These prior two user-run reports
+were generated before the combined JSON output option existed;
+their numerical kernel path is unchanged by the aggregator.
+
+| GPU resident batched QKV | Torch K8 full median wall | Fused Triton K8 full median wall | Speedup | Peak incremental VRAM Torch -> Triton |
+|---|---:|---:|---:|---:|
+| 4 distinct heads (one group) | 3.22845 ms | 2.04115 ms | **1.58168x** | 262.552 -> 163.695 MiB |
+| 56 logical heads (sum five groups' medians) | 38.95105 ms | 21.39640 ms | **1.82045x** | 785.218 -> 491.485 MiB (max group H12) |
+
+Four captured raw heads 1/16/27/55; exact gate for each
+40,752 K rows: zero INT8 mismatches, zero scale abs difference.
+All grouped results exact to pinned reference and torch/triton
+pairwise; all four independent full-Flat oracles PASS.
+Both runs complete, with no errors or OOM.
+
+The isolated backend gain is primarily in preparation; Tile/Merge
+math and batching are identical between these two measured paths.
+No inference latency claim: 16 tiles/head = 1024 Q rows,
+not full Q; 56 logical head jobs reuse four captured native heads.
+All tests were on a GPU-resident capture without an H3 checkpoint,
+CUDA Graph, or denoise/video. Thus **research winner**, not
+production or global BEST switch.
+
+Next research priorities: full-query coverage, 56 genuinely
+unique head capture, and model-resident VRAM. The separate
+query-cache branch remains unmerged.
