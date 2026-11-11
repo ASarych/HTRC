@@ -1,0 +1,636 @@
+"""K/V-preparation workspace across the full Q axis, with one final JSON.
+
+Uncached control and cached candidate both use fused Triton K8 and the
+same grouped Tile/Merge. Only K/V staging + quant frequency changes.
+Pinned BEST and independent full Flat are numerical oracles only.
+"""
+from __future__ import annotations
+
+import argparse
+import gc
+import importlib.util
+import json
+import math
+from pathlib import Path
+import statistics
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+
+import torch
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "_htrc_kv_workspace_full", ROOT / "tools" / "benchmark_h3_flat_full_pipeline_batch.py"
+)
+full = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = full
+SPEC.loader.exec_module(full)
+MODES = ("fresh", "workspace")
+
+
+def allocate_query_workspace(cap, ids, tiles, cfg):
+    """Allocate storage that is wholly overwritten on every Q window."""
+    h=len(ids)
+    nb=int(cap["k_khd"].shape[0])//16
+    kx=min(int(cfg["exact_leaves"]),nb)
+    splits=int(cfg["splits"])
+    if min(h,tiles,nb,kx,splits)<1:
+        raise ValueError("Invalid workspace shape")
+    dev=cap["q_qhd"].device
+    def alloc(shape,dtype):
+        return torch.empty(shape,dtype=dtype,device=dev)
+    partial_shape=(h,tiles,splits,64)
+    return {
+        "G":alloc((h,tiles,nb,128),torch.int8),
+        "VB":alloc((h,tiles,nb,128),torch.bfloat16),
+        "LZ":alloc((h,tiles,nb),torch.float32),
+        "SG":alloc((h,tiles,nb),torch.float32),
+        "sel":alloc((h*tiles,nb),torch.float32),
+        "IDX":alloc((h,tiles,kx),torch.int32),
+        "EXCL":alloc((h*tiles,nb),torch.int8),
+        "_partials":{
+            "pm":alloc(partial_shape,torch.float32),
+            "pl":alloc(partial_shape,torch.float32),
+            "acc":alloc(partial_shape+(128,),torch.float32),
+        },
+        "_out":alloc((h,tiles,64,128),torch.float32),
+    }
+
+
+
+def paired_window(cap, ids, cache, tiles, mode, pinned, runner, best_tr, new_tr,
+                  rounds, warmups, tolerance, independent=False, query_workspace=None):
+    def evaluate(which, output=False):
+        return full.eval_one(
+            cap, ids, tiles, mode, pinned, runner, best_tr, new_tr,
+            "batched", keep_output=output, quant_mode="triton_gpu",
+            kv_cache=cache,
+            query_workspace=(query_workspace if which == "workspace" else None)
+        )
+
+    for _ in range(warmups):
+        for which in MODES:
+            item, out = evaluate(which)
+            del item, out
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    ref_record, ref = full.eval_one(
+        cap, ids, tiles, mode, pinned, runner,
+        best_tr, new_tr, "best", keep_output=True
+    )
+    records, outputs = {}, {}
+    for which in MODES:
+        records[which], outputs[which] = evaluate(which, output=True)
+    comparisons = {
+        "fresh_vs_pinned": full.compare_outputs(ref, outputs["fresh"], tolerance),
+        "workspace_vs_pinned": full.compare_outputs(ref, outputs["workspace"], tolerance),
+        "workspace_vs_fresh": full.compare_outputs(outputs["fresh"], outputs["workspace"], tolerance),
+    }
+    independent_checks = []
+    if independent and all(value["pass"] for value in comparisons.values()):
+        nfull = (int(cap["k_khd"].shape[0]) // 16) * 16
+        visited = set()
+        for i, raw in enumerate(ids):
+            if raw in visited:
+                continue
+            oracle = full.prior.full_pinned_output(
+                pinned, runner, cap, raw, nfull, tiles, mode
+            ).view(tiles, 64, 128)
+            independent_checks.append({
+                "raw_head": raw,
+                "fresh": full.compare_outputs(oracle, outputs["fresh"][i], tolerance),
+                "workspace": full.compare_outputs(oracle, outputs["workspace"][i], tolerance),
+            })
+            visited.add(raw)
+            del oracle
+    del ref, outputs
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    row = {
+        "parity": comparisons,
+        "independent_full_flat_oracles": independent_checks,
+        "preflight": {"pinned": ref_record, **records},
+        "timings": None,
+    }
+    if not all(value["pass"] for value in comparisons.values()) or any(
+        not check[which]["pass"] for check in independent_checks for which in MODES
+    ):
+        return row
+
+    samples = {which: [] for which in MODES}
+    for _ in range(rounds):
+        for which in ("fresh", "workspace", "workspace", "fresh"):
+            item, out = evaluate(which)
+            samples[which].append(item)
+            del item, out
+    keys = (
+        "preparation_wall_ms", "tail_tile_merge_wall_ms",
+        "full_group_wall_ms", "incremental_peak_mib", "peak_alloc_mib",
+    )
+    medians = {
+        which: {
+            key: statistics.median(item[key] for item in samples[which])
+            for key in keys
+        } for which in MODES
+    }
+    row["timings"] = {
+        "median_by_path": medians,
+        "speedup_fresh_over_workspace_steady":
+            medians["fresh"]["full_group_wall_ms"] /
+            medians["workspace"]["full_group_wall_ms"],
+        "sample_records": samples,
+    }
+    return row
+
+
+def single_case(args):
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA GPU required")
+    capture_path = Path(args.capture)
+    if not capture_path.is_file():
+        raise ValueError("Trusted QKV capture not found")
+    cap = torch.load(capture_path, map_location="cpu", mmap=True, weights_only=False)
+    required = ("raw_head_index", "q_qhd", "k_khd", "v_khd")
+    if not isinstance(cap, dict) or any(name not in cap for name in required):
+        raise ValueError("Capture missing Q/K/V or raw_head_index")
+    raw = cap["raw_head_index"]
+    available = [int(x) for x in (raw.tolist() if isinstance(raw, torch.Tensor) else raw)]
+    if not available or len(set(available)) != len(available):
+        raise ValueError("Invalid captured native head IDs")
+    count = args._case_heads
+    if count > len(available) and not args.repeat_available_heads:
+        raise ValueError("Use --repeat-available-heads for proxy counts")
+    selected = [available[i % len(available)] for i in range(count)]
+    proxy = count > len(available)
+    cap = dict(cap)
+    for key in ("q_qhd", "k_khd", "v_khd"):
+        cap[key] = cap[key].to("cuda").contiguous()
+    torch.cuda.synchronize()
+
+    q_rows = int(cap["q_qhd"].shape[0])
+    if q_rows < 1:
+        raise ValueError("Capture has no query rows")
+    tiles = args.tiles
+    window_rows = tiles * 64
+    windows = math.ceil(q_rows / window_rows)
+    keys = int(cap["k_khd"].shape[0]) // 16 * 16
+    capture_mib = sum(
+        cap[key].numel() * cap[key].element_size()
+        for key in ("q_qhd", "k_khd", "v_khd")
+    ) / full.stage.MIB
+    free, _ = torch.cuda.mem_get_info()
+    budget = min(free, int(args.budget_mib * full.stage.MIB))
+    plan = full.stage.plan_tile_head_batches(
+        count, free_bytes=budget, keys_per_head=keys,
+        tile_count=tiles, exact_leaves=256 if args.mode == "fast" else 512,
+        reserve_bytes=int(args.reserve_mib * full.stage.MIB),
+        fixed_temp_bytes=128 * full.stage.MIB, safety_factor=1.5,
+        max_heads_per_group=args.max_heads_per_group,
+    )
+    # The old planner has no resident KBF/VBF/K8/KS. Include it explicitly:
+    cache_per_head = keys * (128 * 2 + 128 * 2 + 128 + 4)
+    allowed = budget - int(args.reserve_mib * full.stage.MIB) - 128 * full.stage.MIB
+    # Workspace is resident while both A/B paths run. Reserve its
+    # per-head bytes ON TOP of the original conservative group planner.
+    nb=keys//16
+    kx=min(256 if args.mode=="fast" else 512,nb)
+    assumed_splits=16  # Upper bound for current experimental profiles.
+    workspace_per_head=(
+        tiles*nb*(128+256+4+4+4+1)
+        + tiles*kx*4
+        + tiles*assumed_splits*64*(4+4+128*4)
+        + tiles*64*128*4
+    )
+    with_cache = allowed // (
+        plan.estimated_bytes_per_head
+        + math.ceil(cache_per_head*1.25)
+        + math.ceil(workspace_per_head*1.25)
+    )
+    if with_cache < 1:
+        raise MemoryError("Not enough allowed GPU budget for even one cached head")
+    group_size = min(plan.heads_per_group, int(with_cache))
+    report = {
+        "experiment": "h3_flat_gpu_query_workspace_full_query_ab_v1",
+        "input_residency": "gpu",
+        "gpu": torch.cuda.get_device_name(),
+        "capture": str(capture_path),
+        "head_count": count,
+        "input_kind": "repeated_capture_proxy" if proxy else "distinct_native",
+        "native_head_ids": available,
+        "raw_head_indices": selected,
+        "query_valid_rows_per_head": q_rows,
+        "query_window_rows": window_rows,
+        "query_windows_per_head": windows,
+        "query_last_window_pad_rows": windows * window_rows - q_rows,
+        "capture_gpu_resident_mib": capture_mib,
+        "free_gpu_mib_before": free / full.stage.MIB,
+        "effective_gpu_budget_mib": budget / full.stage.MIB,
+        "planner": vars(plan),
+        "max_group_size_including_persistent_cache": group_size,
+        "mode": args.mode,
+        "tiles": tiles,
+        "source_commits": {
+            "pinned_best": full.base.BEST,
+            "candidate": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip(),
+        },
+        "quantization_exact_gates": [],
+        "groups": [],
+        "oom_group_retries": [],
+        "errors": [],
+        "completed": False,
+        "summary": None,
+        "notes": [
+            "Both paths use the SAME resident K/V cache, fused K8 and batched Tile/Merge.",
+            "Only query-dependent BUFFER STORAGE is reused; G/VB/LZ/SG/selection and attention are recalculated.",
+            "MU-dependent leaf stats, rowmax/topk and Tile/Merge still recalculate per window.",
+            "K/V cache is per single attention call and per head group; never across denoising steps.",
+            "Both paths consume same captured GPU QKV. Original BEST is numerical oracle, not timed.",
+            "First cache build is recorded separately: it may include Triton JIT and is NOT used as a per-call warmed build cost.",
+            "Common warmed KV build is charged to BOTH paths; workspace setup only to the workspace candidate.",
+            "Cold-start comparison retains measured first-build time, including potential compilation.",
+            "Uncached ABBA runs with the unused persistent cache still allocated, for symmetric interleaving.",
+            "Full-Q figures are sums of per-window group medians, not a whole-model step.",
+            "56 logical heads repeat four native captures; no model or video inference.",
+        ],
+    }
+    pos = 0
+    try:
+        with tempfile.TemporaryDirectory(prefix="htrc_kv_workspace_pinned_") as tmp:
+            pinned, runner = full.base.base_helper.original_modules(
+                full.base.BEST, Path(tmp)
+            )
+            candidate = full.base.base_helper.helpers.sw.load(
+                "_h3_kv_workspace_candidate", "h3/htrc_flat.py"
+            )
+            tr_best, tr_new = pinned._load_triton(), candidate._load_triton()
+            for raw_head in dict.fromkeys(selected):
+                gate = full.quant_key_exactness_gate(cap, raw_head, tr_new)
+                report["quantization_exact_gates"].append(gate)
+                if not gate["pass"]:
+                    raise RuntimeError("K8 byte/scale mismatch on raw head " + str(raw_head))
+
+            while pos < count:
+                stop = min(count, pos + group_size)
+                ids = selected[pos:stop]
+                cache = None
+                query_workspace = None
+                pending = []
+                try:
+                    # First build may include a new Triton specialization/JIT.
+                    # Record that startup cost separately; do not mistake it
+                    # for the repeated per-attention-call cache build.
+                    torch.cuda.synchronize()
+                    cold_live_before = torch.cuda.memory_allocated()
+                    torch.cuda.reset_peak_memory_stats()
+                    cold_start = time.perf_counter()
+                    cold_cache = full.stage.prepare_gpu_head_kv_cache(cap, ids, tr_new)
+                    torch.cuda.synchronize()
+                    cache_first_build_wall_ms = (
+                        time.perf_counter() - cold_start
+                    ) * 1000.0
+                    cache_first_build_peak_mib = (
+                        torch.cuda.max_memory_allocated() - cold_live_before
+                    ) / full.stage.MIB
+                    del cold_cache
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    # Rebuild after compilation. Use median of repeated
+                    # warm builds as the single per-call amortized cost.
+                    # Keep only the final complete cache for all Q windows.
+                    cache_build_samples_ms = []
+                    cache_build_peak_samples_mib = []
+                    for build_index in range(args.cache_build_rounds):
+                        torch.cuda.synchronize()
+                        live_before = torch.cuda.memory_allocated()
+                        torch.cuda.reset_peak_memory_stats()
+                        start = time.perf_counter()
+                        candidate_cache = full.stage.prepare_gpu_head_kv_cache(
+                            cap, ids, tr_new
+                        )
+                        torch.cuda.synchronize()
+                        cache_build_samples_ms.append(
+                            (time.perf_counter() - start) * 1000.0
+                        )
+                        cache_build_peak_samples_mib.append(
+                            (torch.cuda.max_memory_allocated() - live_before)
+                            / full.stage.MIB
+                        )
+                        if build_index + 1 == args.cache_build_rounds:
+                            cache = candidate_cache
+                        else:
+                            del candidate_cache
+                            gc.collect()
+                            torch.cuda.empty_cache()
+                    cache_build_wall_ms = statistics.median(cache_build_samples_ms)
+                    cache_build_peak_mib = max(cache_build_peak_samples_mib)
+                    cache_mib = full.stage.gpu_head_kv_cache_bytes(cache) / full.stage.MIB
+                    print(
+                        "KV_BUILD", pos, stop,
+                        "first_ms", f"{cache_first_build_wall_ms:.3f}",
+                        "warm_median_ms", f"{cache_build_wall_ms:.3f}",
+                        "resident_mib", f"{cache_mib:.3f}", flush=True
+                    )
+                    cfg=full.base.base_helper.configuration(pinned,runner,args.mode,tiles)
+                    torch.cuda.synchronize()
+                    alloc_before=torch.cuda.memory_allocated()
+                    torch.cuda.reset_peak_memory_stats()
+                    setup_start=time.perf_counter()
+                    query_workspace=allocate_query_workspace(cap,ids,tiles,cfg)
+                    torch.cuda.synchronize()
+                    workspace_setup_wall_ms=(time.perf_counter()-setup_start)*1000.0
+                    workspace_live_mib=full.stage.gpu_query_workspace_bytes(
+                        query_workspace
+                    )/full.stage.MIB
+                    workspace_build_peak_mib=(
+                        torch.cuda.max_memory_allocated()-alloc_before
+                    )/full.stage.MIB
+                    print("WORKSPACE",pos,stop,"setup_ms",
+                          f"{workspace_setup_wall_ms:.3f}",
+                          "resident_mib",f"{workspace_live_mib:.3f}",flush=True)
+                    checkpoints = {0, windows // 2, windows - 1}
+                    for wi in range(windows):
+                        qstart = wi * window_rows
+                        qstop = min(q_rows, qstart + window_rows)
+                        valid = qstop - qstart
+                        chunk = cap["q_qhd"][qstart:qstop]
+                        if valid < window_rows:
+                            padding = torch.zeros(
+                                (window_rows - valid, *chunk.shape[1:]),
+                                device=chunk.device, dtype=chunk.dtype
+                            )
+                            chunk = torch.cat((chunk, padding), dim=0)
+                        window_cap = dict(cap)
+                        window_cap["q_qhd"] = chunk
+                        row = paired_window(
+                            window_cap, ids, cache, tiles, args.mode,
+                            pinned, runner, tr_best, tr_new,
+                            args.rounds, args.warmups, args.tolerance,
+                            independent=wi in checkpoints,
+                            query_workspace=query_workspace,
+                        )
+                        row.update({
+                            "window_index": wi,
+                            "query_valid_range": [qstart, qstop],
+                            "query_padded_rows": window_rows - valid,
+                        })
+                        if row["timings"] is None:
+                            raise RuntimeError(
+                                f"Uncached/cached/pinned parity failed at window {wi}"
+                            )
+                        pending.append(row)
+                        print(
+                            "HEADS", pos, stop, "WINDOW", wi + 1, "/", windows,
+                            "fresh/workspace",
+                            f'{row["timings"]["speedup_fresh_over_workspace_steady"]:.4f}x',
+                            flush=True
+                        )
+                    cold = sum(
+                        x["timings"]["median_by_path"]["fresh"]["full_group_wall_ms"]
+                        for x in pending
+                    )
+                    hot = sum(
+                        x["timings"]["median_by_path"]["workspace"]["full_group_wall_ms"]
+                        for x in pending
+                    )
+                    group = {
+                        "head_job_range": [pos, stop],
+                        "raw_heads": ids,
+                        "kv_cache_build_wall_ms": cache_build_wall_ms,
+                        "query_workspace_setup_wall_ms": workspace_setup_wall_ms,
+                        "query_workspace_live_mib": workspace_live_mib,
+                        "query_workspace_build_peak_mib": workspace_build_peak_mib,
+                        "kv_cache_build_warm_samples_ms": cache_build_samples_ms,
+                        "kv_cache_first_build_wall_ms": cache_first_build_wall_ms,
+                        "kv_cache_live_mib": cache_mib,
+                        "kv_cache_build_incremental_peak_mib": cache_build_peak_mib,
+                        "kv_cache_first_build_incremental_peak_mib": cache_first_build_peak_mib,
+                        "full_query_window_results": pending,
+                        "sum_of_window_median_wall_ms": {
+                            "fresh": cold,
+                            "workspace_steady": hot,
+                            "fresh_including_common_kv_build": cold + cache_build_wall_ms,
+                            "workspace_including_kv_build_and_setup":
+                                hot + cache_build_wall_ms + workspace_setup_wall_ms,
+                            "steady_speedup": cold / hot,
+                            "amortized_speedup": (
+                                (cold + cache_build_wall_ms) /
+                                (hot + cache_build_wall_ms + workspace_setup_wall_ms)
+                            ),
+                            "cold_start_speedup": (
+                                (cold + cache_first_build_wall_ms) /
+                                (hot + cache_first_build_wall_ms + workspace_setup_wall_ms)
+                            ),
+                        },
+                        "max_peak_alloc_mib_including_resident_cache": {
+                            which: max(
+                                x["timings"]["median_by_path"][which]["peak_alloc_mib"]
+                                for x in pending
+                            ) for which in MODES
+                        },
+                    }
+                    report["groups"].append(group)
+                    pos = stop
+                    del group, cache, query_workspace, pending
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                except torch.cuda.OutOfMemoryError as exc:
+                    del cache, query_workspace, pending
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    if group_size == 1:
+                        raise
+                    before = group_size
+                    group_size = max(1, group_size // 2)
+                    report["oom_group_retries"].append({
+                        "job": pos, "from": before, "to": group_size,
+                        "error": str(exc)[:600],
+                    })
+                except Exception:
+                    del cache, query_workspace, pending
+                    raise
+    except Exception as exc:
+        report["errors"].append({
+            "job": pos, "exception": type(exc).__name__,
+            "error": str(exc)[:1400],
+            "traceback_tail": traceback.format_exc()[-3000:],
+        })
+    report["completed"] = (pos == count and not report["errors"])
+    if report["completed"]:
+        cold = sum(g["sum_of_window_median_wall_ms"]["fresh"]
+                   for g in report["groups"])
+        hot = sum(g["sum_of_window_median_wall_ms"]["workspace_steady"]
+                  for g in report["groups"])
+        cache_build = sum(g["kv_cache_build_wall_ms"] for g in report["groups"])
+        first_build = sum(g["kv_cache_first_build_wall_ms"] for g in report["groups"])
+        workspace_setup = sum(g["query_workspace_setup_wall_ms"] for g in report["groups"])
+        report["summary"] = {
+            "sum_window_group_medians_fresh_ms": cold,
+            "sum_window_group_medians_workspace_steady_ms": hot,
+            "sum_kv_cache_build_wall_ms": cache_build,
+            "sum_kv_cache_first_build_wall_ms": first_build,
+            "sum_query_workspace_setup_wall_ms": workspace_setup,
+            "fresh_with_common_kv_build_ms": cold + cache_build,
+            "workspace_with_common_kv_build_and_setup_ms":
+                hot + cache_build + workspace_setup,
+            "speedup_steady": cold / hot,
+            "speedup_amortized_with_build":
+                (cold + cache_build) / (hot + cache_build + workspace_setup),
+            "speedup_cold_start_including_first_build":
+                (cold + first_build) / (hot + first_build + workspace_setup),
+            "max_query_workspace_live_mib": max(
+                g["query_workspace_live_mib"] for g in report["groups"]),
+            "max_kv_cache_live_mib": max(g["kv_cache_live_mib"]
+                                         for g in report["groups"]),
+            "max_peak_alloc_mib_with_cache": {
+                which: max(g["max_peak_alloc_mib_including_resident_cache"][which]
+                           for g in report["groups"]) for which in MODES
+            },
+        }
+    return report
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--capture",
+        default=r"D:\ComfyOutput\H3\math_probe\20260926-201504\attention_block_00_call_01.pt")
+    ap.add_argument("--head-cases", default="4,56")
+    ap.add_argument("--repeat-available-heads", action="store_true")
+    ap.add_argument("--mode", choices=("fast", "balanced"), default="fast")
+    ap.add_argument("--tiles", type=int, default=16)
+    ap.add_argument("--rounds", type=int, default=2)
+    ap.add_argument("--warmups", type=int, default=1)
+    ap.add_argument("--cache-build-rounds", type=int, default=3,
+                    help="Warmed cache-build samples per group, after separately measuring the first build")
+    ap.add_argument("--tolerance", type=float, default=1e-4)
+    ap.add_argument("--budget-mib", type=float, default=1024)
+    ap.add_argument("--reserve-mib", type=float, default=256)
+    ap.add_argument("--max-heads-per-group", type=int, default=None)
+    ap.add_argument("--out", default=r"D:\ComfyOutput\H3\math_probe")
+    ap.add_argument("--_case-heads", type=int, default=None, help=argparse.SUPPRESS)
+    args = ap.parse_args()
+    if min(args.tiles, args.rounds, args.warmups, args.cache_build_rounds) < 1:
+        ap.error("tiles, rounds and warmups must be positive")
+    if (not math.isfinite(args.budget_mib) or args.budget_mib <= 0
+        or not math.isfinite(args.reserve_mib) or args.reserve_mib < 0):
+        ap.error("invalid GPU budget/reserve")
+    if args.max_heads_per_group is not None and args.max_heads_per_group < 1:
+        ap.error("max-heads-per-group must be positive")
+    if args._case_heads is not None:
+        if args._case_heads < 1:
+            ap.error("case heads must be positive")
+        report = single_case(args)
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        path = out / f"kv_workspace_case_{time.strftime('%Y%m%d-%H%M%S')}.json"
+        path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print("CASE_REPORT:", path, flush=True)
+        if not report["completed"]:
+            raise SystemExit("FAIL: full-Q KV workspace child case (see JSON)")
+        return
+    tokens = [x.strip() for x in args.head_cases.split(",")]
+    if not tokens or any(not x.isdecimal() or int(x) < 1 for x in tokens):
+        ap.error("--head-cases must be comma-separated positive integers")
+    heads = [int(x) for x in tokens]
+    if len(set(heads)) != len(heads):
+        ap.error("--head-cases must contain unique integers")
+    combined = {
+        "experiment": "h3_flat_gpu_query_workspace_combined_v1",
+        "head_cases": heads, "input_residency": "gpu",
+        "source_commits": {
+            "pinned_best": full.base.BEST,
+            "candidate": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip(),
+        },
+        "cases": [], "summary": [], "errors": [], "completed": False,
+        "notes": [
+            "ONE persistent JSON; intermediate case JSONs are temporary.",
+            "Each head count runs in a separate process to isolate CUDA residency.",
+            "Both A/B paths use the same cached K/V; workspace candidate reuses query buffers only.",
+            "First GPU cache build includes cold-start costs; warmed-build median is used for steady repeated-call amortization.",
+            "Both cold-start and warmed-cache-build-inclusive speeds are retained.",
+        ],
+    }
+    with tempfile.TemporaryDirectory(prefix="htrc_kv_workspace_cases_") as tmp:
+        for count in heads:
+            case_out = Path(tmp) / str(count)
+            case_out.mkdir()
+            cmd = [
+                sys.executable, "-B", str(Path(__file__).resolve()),
+                "--_case-heads", str(count),
+                "--capture", args.capture, "--mode", args.mode,
+                "--tiles", str(args.tiles), "--rounds", str(args.rounds),
+                "--warmups", str(args.warmups),
+                "--cache-build-rounds", str(args.cache_build_rounds),
+                "--tolerance", str(args.tolerance),
+                "--budget-mib", str(args.budget_mib),
+                "--reserve-mib", str(args.reserve_mib),
+                "--out", str(case_out),
+            ]
+            if args.repeat_available_heads:
+                cmd.append("--repeat-available-heads")
+            if args.max_heads_per_group is not None:
+                cmd.extend(["--max-heads-per-group", str(args.max_heads_per_group)])
+            print("HEAD_CASE:", count, flush=True)
+            tail = []
+            with subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1, errors="replace"
+            ) as process:
+                if process.stdout is None:
+                    raise RuntimeError("Child output stream unavailable")
+                for raw_line in process.stdout:
+                    line = raw_line.rstrip("\r\n")
+                    if not line.startswith("CASE_REPORT:"):
+                        print(line, flush=True)
+                    tail.append(line)
+                    if len(tail) > 25:
+                        tail.pop(0)
+                returncode = process.wait()
+            print("HEAD_CASE_DONE:", count, "exit", returncode, flush=True)
+            files = list(case_out.glob("kv_workspace_case_*.json"))
+            if len(files) != 1:
+                combined["errors"].append({
+                    "head_count": count, "returncode": returncode,
+                    "error": "Expected one temporary case report",
+                    "child_output_tail": tail[-12:],
+                })
+                break
+            case = json.loads(files[0].read_text(encoding="utf-8"))
+            combined["cases"].append(case)
+            if case.get("summary"):
+                combined["summary"].append({
+                    "head_count": count,
+                    "input_kind": case["input_kind"],
+                    **case["summary"],
+                })
+            if returncode or not case.get("completed"):
+                combined["errors"].append({
+                    "head_count": count, "returncode": returncode,
+                    "error": "Case failed; inspect embedded case errors",
+                    "child_output_tail": tail[-12:],
+                })
+                break
+    combined["completed"] = (
+        len(combined["cases"]) == len(heads)
+        and not combined["errors"]
+        and all(case.get("completed") for case in combined["cases"])
+    )
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"flat_gpu_query_workspace_ab_{time.strftime('%Y%m%d-%H%M%S')}.json"
+    path.write_text(json.dumps(combined, indent=2), encoding="utf-8")
+    print("REPORT:", path, flush=True)
+    if not combined["completed"]:
+        raise SystemExit("FAIL: full-Q KV workspace A/B (see one JSON)")
+
+
+if __name__ == "__main__":
+    main()
