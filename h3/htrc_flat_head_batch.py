@@ -414,7 +414,7 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
             or K.shape!=kbf.shape or KS.shape!=(h,nkeys)
             or kbf.dtype!=torch.bfloat16 or vbf.dtype!=torch.bfloat16
             or K.dtype!=torch.int8 or KS.dtype!=torch.float32
-            or any(not t.is_contiguous() or t.device!=dev
+            or any(not t.is_contiguous() or t.device!=q_cap.device
                    for t in (kbf,vbf,K,KS))):
             raise ValueError("KV cache invalid tensor shape/dtype/device/layout")
         mark_stage("kv_cache_hit")
