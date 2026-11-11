@@ -189,3 +189,47 @@ oracles, head planner, output format and 4+56 one-JSON workflow
 are unchanged. This accounting fix is **GPU UNRUN**.
 Do not claim an amortized positive speedup until new report
 confirms it; do not promote global BEST based on this proxy.
+
+## Confirmed warm-cache result (user-run, 2026-11-11 23:08:58)
+
+Report: `flat_gpu_kv_reuse_ab_20261111-230858.json`.
+Exact candidate SHA: `9519166116c8c2bf3027cebe73ba7ded9c3a6acb`.
+Pinned reference: `e47cc7a310936547ab6c7d97bd07526eb6a135fe`.
+NVIDIA RTX 5070 Ti 16 GiB; saved H3 QKV capture; 40,759
+valid queries/head, 40 windows of 1024 with 201 padded Q rows
+in the final window; 4 actual native heads 1/16/27/55 or
+56 **logical** heads in 8 groups of 7 by repetition.
+
+All cases `completed: true`, `errors: []`, 0 OOM retries.
+360/360 window-group combinations have bit-exact triple
+comparisons (1080/1080 pass, rel-L2=0, max abs=0).
+108 independent head-window native Flat oracle rows (first/middle/
+last per group) pass for both cached and uncached.
+8/8 independent native K8 byte+scale gates pass, 0 differences.
+
+| Case | Uncached fused K8 full-Q sum medians | KV reuse steady | Warm cache build | Reuse incl. warm build | Real repeated-call speedup | Cold first-build penalty | Cold-start speedup |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 4 distinct heads | 96.92545 ms | 72.27435 ms | 4.17830 ms | 76.45265 ms | **1.26778x** | 589.57320 ms | 0.14645x |
+| 56 logical repeated heads | 1331.86450 ms | 816.42735 ms | 56.16850 ms (8 groups) | 872.59585 ms | **1.52632x** | 648.14060 ms across 8 groups | 0.90939x |
+
+Cache residency 100.114 MiB/H4, 175.200 MiB/H7. Measured
+max PyTorch allocated (with cache already resident in **both**
+paired paths): uncached vs cached 385.61 vs 295.25 MiB H4;
+584.16 vs 425.79 MiB H7. Do NOT interpret these as
+production VRAM without the actual model weights/graph pools.
+GPU input capture occupies another 119.411 MiB.
+
+Only first build of each new head-count process is anomalous:
+~589.6 ms H4 and ~598.3 ms H7; latter seven H7 first builds
+are ~7.0–7.3 ms. **Compiler/JIT contribution is likely but not
+independently proven**. Warm construction medians were measured
+in the same run. Retain both cold and warmed costs; do not
+attribute all first-call overhead to quantizing K/V.
+
+**Decision:** positive warm repeated-call K/V prep reuse result
+with correct pinned-Flat parity, no production promotion.
+The next isolated experiment should reuse the *allocations* of
+query-dependent stats, selection, exact output and partials
+across Q windows but recompute their contents every time.
+Compare KV-cached without workspaces vs same KV-cached with
+workspaces, then move to real model-resident H3 gating.
