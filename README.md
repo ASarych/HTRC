@@ -26,6 +26,20 @@ See **[full flat HTRC results](docs/evidence/FLAT_HTRC_END_TO_END_2026-10-02.md)
 
 **Do not conflate these with hierarchical HTRC.** Its recorded early full-head, 243-frame block-0 prototype was ~170 s **for a single block**, not a finished denoise step. Later research optimized per-head streaming on saved captures but did not establish a matching full-video run for the same hierarchical implementation. The tree-free flat variant uses a different selection and value approximation; its speed and quality measurements must stay separate. The flat result is the fastest *documented full-video HTRC-family* run here, not a claim that it outperforms all other attention methods.
 
+## 2026-11-11 — experimental batched Flat HTRC (not production)
+
+The research branch **experiment/flat-head-batching-quant-20261111**
+builds on **experiment/flat-tail-merge-flatq-20261111** and imports
+arbitrary-head Flat Tile/Merge and fused K8 experiments from ComfyNodes.
+The earlier APL_H3_FLAT_Q and RT evidence are preserved. See the
+[migration and benchmarking manifest](docs/evidence/FLAT_BATCH_MIGRATION_2026-11-11.md).
+
+The 56-logical-head Tile+Merge A/B was bit-exact and fast on that
+stage, but the full input-to-output batched preparation was
+**14.71% slower**, with higher peak allocated memory. The latest
+fused K8 candidate remains **GPU UNRUN**. This branch is not
+a production switch, nor native 56-distinct-head model validation.
+
 ## What is mathematically established
 
 For finite attention, at scaled query s define Z(s)=Σ exp(s·k), L=log Z, conditional value u=Σp·v. Then
