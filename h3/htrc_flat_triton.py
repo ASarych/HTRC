@@ -86,13 +86,14 @@ def _stats_kernel(MU, K, V, G, LZ, VB, SG, SV, tc, nb, scale,
 
 
 @triton.jit
-def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV, KS, nb, kx, lps, eps, nt, scale,
+def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV, KS, DQ8C, SDQC, Q8C, SQC, nb, kx, lps, eps, nt, scale,
                  T: tl.constexpr, D: tl.constexpr, BN: tl.constexpr, BN_NEAR: tl.constexpr, LEAF: tl.constexpr,
                  PREC: tl.constexpr, DOT: tl.constexpr, GR: tl.constexpr = 1, FP8: tl.constexpr = 0,
                  TAIL: tl.constexpr = 0, RB: tl.constexpr = 1, I8: tl.constexpr = 0,
                  PASS: tl.constexpr = 0, LATE_NEAR_Q: tl.constexpr = 0,
                  FAR_PREFETCH_LZ: tl.constexpr = 0,
-                 FAR_PV_ACC: tl.constexpr = 0, NEAR_PV_ACC: tl.constexpr = 0):
+                 FAR_PV_ACC: tl.constexpr = 0, NEAR_PV_ACC: tl.constexpr = 0,
+                 CACHE_DQ8: tl.constexpr = 0, CACHE_Q8: tl.constexpr = 0):
     """Split-K over leaves: program (tile t, split sp) covers far leaves [sp*lps, +lps) and
     exact tokens [sp*eps, +eps); writes partial (max, sum, acc) merged on the host."""
     t = tl.program_id(0)
@@ -112,14 +113,23 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
         if FP8:
             dqh = dq.to(tl.float16)       # e4m3 -> fp16 is exact and a single packed cvt (-> bf16 went via fp32)
         if I8:
-            # int8 x int8 -> int32 tensor-core dots for the QK parts; PV stays bf16
-            sdq = tl.maximum(tl.max(tl.abs(dq), axis=1) * (1.0 / 127.0), 1.0e-20)
-            x = dq / sdq[:, None]
-            dq8 = tl.where(x >= 0, x + 0.5, x - 0.5).to(tl.int8)
+            # Cache query quantization from rowmax selection, once per
+            # tile rather than once per split. Default path stays intact.
+            if CACHE_DQ8:
+                sdq = tl.load(SDQC + t * T + r)
+                dq8 = tl.load(DQ8C + (t * T + r)[:, None] * D + d[None, :]).to(tl.int8)
+            else:
+                sdq = tl.maximum(tl.max(tl.abs(dq), axis=1) * (1.0 / 127.0), 1.0e-20)
+                x = dq / sdq[:, None]
+                dq8 = tl.where(x >= 0, x + 0.5, x - 0.5).to(tl.int8)
             if not LATE_NEAR_Q:
-                sq = tl.maximum(tl.max(tl.abs(q), axis=1) * (1.0 / 127.0), 1.0e-20)
-                x = q / sq[:, None]
-                q8 = tl.where(x >= 0, x + 0.5, x - 0.5).to(tl.int8)
+                if CACHE_Q8:
+                    sq = tl.load(SQC + t * T + r)
+                    q8 = tl.load(Q8C + (t * T + r)[:, None] * D + d[None, :]).to(tl.int8)
+                else:
+                    sq = tl.maximum(tl.max(tl.abs(q), axis=1) * (1.0 / 127.0), 1.0e-20)
+                    x = q / sq[:, None]
+                    q8 = tl.where(x >= 0, x + 0.5, x - 0.5).to(tl.int8)
     if PASS == 2:
         # Resume far-field online softmax without repeating its QK/PV loops.
         prior = t * ns + sp
@@ -265,9 +275,10 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
 
 
 @triton.jit
-def _rowmax_kernel(Q, MU, G, LZ, SEL, SG, nb, lps,
+def _rowmax_kernel(Q, MU, G, LZ, SEL, SG, DQ8C, SDQC, Q8C, SQC, nb, lps,
                    T: tl.constexpr, TS: tl.constexpr, STRIDE: tl.constexpr, D: tl.constexpr,
-                   BN: tl.constexpr, PREC: tl.constexpr, DOT: tl.constexpr, FP8: tl.constexpr = 0, I8: tl.constexpr = 0):
+                   BN: tl.constexpr, PREC: tl.constexpr, DOT: tl.constexpr, FP8: tl.constexpr = 0, I8: tl.constexpr = 0,
+                   WRITE_DQ8: tl.constexpr = 0, WRITE_Q8: tl.constexpr = 0):
     """SEL[t, l] = lz + max over TS rows (every STRIDE-th) of (q - mu).g_l; split over leaves."""
     t = tl.program_id(0)
     sp = tl.program_id(1)
@@ -284,6 +295,17 @@ def _rowmax_kernel(Q, MU, G, LZ, SEL, SG, nb, lps,
             sdq = tl.maximum(tl.max(tl.abs(dq), axis=1) * (1.0 / 127.0), 1.0e-20)
             x = dq / sdq[:, None]
             dq8 = tl.where(x >= 0, x + 0.5, x - 0.5).to(tl.int8)
+            if WRITE_DQ8 and sp == 0:
+                # Each tile is split into several rowmax CTAs. Only the
+                # first CTA writes the duplicate-free per-row cache.
+                tl.store(DQ8C + (t * T + r)[:, None] * D + d[None, :], dq8)
+                tl.store(SDQC + t * T + r, sdq)
+            if WRITE_Q8 and sp == 0:
+                sq = tl.maximum(tl.max(tl.abs(q), axis=1) * (1.0 / 127.0), 1.0e-20)
+                qx = q / sq[:, None]
+                q8 = tl.where(qx >= 0, qx + 0.5, qx - 0.5).to(tl.int8)
+                tl.store(Q8C + (t * T + r)[:, None] * D + d[None, :], q8)
+                tl.store(SQC + t * T + r, sq)
     lo = sp * lps
     hi = tl.minimum(nb, lo + lps)
     for n0 in range(lo, hi, BN):
@@ -418,16 +440,28 @@ def _buf(ws, name, shape, dtype, device):
     return b[:shape[0]]
 
 
-def rowmax_select(q_c, mu_c, g, lz, prec="tf32", bn=32, warps=4, splits=8, stride=1, dot=0, ws=None, sg=None):
+def rowmax_select(q_c, mu_c, g, lz, prec="tf32", bn=32, warps=4, splits=8, stride=1, dot=0, ws=None, sg=None,
+                  dq8_cache=None, sdq_cache=None, q8_cache=None, sq_cache=None):
     _dll()
     tc, tile, d = (int(x) for x in q_c.shape)
     nb = int(lz.shape[1])
     sel = _buf(ws, "sel", (tc, nb), torch.float32, q_c.device)
+    if (dq8_cache is None) != (sdq_cache is None) or (q8_cache is None) != (sq_cache is None):
+        raise ValueError("query cache must include value and corresponding FP32 row scales")
+    if q8_cache is not None and dq8_cache is None:
+        raise ValueError("near-query cache requires far-query cache")
+    if dq8_cache is not None and (stride != 1 or g.dtype != torch.int8 or dot != 1):
+        raise ValueError("query cache requires INT8 dot and full rowmax stride")
     lps = _split(nb, splits, bn)
     _rowmax_kernel[(tc, triton.cdiv(nb, lps))](
-        q_c.contiguous(), mu_c.contiguous(), g, lz, sel, sg if sg is not None else lz, nb, lps,
+        q_c.contiguous(), mu_c.contiguous(), g, lz, sel, sg if sg is not None else lz,
+        dq8_cache if dq8_cache is not None else sel,
+        sdq_cache if sdq_cache is not None else sel,
+        q8_cache if q8_cache is not None else sel,
+        sq_cache if sq_cache is not None else sel, nb, lps,
         T=tile, TS=tile // stride, STRIDE=stride, D=d, BN=bn, PREC=prec, DOT=dot,
         FP8=1 if (sg is not None and g.dtype != torch.int8) else 0, I8=1 if g.dtype == torch.int8 else 0,
+        WRITE_DQ8=int(dq8_cache is not None), WRITE_Q8=int(q8_cache is not None),
         num_warps=warps, num_stages=1)
     return sel
 
@@ -455,7 +489,7 @@ def tile_attention(q_c, mu_c, g, lz, vb, excl, idx, k_ex, v_ex, scale, leaf=16, 
                    bn=32, warps=8, stages=1, splits=8, dot=0, tail=None, ws=None, group=1, sg=None, sv=None, out=None, rb=1, ks=None,
                    passes="fused", late_near_q=False, near_bn=None, resource_sink=None,
                    tail_in_merge=False, tail_merge_rows=None, far_prefetch_lz=False,
-                   pv_dot_acc="none"):
+                   pv_dot_acc="none", dq8_cache=None, sdq_cache=None, q8_cache=None, sq_cache=None):
     """q_c [tc,T,D], mu_c [tc,D], g/vb [tc,nb,D], lz [tc,nb], excl int8 [tc,nb], idx [tc,K];
     k_ex/v_ex: key/value tokens for the near field (fp32, or bf16 when dot=1).
     tail: optional (tk [n,D], tv [n,D]) fp32 keys beyond the last full leaf, attended exactly by
@@ -472,6 +506,14 @@ def tile_attention(q_c, mu_c, g, lz, vb, excl, idx, k_ex, v_ex, scale, leaf=16, 
     _dll()
     tc, tile, d = (int(x) for x in q_c.shape)       # tc tiles; state arrays hold tc // group rows
     nb = int(lz.shape[1])
+    if (dq8_cache is None) != (sdq_cache is None) or (q8_cache is None) != (sq_cache is None):
+        raise ValueError("query cache needs paired values/scales")
+    if q8_cache is not None and dq8_cache is None:
+        raise ValueError("near cache requires far cache")
+    if dq8_cache is not None and (g.dtype != torch.int8 or dot != 1
+                                   or int(group) != 1 or int(rb) != 1 or passes != "fused"
+                                   or bool(late_near_q)):
+        raise ValueError("query cache requires INT8 fused group1/rb1 and eager Q near preparation")
     kx = int(idx.shape[1]) if idx is not None else 0
     if idx is None:
         idx = torch.zeros((int(lz.shape[0]), 1), device=q_c.device, dtype=torch.int32)
@@ -497,21 +539,33 @@ def tile_attention(q_c, mu_c, g, lz, vb, excl, idx, k_ex, v_ex, scale, leaf=16, 
                                idx.to(torch.int32).contiguous(), k_ex, v_ex, pm, pl, pacc,
                                sg if sg is not None else lz, sv if sv is not None else lz,
                                tk if use_tail_kernel else lz, tv if use_tail_kernel else lz,
-                               ks if ks is not None else lz, nb, kx, lps, eps, ntail if use_tail_kernel else 0,
+                               ks if ks is not None else lz,
+                               dq8_cache if dq8_cache is not None else lz,
+                               sdq_cache if sdq_cache is not None else lz,
+                               q8_cache if q8_cache is not None else lz,
+                               sq_cache if sq_cache is not None else lz,
+                               nb, kx, lps, eps, ntail if use_tail_kernel else 0,
                                float(scale), T=tile, D=d, BN=bn, BN_NEAR=near_bn, LEAF=leaf, PREC=prec, DOT=dot, GR=int(group),
                                FP8=1 if (sg is not None and g.dtype != torch.int8) else 0, TAIL=1 if (use_tail_kernel and not merge_tail) else 0, RB=int(rb),
                                I8=1 if g.dtype == torch.int8 else 0, FAR_PREFETCH_LZ=int(far_prefetch_lz),
-                               FAR_PV_ACC=far_pv_acc, NEAR_PV_ACC=near_pv_acc, PASS=1, LATE_NEAR_Q=int(late_near_q),
+                               FAR_PV_ACC=far_pv_acc, NEAR_PV_ACC=near_pv_acc,
+                               CACHE_DQ8=int(dq8_cache is not None), CACHE_Q8=int(q8_cache is not None), PASS=1, LATE_NEAR_Q=int(late_near_q),
                                num_warps=warps, num_stages=stages)
     compiled_tile = _tile_kernel[(tc, ns, int(rb))](q_c.contiguous(), mu_c.contiguous(), g, lz, vb, excl,
                            idx.to(torch.int32).contiguous(), k_ex, v_ex, pm, pl, pacc,
                            sg if sg is not None else lz, sv if sv is not None else lz,
                            tk if use_tail_kernel else lz, tv if use_tail_kernel else lz,
-                           ks if ks is not None else lz, nb, kx, lps, eps, ntail if use_tail_kernel else 0,
+                           ks if ks is not None else lz,
+                               dq8_cache if dq8_cache is not None else lz,
+                               sdq_cache if sdq_cache is not None else lz,
+                               q8_cache if q8_cache is not None else lz,
+                               sq_cache if sq_cache is not None else lz,
+                               nb, kx, lps, eps, ntail if use_tail_kernel else 0,
                            float(scale), T=tile, D=d, BN=bn, BN_NEAR=near_bn, LEAF=leaf, PREC=prec, DOT=dot, GR=int(group),
                            FP8=1 if (sg is not None and g.dtype != torch.int8) else 0, TAIL=1 if (use_tail_kernel and not merge_tail) else 0, RB=int(rb),
                            I8=1 if g.dtype == torch.int8 else 0, FAR_PREFETCH_LZ=int(far_prefetch_lz),
-                               FAR_PV_ACC=far_pv_acc, NEAR_PV_ACC=near_pv_acc, PASS=(2 if passes == "split" else 0), LATE_NEAR_Q=int(late_near_q),
+                               FAR_PV_ACC=far_pv_acc, NEAR_PV_ACC=near_pv_acc,
+                               CACHE_DQ8=int(dq8_cache is not None), CACHE_Q8=int(q8_cache is not None), PASS=(2 if passes == "split" else 0), LATE_NEAR_Q=int(late_near_q),
                            num_warps=warps, num_stages=stages)
     if resource_sink is not None:
         # Compile-specific metadata from the returned Triton kernel object.

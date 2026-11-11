@@ -231,6 +231,16 @@ def _flat_triton(q, k, v, tile, exact_leaves, order, tile_chunk, leaf, scale, pr
         nt_pad = nt
     sink_leaves = max(0, min(int(sink_leaves), nb))     # leading leaves (conditioning KV) kept exact
     kx_n = min(int(exact_leaves) + sink_leaves, nb)
+    query_cache = str(kern.get("tile_select_query_cache", "none"))
+    if query_cache not in ("none", "dq", "both"):
+        raise ValueError("tile_select_query_cache must be none, dq or both")
+    if query_cache != "none" and (store != torch.int8 or not use_bf
+                                    or select != "max" or int(sel_stride) != 1
+                                    or grp != 1 or kx_n == 0
+                                    or int(kern.get("tile_rb", 1)) != 1
+                                    or kern.get("tile_passes", "fused") != "fused"
+                                    or bool(kern.get("tile_late_near_q", False))):
+        raise ValueError("INT8 select query cache requires full-row, fused, group1/rb1 dot")
     out = tri._buf(ws, "out", (nt_pad, tile, d), torch.float32, q.device)
     tick("prep")
     gstep = max(1, int(tile_chunk) // grp)            # groups per chunk
@@ -247,6 +257,14 @@ def _flat_triton(q, k, v, tile, exact_leaves, order, tile_chunk, leaf, scale, pr
             g.copy_(fake_quant(g, quant["state"], qg))
             vb.copy_(fake_quant(vb, quant["state"], qg))
         tick("stats")
+        dq8_cache = sdq_cache = q8_cache = sq_cache = None
+        if query_cache != "none":
+            # 256 tiles * 64 rows * (128 INT8 + 4 FP32 scale) = 2.06 MiB.
+            dq8_cache = tri._buf(ws, "select_dq8", (gc, tile, d), torch.int8, q.device)
+            sdq_cache = tri._buf(ws, "select_sdq", (gc, tile), torch.float32, q.device)
+            if query_cache == "both":
+                q8_cache = tri._buf(ws, "select_q8", (gc, tile, d), torch.int8, q.device)
+                sq_cache = tri._buf(ws, "select_sq", (gc, tile), torch.float32, q.device)
         excl = tri._buf(ws, "excl", (gc, nb), torch.int8, q.device)
         excl.zero_()
         idx = None
@@ -258,7 +276,9 @@ def _flat_triton(q, k, v, tile, exact_leaves, order, tile_chunk, leaf, scale, pr
             else:
                 sel = tri.rowmax_select(qg_rows, mu_c, g, lz, prec=prec, splits=splits,
                                         stride=sel_stride, dot=dflag, bn=kern.get("sel_bn", 32),
-                                        warps=kern.get("sel_warps", 4), ws=ws, sg=sg)
+                                        warps=kern.get("sel_warps", 4), ws=ws, sg=sg,
+                                        dq8_cache=dq8_cache, sdq_cache=sdq_cache,
+                                        q8_cache=q8_cache, sq_cache=sq_cache)
             if sink_leaves:
                 sel[:, :sink_leaves] = float("inf")
             idx = torch.topk(sel, kx_n, dim=-1, sorted=False).indices
@@ -276,6 +296,8 @@ def _flat_triton(q, k, v, tile, exact_leaves, order, tile_chunk, leaf, scale, pr
                                         tail_merge_rows=kern.get("tile_tail_merge_rows"),
                                         far_prefetch_lz=bool(kern.get("tile_far_prefetch_lz", False)),
                                         pv_dot_acc=kern.get("tile_pv_dot_acc", "none"),
+                                        dq8_cache=dq8_cache, sdq_cache=sdq_cache,
+                                        q8_cache=q8_cache, sq_cache=sq_cache,
                                         resource_sink=(ws.setdefault("tile_kernel_resources", {})
                                                        if ws is not None and kern.get("tile_report_resources", False)
                                                        else None))
