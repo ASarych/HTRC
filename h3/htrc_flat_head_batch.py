@@ -404,6 +404,9 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
             or kv_cache.get("raw_heads")!=tuple(map(int,raw_heads))
             or kv_cache.get("source_k") is not k_cap
             or kv_cache.get("source_v") is not v_cap
+            or kv_cache.get("source_k_version")!=k_cap._version
+            or kv_cache.get("source_v_version")!=v_cap._version
+            or kv_cache.get("head_positions")!=tuple(positions)
             or kv_cache.get("nkeys")!=nkeys):
             raise ValueError("KV cache identity, head order or K length mismatch")
         kbf=kv_cache["KBF"]
@@ -516,7 +519,10 @@ def prepare_gpu_head_kv_cache(capture, raw_heads, triton_module):
       ks.view(h*nkeys),h*nkeys,128,br,num_warps=4)
     return {
         "raw_heads":tuple(map(int,raw_heads)),
-        "source_k":ksrc,"source_v":vsrc,"nkeys":nkeys,
+        "head_positions":tuple(indices),
+        "source_k":ksrc,"source_v":vsrc,
+        "source_k_version":ksrc._version,"source_v_version":vsrc._version,
+        "nkeys":nkeys,
         "KBF":kbf,"VBF":vbf,"K":k8,"KS":ks,
     }
 
