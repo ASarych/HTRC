@@ -94,3 +94,41 @@ test the independent query-cache experiment, never merge it
 without positive isolated evidence.
 
 Global BEST and ComfyNodes production remain unchanged.
+
+## GPU result — single combined JSON, 2026-11-11 23:27:32
+
+User-provided `flat_gpu_query_workspace_ab_20261111-232732.json`.
+Candidate exact `a0234bca6fbf99f6af0058cea9c9cefa3903528d`
+and pinned original `e47cc7a310936547ab6c7d97bd07526eb6a135fe`.
+RTX 5070 Ti (16 GiB), Q length 40,759/head, K aligned 40,752
+plus 7 exact tail rows, 40 windows, 201 Q padding rows.
+
+Top-level and both cases `completed=true`; `errors=[]`, no OOM.
+All 520 group×window triples **bit-exact** against pinned and between
+fresh/workspace (1560/1560 pairwise gates, max abs=0, rel-L2=0).
+All 294 independent full-Flat-oracle comparisons PASS; all native
+4+4 head K8 exactness gates PASS with zero byte and scale differences.
+
+| Case | Fresh medians + common warmed KV build | Workspace medians + KV build + workspace setup | Amortized ratio | Steady ratio | Workspace live MiB |
+|---|---:|---:|---:|---:|---:|
+| 4 unique native heads (40 windows × H4) | 74.62075 ms | 72.75010 ms | **1.02571x** | 1.03601x | 71.904 MiB |
+| 56 logical heads (40 windows × 12 groups, H5+H1) | 1104.45485 ms | 1068.09950 ms | **1.03404x** | 1.04777x | 89.880 MiB max |
+
+H4 cache resident 100.114 MiB. H5 cache resident
+125.143 MiB. H5 persistent workspace=89.880 MiB,
+without including the existing 119.411 MiB GPU capture.
+H4 peak allocated in ABBA with both paths' workspace resident:
+fresh ~367.66 MiB vs reuse ~297.03 MiB. H5:
+fresh ~429.15 MiB vs reuse ~340.98 MiB.
+These are in-process peaks while the unused workspace remains
+resident for *both* arms; they do not equal model-resident
+end-to-end memory needs.
+
+**Decision:** retain workspace only as an opt-in research feature,
+useful for stable addresses/CUDA Graph and reducing allocations.
+A 2.6–3.4% full-Q amortized speedup does not justify more
+standalone allocator microbenchmarks. Next priority is the
+**real model-resident, 56 distinct-native-head attention gate**
+with true post-QKV/post-RoPE tensors and original attention
+restored afterward. It must not be described as full denoising
+or a video quality test.
