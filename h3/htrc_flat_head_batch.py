@@ -289,7 +289,7 @@ def launch_prepared_merge_batch(
 def prepare_batched_head_states(capture, raw_heads, config, triton_module,
                                 *, tile_count: int, quant_backend="torch",
                                 input_cast="gpu", stage_timings_ms=None,
-                                kv_cache=None):
+                                kv_cache=None, query_workspace=None):
     """One head-group preparation: one stats launch, one rowmax, one topk.
 
     Reads trusted native same-block captured Q/K/V; repeated raw head
@@ -303,6 +303,11 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         raise ValueError("quant_backend must be torch or triton")
     if input_cast not in ("gpu", "cpu"):
         raise ValueError("input_cast must be gpu or cpu")
+    if query_workspace is not None and (
+        not isinstance(query_workspace, dict) or kv_cache is None
+        or quant_backend != "triton" or input_cast != "gpu"
+    ):
+        raise ValueError("Query workspace requires GPU K/V cache and Triton quantizer")
     # Synchronized stages are for an optional untimed diagnostic.
     stage_start=time.perf_counter()
     def mark_stage(name):
@@ -422,10 +427,24 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
             raise ValueError("KV cache invalid tensor shape/dtype/device/layout")
         mark_stage("kv_cache_hit")
     V=vbf
-    G=torch.empty((h,tile_count,nb,dim),device=dev,dtype=torch.int8)
-    VB=torch.empty((h,tile_count,nb,dim),device=dev,dtype=torch.bfloat16)
-    LZ=torch.empty((h,tile_count,nb),device=dev,dtype=torch.float32)
-    SG=torch.empty_like(LZ)
+    def state_buffer(name, shape, dtype):
+        if query_workspace is None:
+            return torch.empty(shape,device=q_cap.device,dtype=dtype)
+        buf=query_workspace.get(name)
+        if buf is None:
+            buf=torch.empty(shape,device=q_cap.device,dtype=dtype)
+            query_workspace[name]=buf
+        elif (not isinstance(buf,torch.Tensor)
+              or tuple(buf.shape)!=tuple(shape)
+              or buf.dtype!=dtype or buf.device!=q_cap.device
+              or not buf.is_contiguous()):
+            raise ValueError(f"Incompatible query workspace buffer: {name}")
+        return buf
+    # Reuse storage only; the stats kernel overwrites every element for every Q tile.
+    G=state_buffer("G",(h,tile_count,nb,dim),torch.int8)
+    VB=state_buffer("VB",(h,tile_count,nb,dim),torch.bfloat16)
+    LZ=state_buffer("LZ",(h,tile_count,nb),torch.float32)
+    SG=state_buffer("SG",(h,tile_count,nb),torch.float32)
     BT,BL=16,4
     blocks=math.ceil(tile_count/BT)
     # Head count is a dynamic grid dimension, not a kernel specialization.
@@ -456,11 +475,18 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         qf,muf,gf,lzf,
         prec="tf32",bn=32,warps=4,
         splits=int(config["splits"]),stride=1,dot=1,
-        ws=None,sg=sgf
+        ws=query_workspace,sg=sgf
     )
     ids=torch.topk(sel,kx,dim=-1,sorted=False).indices
-    idx=ids.to(torch.int32).view(h,tile_count,kx).contiguous()
-    excl=torch.zeros((h*tile_count,nb),device=dev,dtype=torch.int8)
+    if query_workspace is None:
+        idx=ids.to(torch.int32).view(h,tile_count,kx).contiguous()
+        excl=torch.zeros((h*tile_count,nb),device=dev,dtype=torch.int8)
+    else:
+        idx=state_buffer("IDX",(h,tile_count,kx),torch.int32)
+        idx.copy_(ids.to(torch.int32).view(h,tile_count,kx))
+        excl=state_buffer("EXCL",(h*tile_count,nb),torch.int8)
+        # Mandatory reset: do NOT reuse prior window's selection/EXCL contents.
+        excl.zero_()
     excl.scatter_(1,ids,1)
     mark_stage("rowmax_topk_exclusion")
     states={
@@ -531,3 +557,24 @@ def gpu_head_kv_cache_bytes(cache):
     """Size of unique resident K-side buffers (not aliased source QKV)."""
     return sum(cache[k].numel()*cache[k].element_size()
                for k in ("KBF","VBF","K","KS"))
+
+def gpu_query_workspace_bytes(workspace):
+    """Count unique LIVE preallocated query buffers, not cached K/V."""
+    import torch
+    if not isinstance(workspace,dict):
+        raise ValueError("Expected query workspace dict")
+    seen=set()
+    total=0
+    def walk(value):
+        nonlocal total
+        if isinstance(value,dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value,torch.Tensor):
+            storage=value.untyped_storage()
+            ptr=(value.device, storage.data_ptr())
+            if ptr not in seen:
+                seen.add(ptr)
+                total+=storage.nbytes()
+    walk(workspace)
+    return total
