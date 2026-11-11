@@ -22,6 +22,8 @@ The `h3/` PyTorch/Triton implementations are **archival research code**, not pac
 
 See **[full flat HTRC results](docs/evidence/FLAT_HTRC_END_TO_END_2026-10-02.md)** and **[flat-operator semantics](docs/theory/FLAT_HTRC_OPERATOR.md)**. Original, unchanged source lives in `h3/htrc_flat.py`, `h3/htrc_flat_runner.py` and `h3/htrc_flat_triton.py`; the original profiling/sweep scripts are in `tools/`.
 
+**This branch (`experiment/flat-tail-merge-flatq-20261111`) is not the unchanged source.** It adds: (a) the tail-in-merge variant of the flat tile/merge kernels (`tile_tail_merge`, 32 rows; ≤16 exact tail keys moved from the tile kernel to the merge kernel, removing register spills; measured 1.09–1.15× per head at 18.7k–40.8k tokens, rel-L2 ≤3e-6 vs. the unmodified kernel; inactive for leaf-32 steps); (b) `h3/htrc_flat_q.py`, a single speed/quality coefficient (`_flat_q_plan`) that maps to measured leaf/group/exact-leaf steps. The no-go evidence for the RT alternative and its unrecorded measurements are in `docs/evidence/rt_no_go_addendum/`. Quality of the coefficient steps on images and video is not established by this branch.
+
 **Do not conflate these with hierarchical HTRC.** Its recorded early full-head, 243-frame block-0 prototype was ~170 s **for a single block**, not a finished denoise step. Later research optimized per-head streaming on saved captures but did not establish a matching full-video run for the same hierarchical implementation. The tree-free flat variant uses a different selection and value approximation; its speed and quality measurements must stay separate. The flat result is the fastest *documented full-video HTRC-family* run here, not a claim that it outperforms all other attention methods.
 
 ## What is mathematically established

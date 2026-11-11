@@ -1,0 +1,124 @@
+{
+  "kind": "native_scalar_rank8_rt_cuda_three_way",
+  "passes": "CPU exact-AABB membership and signed rank8 arithmetic within 0.002 absolute",
+  "does_not_pass": "HTRC state build/frontier/output parity or Tensor Core pipeline",
+  "timing": "cold synchronized timing plus warmed CUDA events (24 reps); clean RT->CUDA disables shader rank8",
+  "rows": [
+    {
+      "kind": "signed_rank8_three_way",
+      "pairs": 765,
+      "max_abs_diff": 6.5031324e-08,
+      "rt_shader_ms": 6.1466,
+      "cuda_after_rt_ms": 0.3932,
+      "cuda_route_ms": 0.0792,
+      "bvh_build_ms": 0.3078,
+      "note": "cold synchronized timings; scalar shader, not cooperative vectors",
+      "gpu_event_hot": {
+        "kind": "rank8_hot_gpu_events",
+        "warmups": 8,
+        "repetitions": 24,
+        "rt_shader_ms": 5.7983576,
+        "rt_broadphase_only_ms": 0.12647067,
+        "rt_then_cuda_ms": 0.14482,
+        "cuda_after_cached_rt_ids_ms": 0.018173333,
+        "cuda_without_rt_ms": 0.020881332,
+        "rt_extra_cuda_ms": 0.01834934,
+        "post_rt_hit_set_parity": true
+      },
+      "fraction": 0.02,
+      "hit_parity": {
+        "strict_cpu_aabb_parity": true,
+        "min_real_hit_fraction": 0.008244994110718492,
+        "mean_real_hit_fraction": 0.01877208480565371,
+        "max_real_hit_fraction": 0.02630545740086376
+      }
+    },
+    {
+      "kind": "signed_rank8_three_way",
+      "pairs": 1737,
+      "max_abs_diff": 7.022935e-08,
+      "rt_shader_ms": 12.4999,
+      "cuda_after_rt_ms": 0.362,
+      "cuda_route_ms": 0.0777,
+      "bvh_build_ms": 0.3192,
+      "note": "cold synchronized timings; scalar shader, not cooperative vectors",
+      "gpu_event_hot": {
+        "kind": "rank8_hot_gpu_events",
+        "warmups": 8,
+        "repetitions": 24,
+        "rt_shader_ms": 12.357522,
+        "rt_broadphase_only_ms": 0.23308667,
+        "rt_then_cuda_ms": 0.26168533,
+        "cuda_after_cached_rt_ids_ms": 0.030189333,
+        "cuda_without_rt_ms": 0.023468,
+        "rt_extra_cuda_ms": 0.028598666,
+        "post_rt_hit_set_parity": true
+      },
+      "fraction": 0.05,
+      "hit_parity": {
+        "strict_cpu_aabb_parity": true,
+        "min_real_hit_fraction": 0.023164507263447192,
+        "mean_real_hit_fraction": 0.042623674911660775,
+        "max_real_hit_fraction": 0.05496662740478995
+      }
+    },
+    {
+      "kind": "signed_rank8_three_way",
+      "pairs": 3539,
+      "max_abs_diff": 8.7812653e-08,
+      "rt_shader_ms": 24.4291,
+      "cuda_after_rt_ms": 0.3364,
+      "cuda_route_ms": 0.0815,
+      "bvh_build_ms": 0.3057,
+      "note": "cold synchronized timings; scalar shader, not cooperative vectors",
+      "gpu_event_hot": {
+        "kind": "rank8_hot_gpu_events",
+        "warmups": 8,
+        "repetitions": 24,
+        "rt_shader_ms": 24.28776,
+        "rt_broadphase_only_ms": 0.42098931,
+        "rt_then_cuda_ms": 0.46806931,
+        "cuda_after_cached_rt_ids_ms": 0.047801336,
+        "cuda_without_rt_ms": 0.025321332,
+        "rt_extra_cuda_ms": 0.04708,
+        "post_rt_hit_set_parity": true
+      },
+      "fraction": 0.1,
+      "hit_parity": {
+        "strict_cpu_aabb_parity": true,
+        "min_real_hit_fraction": 0.06478209658421673,
+        "mean_real_hit_fraction": 0.0868423635649784,
+        "max_real_hit_fraction": 0.10757754220651747
+      }
+    },
+    {
+      "kind": "signed_rank8_three_way",
+      "pairs": 6443,
+      "max_abs_diff": 7.5266177e-08,
+      "rt_shader_ms": 46.2322,
+      "cuda_after_rt_ms": 0.395,
+      "cuda_route_ms": 0.0974,
+      "bvh_build_ms": 0.3398,
+      "note": "cold synchronized timings; scalar shader, not cooperative vectors",
+      "gpu_event_hot": {
+        "kind": "rank8_hot_gpu_events",
+        "warmups": 8,
+        "repetitions": 24,
+        "rt_shader_ms": 45.888702,
+        "rt_broadphase_only_ms": 0.76521603,
+        "rt_then_cuda_ms": 0.8196427,
+        "cuda_after_cached_rt_ids_ms": 0.055672,
+        "cuda_without_rt_ms": 0.033584001,
+        "rt_extra_cuda_ms": 0.05442667,
+        "post_rt_hit_set_parity": true
+      },
+      "fraction": 0.2,
+      "hit_parity": {
+        "strict_cpu_aabb_parity": true,
+        "min_real_hit_fraction": 0.09736945425991363,
+        "mean_real_hit_fraction": 0.15810266980761678,
+        "max_real_hit_fraction": 0.20965842167255594
+      }
+    }
+  ]
+}

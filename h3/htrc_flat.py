@@ -268,7 +268,17 @@ def _flat_triton(q, k, v, tile, exact_leaves, order, tile_chunk, leaf, scale, pr
                                         leaf=leaf, prec=prec, splits=splits, dot=dflag,
                                         bn=kern.get("tile_bn", 32), warps=kern.get("tile_warps", 4),
                                         stages=kern.get("tile_stages", 1), rb=kern.get("tile_rb", 1), tail=tail, ws=ws,
-                                        group=grp, sg=sg, sv=sv, out=out[t0:t1], ks=ks)
+                                        group=grp, sg=sg, sv=sv, out=out[t0:t1], ks=ks,
+                                        passes=kern.get("tile_passes", "fused"),
+                                        late_near_q=bool(kern.get("tile_late_near_q", False)),
+                                        near_bn=kern.get("tile_near_bn"),
+                                        tail_in_merge=bool(kern.get("tile_tail_merge", False)),
+                                        tail_merge_rows=kern.get("tile_tail_merge_rows"),
+                                        far_prefetch_lz=bool(kern.get("tile_far_prefetch_lz", False)),
+                                        pv_dot_acc=kern.get("tile_pv_dot_acc", "none"),
+                                        resource_sink=(ws.setdefault("tile_kernel_resources", {})
+                                                       if ws is not None and kern.get("tile_report_resources", False)
+                                                       else None))
         del g, lz, vb, excl
         tick("tile")
     res = _unperm(out[:nt].reshape(nt * tile, d), n, perm)

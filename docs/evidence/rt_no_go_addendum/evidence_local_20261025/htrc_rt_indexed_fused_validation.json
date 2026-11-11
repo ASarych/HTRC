@@ -1,0 +1,187 @@
+{
+  "kind": "indexed attention diagnosis and clean kernel-only timing",
+  "gpu": "NVIDIA GeForce RTX 5070 Ti",
+  "diagnostic": {
+    "cases": [
+      {
+        "case": 0,
+        "tiles": 1,
+        "blocks": 7,
+        "budget": 1,
+        "d": 128,
+        "tail": 0,
+        "dtype": "torch.float16",
+        "ids": "permuted",
+        "relative_l2": 0.000257465842878446,
+        "max_abs": 7.241964340209961e-05
+      },
+      {
+        "case": 1,
+        "tiles": 2,
+        "blocks": 17,
+        "budget": 3,
+        "d": 128,
+        "tail": 7,
+        "dtype": "torch.float16",
+        "ids": "permuted",
+        "relative_l2": 0.00025805935729295015,
+        "max_abs": 3.8504600524902344e-05
+      },
+      {
+        "case": 2,
+        "tiles": 3,
+        "blocks": 17,
+        "budget": 17,
+        "d": 128,
+        "tail": 15,
+        "dtype": "torch.float16",
+        "ids": "reverse",
+        "relative_l2": 0.0002611262898426503,
+        "max_abs": 1.8533319234848022e-05
+      },
+      {
+        "case": 3,
+        "tiles": 2,
+        "blocks": 17,
+        "budget": 5,
+        "d": 128,
+        "tail": 7,
+        "dtype": "torch.float16",
+        "ids": "same",
+        "relative_l2": 0.0002593355893623084,
+        "max_abs": 2.3048371076583862e-05
+      },
+      {
+        "case": 4,
+        "tiles": 2,
+        "blocks": 17,
+        "budget": 5,
+        "d": 128,
+        "tail": 7,
+        "dtype": "torch.float16",
+        "ids": "duplicate",
+        "relative_l2": 0.000253749341936782,
+        "max_abs": 4.9911439418792725e-05
+      },
+      {
+        "case": 5,
+        "tiles": 2,
+        "blocks": 13,
+        "budget": 4,
+        "d": 64,
+        "tail": 7,
+        "dtype": "torch.float16",
+        "ids": "permuted",
+        "relative_l2": 0.0002587251365184784,
+        "max_abs": 2.8595328330993652e-05
+      },
+      {
+        "case": 6,
+        "tiles": 2,
+        "blocks": 13,
+        "budget": 4,
+        "d": 128,
+        "tail": 7,
+        "dtype": "torch.bfloat16",
+        "ids": "permuted",
+        "relative_l2": 0.001969516510143876,
+        "max_abs": 0.00029741227626800537
+      }
+    ],
+    "invalid_ids_rejected": [
+      "negative",
+      "past_end"
+    ]
+  },
+  "performance": [
+    {
+      "tiles": 16,
+      "blocks": 2547,
+      "budget": 51,
+      "d": 128,
+      "tail": 7,
+      "dtype": "torch.float16",
+      "repetitions": 40,
+      "kernel_ms_median": 0.022048000246286392,
+      "kernel_ms_p10": 0.022048000246286392,
+      "kernel_ms_p90": 0.037087999284267426,
+      "before": {
+        "relative_l2": 0.0002591345109976828,
+        "max_abs": 1.0170042514801025e-05
+      },
+      "after": {
+        "relative_l2": 0.0002591345109976828,
+        "max_abs": 1.0170042514801025e-05
+      },
+      "fraction": 0.02
+    },
+    {
+      "tiles": 16,
+      "blocks": 2547,
+      "budget": 128,
+      "d": 128,
+      "tail": 7,
+      "dtype": "torch.float16",
+      "repetitions": 40,
+      "kernel_ms_median": 0.04662400111556053,
+      "kernel_ms_p10": 0.04662400111556053,
+      "kernel_ms_p90": 0.054816000163555145,
+      "before": {
+        "relative_l2": 0.0002611275704111904,
+        "max_abs": 9.099021553993225e-06
+      },
+      "after": {
+        "relative_l2": 0.0002611275704111904,
+        "max_abs": 9.099021553993225e-06
+      },
+      "fraction": 0.05
+    },
+    {
+      "tiles": 16,
+      "blocks": 2547,
+      "budget": 255,
+      "d": 128,
+      "tail": 7,
+      "dtype": "torch.float16",
+      "repetitions": 40,
+      "kernel_ms_median": 0.09065599739551544,
+      "kernel_ms_p10": 0.08963199704885483,
+      "kernel_ms_p90": 0.10992000252008438,
+      "before": {
+        "relative_l2": 0.00025931483833119273,
+        "max_abs": 4.783272743225098e-06
+      },
+      "after": {
+        "relative_l2": 0.00025931483833119273,
+        "max_abs": 4.783272743225098e-06
+      },
+      "fraction": 0.1
+    },
+    {
+      "tiles": 16,
+      "blocks": 2547,
+      "budget": 510,
+      "d": 128,
+      "tail": 7,
+      "dtype": "torch.float16",
+      "repetitions": 40,
+      "kernel_ms_median": 0.17564800381660461,
+      "kernel_ms_p10": 0.1746239960193634,
+      "kernel_ms_p90": 0.34489598870277405,
+      "before": {
+        "relative_l2": 0.0002612463722471148,
+        "max_abs": 4.014931619167328e-06
+      },
+      "after": {
+        "relative_l2": 0.0002612463722471148,
+        "max_abs": 4.014931619167328e-06
+      },
+      "fraction": 0.2
+    }
+  ],
+  "limitations": [
+    "Not a routed OptiX pipeline benchmark",
+    "Not production HTRC",
+    "Hardware Tensor Core instruction counters not measured"
+  ]
+}

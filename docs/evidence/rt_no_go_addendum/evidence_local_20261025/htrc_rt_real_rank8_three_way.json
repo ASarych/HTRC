@@ -1,0 +1,132 @@
+{
+  "kind": "real_h3_rank8_root_operator_rt_cuda_three_way",
+  "scope": "original HTRC rank8 root evaluation on genuine full-Q saved captures",
+  "not_yet_tested": [
+    "HTRC frontier decision/root mass normalization",
+    "RT spatial selectivity and false negatives",
+    "Tensor Core instructions and Cooperative Vectors",
+    "accepted value dipole and full attention output"
+  ],
+  "results": [
+    {
+      "input": {
+        "capture": "D:\\ComfyOutput\\H3\\math_probe\\20260926-201504\\attention_block_00_call_01.pt",
+        "head": 1,
+        "centroid": 0,
+        "roots": 80,
+        "query_rows": 40759,
+        "key_tokens": 40759,
+        "sampled_query_indices": [
+          2050,
+          2124,
+          2204,
+          2270,
+          2335,
+          2399,
+          2463,
+          2527,
+          2591,
+          2655,
+          2719,
+          2783,
+          2849,
+          2914,
+          2985,
+          4329
+        ],
+        "state_source": "actual h3.htrc_live.build_head_state",
+        "geometry": "all-hit, NOT an HTRC mathematical selector",
+        "binary": "C:\\Users\\Misya\\AppData\\Local\\Temp\\htrc_real_rank8_wjfnlkna\\input_0.bin"
+      },
+      "cpu_math": {
+        "kind": "signed_rank8_three_way",
+        "pairs": 1280,
+        "max_abs_diff": 3.4855151e-06,
+        "rt_shader_ms": 2.9825,
+        "cuda_after_rt_ms": 0.3873,
+        "cuda_route_ms": 0.0836,
+        "bvh_build_ms": 0.3826,
+        "state_source": "real_htrc",
+        "note": "cold synchronized timings; scalar shader, not cooperative vectors"
+      },
+      "hot": {
+        "kind": "rank8_hot_gpu_events",
+        "warmups": 8,
+        "repetitions": 24,
+        "rt_shader_ms": 2.8687894,
+        "rt_broadphase_only_ms": 0.07318,
+        "rt_then_cuda_ms": 0.094650666,
+        "cuda_after_cached_rt_ids_ms": 0.026057333,
+        "cuda_without_rt_ms": 0.022389332,
+        "rt_extra_cuda_ms": 0.021470666,
+        "post_rt_hit_set_parity": true
+      },
+      "geometry_parity": {
+        "strict_cpu_aabb_parity": true,
+        "min_real_hit_fraction": 1.0,
+        "mean_real_hit_fraction": 1.0,
+        "max_real_hit_fraction": 1.0
+      }
+    },
+    {
+      "input": {
+        "capture": "D:\\ComfyOutput\\H3\\math_probe\\20260926-204838\\attention_block_08_call_01.pt",
+        "head": 1,
+        "centroid": 0,
+        "roots": 80,
+        "query_rows": 40759,
+        "key_tokens": 40759,
+        "sampled_query_indices": [
+          2374,
+          4130,
+          5260,
+          7111,
+          9129,
+          11182,
+          12272,
+          13372,
+          14296,
+          15424,
+          17232,
+          20258,
+          24334,
+          28315,
+          35335,
+          40422
+        ],
+        "state_source": "actual h3.htrc_live.build_head_state",
+        "geometry": "all-hit, NOT an HTRC mathematical selector",
+        "binary": "C:\\Users\\Misya\\AppData\\Local\\Temp\\htrc_real_rank8_wjfnlkna\\input_1.bin"
+      },
+      "cpu_math": {
+        "kind": "signed_rank8_three_way",
+        "pairs": 1280,
+        "max_abs_diff": 1.5875118e-05,
+        "rt_shader_ms": 3.023,
+        "cuda_after_rt_ms": 0.5324,
+        "cuda_route_ms": 0.0979,
+        "bvh_build_ms": 0.3869,
+        "state_source": "real_htrc",
+        "note": "cold synchronized timings; scalar shader, not cooperative vectors"
+      },
+      "hot": {
+        "kind": "rank8_hot_gpu_events",
+        "warmups": 8,
+        "repetitions": 24,
+        "rt_shader_ms": 2.8684839,
+        "rt_broadphase_only_ms": 0.073349332,
+        "rt_then_cuda_ms": 0.094590664,
+        "cuda_after_cached_rt_ids_ms": 0.023354667,
+        "cuda_without_rt_ms": 0.027229334,
+        "rt_extra_cuda_ms": 0.021241332,
+        "post_rt_hit_set_parity": true
+      },
+      "geometry_parity": {
+        "strict_cpu_aabb_parity": true,
+        "min_real_hit_fraction": 1.0,
+        "mean_real_hit_fraction": 1.0,
+        "max_real_hit_fraction": 1.0
+      }
+    }
+  ]
+}

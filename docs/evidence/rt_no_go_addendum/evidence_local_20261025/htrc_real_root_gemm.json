@@ -1,0 +1,127 @@
+{
+  "kind": "real_h3_root_signed_rank8_fp32_vs_bf16_gemm",
+  "results": [
+    {
+      "capture": "D:\\ComfyOutput\\H3\\math_probe\\20260926-201504\\attention_block_00_call_01.pt",
+      "head": 1,
+      "centroid": 0,
+      "source_query_rows": 40759,
+      "root_count": 80,
+      "tested_queries": 256,
+      "tau": -1.4722508192062378,
+      "scope": "real HTRC root signed-rank8 only; NOT full HTRC traversal/output",
+      "open_policy": "train-even threshold, test-odd, NOT production threshold",
+      "modes": {
+        "fp32_reference": {
+          "max_abs_pred_error": 0.0,
+          "max_abs_certificate_error": 0.0,
+          "root_open_mismatches": 0,
+          "root_open_total": 418,
+          "root_pair_total": 20480,
+          "warm_gpu_event": {
+            "median_ms": 0.13436800241470337,
+            "p10_ms": 0.09436800330877304,
+            "p90_ms": 0.1817599982023239,
+            "repetitions": 30,
+            "warmup": 8
+          }
+        },
+        "fp32_gemm": {
+          "max_abs_pred_error": 0.0,
+          "max_abs_certificate_error": 0.0,
+          "root_open_mismatches": 0,
+          "root_open_total": 418,
+          "root_pair_total": 20480,
+          "warm_gpu_event": {
+            "median_ms": 0.09011200070381165,
+            "p10_ms": 0.07676800340414047,
+            "p90_ms": 0.15721599757671356,
+            "repetitions": 30,
+            "warmup": 8
+          }
+        },
+        "bf16_gemm": {
+          "max_abs_pred_error": 0.039638519287109375,
+          "max_abs_certificate_error": 0.04046297073364258,
+          "root_open_mismatches": 0,
+          "root_open_total": 418,
+          "root_pair_total": 20480,
+          "warm_gpu_event": {
+            "median_ms": 0.09043200314044952,
+            "p10_ms": 0.08294399827718735,
+            "p90_ms": 0.1188800036907196,
+            "repetitions": 30,
+            "warmup": 8
+          }
+        }
+      },
+      "bf16_tensor_core_instructions_verified": false,
+      "notes": [
+        "BF16 GEMM may use Tensor Cores but instructions require profiler confirmation",
+        "FP32 GEMM consumes same state; only root operator benchmarked",
+        "Hot GPU events exclude state construction, packing, conversion, scheduling and full attention"
+      ]
+    },
+    {
+      "capture": "D:\\ComfyOutput\\H3\\math_probe\\20260926-204838\\attention_block_08_call_01.pt",
+      "head": 1,
+      "centroid": 0,
+      "source_query_rows": 40759,
+      "root_count": 80,
+      "tested_queries": 256,
+      "tau": 4.144076347351074,
+      "scope": "real HTRC root signed-rank8 only; NOT full HTRC traversal/output",
+      "open_policy": "train-even threshold, test-odd, NOT production threshold",
+      "modes": {
+        "fp32_reference": {
+          "max_abs_pred_error": 0.0,
+          "max_abs_certificate_error": 0.0,
+          "root_open_mismatches": 0,
+          "root_open_total": 442,
+          "root_pair_total": 20480,
+          "warm_gpu_event": {
+            "median_ms": 0.09587199985980988,
+            "p10_ms": 0.0947519987821579,
+            "p90_ms": 0.10364799946546555,
+            "repetitions": 30,
+            "warmup": 8
+          }
+        },
+        "fp32_gemm": {
+          "max_abs_pred_error": 0.0,
+          "max_abs_certificate_error": 0.0,
+          "root_open_mismatches": 0,
+          "root_open_total": 442,
+          "root_pair_total": 20480,
+          "warm_gpu_event": {
+            "median_ms": 0.07862400263547897,
+            "p10_ms": 0.07769600301980972,
+            "p90_ms": 0.08604799956083298,
+            "repetitions": 30,
+            "warmup": 8
+          }
+        },
+        "bf16_gemm": {
+          "max_abs_pred_error": 0.18572235107421875,
+          "max_abs_certificate_error": 0.17876815795898438,
+          "root_open_mismatches": 2,
+          "root_open_total": 442,
+          "root_pair_total": 20480,
+          "warm_gpu_event": {
+            "median_ms": 0.09071999788284302,
+            "p10_ms": 0.08207999914884567,
+            "p90_ms": 0.1716800034046173,
+            "repetitions": 30,
+            "warmup": 8
+          }
+        }
+      },
+      "bf16_tensor_core_instructions_verified": false,
+      "notes": [
+        "BF16 GEMM may use Tensor Cores but instructions require profiler confirmation",
+        "FP32 GEMM consumes same state; only root operator benchmarked",
+        "Hot GPU events exclude state construction, packing, conversion, scheduling and full attention"
+      ]
+    }
+  ]
+}

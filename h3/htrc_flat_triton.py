@@ -87,9 +87,12 @@ def _stats_kernel(MU, K, V, G, LZ, VB, SG, SV, tc, nb, scale,
 
 @triton.jit
 def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV, KS, nb, kx, lps, eps, nt, scale,
-                 T: tl.constexpr, D: tl.constexpr, BN: tl.constexpr, LEAF: tl.constexpr,
+                 T: tl.constexpr, D: tl.constexpr, BN: tl.constexpr, BN_NEAR: tl.constexpr, LEAF: tl.constexpr,
                  PREC: tl.constexpr, DOT: tl.constexpr, GR: tl.constexpr = 1, FP8: tl.constexpr = 0,
-                 TAIL: tl.constexpr = 0, RB: tl.constexpr = 1, I8: tl.constexpr = 0):
+                 TAIL: tl.constexpr = 0, RB: tl.constexpr = 1, I8: tl.constexpr = 0,
+                 PASS: tl.constexpr = 0, LATE_NEAR_Q: tl.constexpr = 0,
+                 FAR_PREFETCH_LZ: tl.constexpr = 0,
+                 FAR_PV_ACC: tl.constexpr = 0, NEAR_PV_ACC: tl.constexpr = 0):
     """Split-K over leaves: program (tile t, split sp) covers far leaves [sp*lps, +lps) and
     exact tokens [sp*eps, +eps); writes partial (max, sum, acc) merged on the host."""
     t = tl.program_id(0)
@@ -103,7 +106,8 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
     mu = tl.load(MU + gt * D + d)
     dq = q - mu[None, :]
     if DOT == 1:
-        qb = q.to(tl.bfloat16)
+        if not LATE_NEAR_Q:
+            qb = q.to(tl.bfloat16)
         dqb = dq.to(tl.bfloat16)
         if FP8:
             dqh = dq.to(tl.float16)       # e4m3 -> fp16 is exact and a single packed cvt (-> bf16 went via fp32)
@@ -112,99 +116,148 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
             sdq = tl.maximum(tl.max(tl.abs(dq), axis=1) * (1.0 / 127.0), 1.0e-20)
             x = dq / sdq[:, None]
             dq8 = tl.where(x >= 0, x + 0.5, x - 0.5).to(tl.int8)
-            sq = tl.maximum(tl.max(tl.abs(q), axis=1) * (1.0 / 127.0), 1.0e-20)
-            x = q / sq[:, None]
-            q8 = tl.where(x >= 0, x + 0.5, x - 0.5).to(tl.int8)
-    m_i = tl.full((RT,), float("-inf"), tl.float32)
-    l_i = tl.zeros((RT,), tl.float32)
-    acc = tl.zeros((RT, D), tl.float32)
-    lo = sp * lps
-    hi = tl.minimum(nb, lo + lps)
-    for n0 in range(lo, hi, BN):
-        c = n0 + tl.arange(0, BN)
-        cm = c < hi
-        lz = tl.load(LZ + gt * nb + c, mask=cm, other=float("-inf"))
-        ex = tl.load(EXCL + gt * nb + c, mask=cm, other=1)
-        if DOT == 1:
-            g = tl.load(G + (gt * nb + c)[:, None] * D + d[None, :], mask=cm[:, None], other=0.0)
+            if not LATE_NEAR_Q:
+                sq = tl.maximum(tl.max(tl.abs(q), axis=1) * (1.0 / 127.0), 1.0e-20)
+                x = q / sq[:, None]
+                q8 = tl.where(x >= 0, x + 0.5, x - 0.5).to(tl.int8)
+    if PASS == 2:
+        # Resume far-field online softmax without repeating its QK/PV loops.
+        prior = t * ns + sp
+        m_i = tl.load(PM + prior * T + r)
+        l_i = tl.load(PL + prior * T + r)
+        acc = tl.load(PACC + (prior * T + r)[:, None] * D + d[None, :])
+    else:
+        m_i = tl.full((RT,), float("-inf"), tl.float32)
+        l_i = tl.zeros((RT,), tl.float32)
+        acc = tl.zeros((RT, D), tl.float32)
+    if PASS != 2:
+        lo = sp * lps
+        hi = tl.minimum(nb, lo + lps)
+        if FAR_PREFETCH_LZ:
+            # Prime next iteration's log-partition load before the QK/PV work.
+            pc = lo + tl.arange(0, BN)
+            pmask = pc < hi
+            pref_lz = tl.load(LZ + gt * nb + pc, mask=pmask, other=float("-inf"))
+        for n0 in range(lo, hi, BN):
+            c = n0 + tl.arange(0, BN)
+            cm = c < hi
+            if FAR_PREFETCH_LZ:
+                lz = pref_lz
+                # Issue the following block's LZ load before this block's
+                # tensor-core dots. The last iteration is fully masked.
+                pc = c + BN
+                pmask = pc < hi
+                pref_lz = tl.load(LZ + gt * nb + pc, mask=pmask, other=float("-inf"))
+            else:
+                lz = tl.load(LZ + gt * nb + c, mask=cm, other=float("-inf"))
+            ex = tl.load(EXCL + gt * nb + c, mask=cm, other=1)
+            if DOT == 1:
+                g = tl.load(G + (gt * nb + c)[:, None] * D + d[None, :], mask=cm[:, None], other=0.0)
+                if I8:
+                    sgc = tl.load(SG + gt * nb + c, mask=cm, other=0.0)
+                    sc = tl.dot(dq8, tl.trans(g)).to(tl.float32) * (sdq[:, None] * sgc[None, :]) + lz[None, :]
+                elif FP8:
+                    g = g.to(tl.float16)
+                    sgc = tl.load(SG + gt * nb + c, mask=cm, other=0.0)
+                    sc = tl.dot(dqh, tl.trans(g)) * sgc[None, :] + lz[None, :]
+                else:
+                    sc = tl.dot(dqb, tl.trans(g)) + lz[None, :]
+            else:
+                g = tl.load(G + (gt * nb + c)[:, None] * D + d[None, :], mask=cm[:, None], other=0.0).to(tl.float32)
+                sc = tl.dot(dq, tl.trans(g), input_precision=PREC) + lz[None, :]
+            sc = tl.where(((ex == 0) & cm)[None, :], sc, float("-inf"))
+            m_new = tl.maximum(m_i, tl.max(sc, axis=1))
+            m_s = tl.where(m_new == float("-inf"), 0.0, m_new)
+            p = tl.exp(sc - m_s[:, None])
+            alpha = tl.exp(m_i - m_s)
+            l_i = l_i * alpha + tl.sum(p, axis=1)
+            vb = tl.load(VB + (gt * nb + c)[:, None] * D + d[None, :], mask=cm[:, None], other=0.0)
+            if DOT == 1:
+                if FP8:
+                    svc = tl.load(SV + gt * nb + c, mask=cm, other=0.0)
+                    if FAR_PV_ACC:
+                        acc = tl.dot((p * svc[None, :]).to(tl.float16), vb.to(tl.float16),
+                                     acc=acc * alpha[:, None])
+                    else:
+                        acc = acc * alpha[:, None] + tl.dot((p * svc[None, :]).to(tl.float16), vb.to(tl.float16))
+                else:
+                    if FAR_PV_ACC:
+                        acc = tl.dot(p.to(tl.bfloat16), vb, acc=acc * alpha[:, None])
+                    else:
+                        acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), vb)
+            else:
+                if FAR_PV_ACC:
+                    acc = tl.dot(p, vb.to(tl.float32), input_precision=PREC,
+                                 acc=acc * alpha[:, None])
+                else:
+                    acc = acc * alpha[:, None] + tl.dot(p, vb.to(tl.float32), input_precision=PREC)
+            m_i = m_new
+    if PASS != 1:
+        if DOT == 1 and LATE_NEAR_Q:
+            # Late preparation: Q operands for exact near-field are not
+            # live across the far-field loop (compiled within one kernel).
+            qb = q.to(tl.bfloat16)
             if I8:
-                sgc = tl.load(SG + gt * nb + c, mask=cm, other=0.0)
-                sc = tl.dot(dq8, tl.trans(g)).to(tl.float32) * (sdq[:, None] * sgc[None, :]) + lz[None, :]
-            elif FP8:
-                g = g.to(tl.float16)
-                sgc = tl.load(SG + gt * nb + c, mask=cm, other=0.0)
-                sc = tl.dot(dqh, tl.trans(g)) * sgc[None, :] + lz[None, :]
+                sq = tl.maximum(tl.max(tl.abs(q), axis=1) * (1.0 / 127.0), 1.0e-20)
+                x = q / sq[:, None]
+                q8 = tl.where(x >= 0, x + 0.5, x - 0.5).to(tl.int8)
+        e_n = kx * LEAF
+        e_lo = sp * eps
+        e_hi = tl.minimum(e_n, e_lo + eps)
+        for e0 in range(e_lo, e_hi, BN_NEAR):
+            j = e0 + tl.arange(0, BN_NEAR)
+            jm = j < e_hi
+            leaf = tl.load(IDX + gt * kx + j // LEAF, mask=jm, other=0)
+            tok = leaf * LEAF + j % LEAF
+            kk = tl.load(K + tok[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
+            vv = tl.load(V + tok[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
+            if DOT == 1:
+                if I8:
+                    ksc = tl.load(KS + tok, mask=jm, other=0.0)
+                    sc = tl.dot(q8, tl.trans(kk)).to(tl.float32) * (sq[:, None] * ksc[None, :] * scale)
+                else:
+                    sc = tl.dot(qb, tl.trans(kk)) * scale
             else:
-                sc = tl.dot(dqb, tl.trans(g)) + lz[None, :]
-        else:
-            g = tl.load(G + (gt * nb + c)[:, None] * D + d[None, :], mask=cm[:, None], other=0.0).to(tl.float32)
-            sc = tl.dot(dq, tl.trans(g), input_precision=PREC) + lz[None, :]
-        sc = tl.where(((ex == 0) & cm)[None, :], sc, float("-inf"))
-        m_new = tl.maximum(m_i, tl.max(sc, axis=1))
-        m_s = tl.where(m_new == float("-inf"), 0.0, m_new)
-        p = tl.exp(sc - m_s[:, None])
-        alpha = tl.exp(m_i - m_s)
-        l_i = l_i * alpha + tl.sum(p, axis=1)
-        vb = tl.load(VB + (gt * nb + c)[:, None] * D + d[None, :], mask=cm[:, None], other=0.0)
-        if DOT == 1:
-            if FP8:
-                svc = tl.load(SV + gt * nb + c, mask=cm, other=0.0)
-                acc = acc * alpha[:, None] + tl.dot((p * svc[None, :]).to(tl.float16), vb.to(tl.float16))
+                sc = tl.dot(q, tl.trans(kk.to(tl.float32)), input_precision=PREC) * scale
+            sc = tl.where(jm[None, :], sc, float("-inf"))
+            m_new = tl.maximum(m_i, tl.max(sc, axis=1))
+            m_s = tl.where(m_new == float("-inf"), 0.0, m_new)
+            p = tl.exp(sc - m_s[:, None])
+            alpha = tl.exp(m_i - m_s)
+            l_i = l_i * alpha + tl.sum(p, axis=1)
+            if DOT == 1:
+                if NEAR_PV_ACC:
+                    acc = tl.dot(p.to(tl.bfloat16), vv, acc=acc * alpha[:, None])
+                else:
+                    acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), vv)
             else:
-                acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), vb)
-        else:
-            acc = acc * alpha[:, None] + tl.dot(p, vb.to(tl.float32), input_precision=PREC)
-        m_i = m_new
-    e_n = kx * LEAF
-    e_lo = sp * eps
-    e_hi = tl.minimum(e_n, e_lo + eps)
-    for e0 in range(e_lo, e_hi, BN):
-        j = e0 + tl.arange(0, BN)
-        jm = j < e_hi
-        leaf = tl.load(IDX + gt * kx + j // LEAF, mask=jm, other=0)
-        tok = leaf * LEAF + j % LEAF
-        kk = tl.load(K + tok[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
-        vv = tl.load(V + tok[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
-        if DOT == 1:
-            if I8:
-                ksc = tl.load(KS + tok, mask=jm, other=0.0)
-                sc = tl.dot(q8, tl.trans(kk)).to(tl.float32) * (sq[:, None] * ksc[None, :] * scale)
+                if NEAR_PV_ACC:
+                    acc = tl.dot(p, vv.to(tl.float32), input_precision=PREC,
+                                 acc=acc * alpha[:, None])
+                else:
+                    acc = acc * alpha[:, None] + tl.dot(p, vv.to(tl.float32), input_precision=PREC)
+            m_i = m_new
+        if TAIL:
+            # keys past the last full leaf (< 16, exact for every query): handled once, by the last split
+            jt = tl.arange(0, 16)
+            jtm = (jt < nt) & (sp == ns - 1)
+            kt = tl.load(TK + jt[:, None] * D + d[None, :], mask=jtm[:, None], other=0.0)
+            vt = tl.load(TV + jt[:, None] * D + d[None, :], mask=jtm[:, None], other=0.0)
+            if DOT == 1:
+                sc = tl.dot(qb, tl.trans(kt)) * scale
             else:
-                sc = tl.dot(qb, tl.trans(kk)) * scale
-        else:
-            sc = tl.dot(q, tl.trans(kk.to(tl.float32)), input_precision=PREC) * scale
-        sc = tl.where(jm[None, :], sc, float("-inf"))
-        m_new = tl.maximum(m_i, tl.max(sc, axis=1))
-        m_s = tl.where(m_new == float("-inf"), 0.0, m_new)
-        p = tl.exp(sc - m_s[:, None])
-        alpha = tl.exp(m_i - m_s)
-        l_i = l_i * alpha + tl.sum(p, axis=1)
-        if DOT == 1:
-            acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), vv)
-        else:
-            acc = acc * alpha[:, None] + tl.dot(p, vv.to(tl.float32), input_precision=PREC)
-        m_i = m_new
-    if TAIL:
-        # keys past the last full leaf (< 16, exact for every query): handled once, by the last split
-        jt = tl.arange(0, 16)
-        jtm = (jt < nt) & (sp == ns - 1)
-        kt = tl.load(TK + jt[:, None] * D + d[None, :], mask=jtm[:, None], other=0.0)
-        vt = tl.load(TV + jt[:, None] * D + d[None, :], mask=jtm[:, None], other=0.0)
-        if DOT == 1:
-            sc = tl.dot(qb, tl.trans(kt)) * scale
-        else:
-            sc = tl.dot(q, tl.trans(kt.to(tl.float32)), input_precision=PREC) * scale
-        sc = tl.where(jtm[None, :], sc, float("-inf"))
-        m_new = tl.maximum(m_i, tl.max(sc, axis=1))
-        m_s = tl.where(m_new == float("-inf"), 0.0, m_new)
-        p = tl.exp(sc - m_s[:, None])
-        alpha = tl.exp(m_i - m_s)
-        l_i = l_i * alpha + tl.sum(p, axis=1)
-        if DOT == 1:
-            acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), vt)
-        else:
-            acc = acc * alpha[:, None] + tl.dot(p, vt.to(tl.float32), input_precision=PREC)
-        m_i = m_new
+                sc = tl.dot(q, tl.trans(kt.to(tl.float32)), input_precision=PREC) * scale
+            sc = tl.where(jtm[None, :], sc, float("-inf"))
+            m_new = tl.maximum(m_i, tl.max(sc, axis=1))
+            m_s = tl.where(m_new == float("-inf"), 0.0, m_new)
+            p = tl.exp(sc - m_s[:, None])
+            alpha = tl.exp(m_i - m_s)
+            l_i = l_i * alpha + tl.sum(p, axis=1)
+            if DOT == 1:
+                acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), vt)
+            else:
+                acc = acc * alpha[:, None] + tl.dot(p, vt.to(tl.float32), input_precision=PREC)
+            m_i = m_new
     base = t * ns + sp
     tl.store(PM + base * T + r, m_i)
     tl.store(PL + base * T + r, l_i)
@@ -272,6 +325,59 @@ def _merge_kernel(PM, PL, PACC, OUT, NS: tl.constexpr, T: tl.constexpr, D: tl.co
         num += tl.load(PACC + ((t * NS + si) * T + r)[:, None] * D + d[None, :]) * w[:, None]
     tl.store(OUT + (t * T + r)[:, None] * D + d[None, :], num / tl.maximum(den, 1.0e-30)[:, None])
 
+
+
+@triton.jit
+def _merge_tail_kernel(PM, PL, PACC, Q, TK, TV, OUT, ntail, scale,
+                       NS: tl.constexpr, T: tl.constexpr, R: tl.constexpr, D: tl.constexpr,
+                       DOT: tl.constexpr, PREC: tl.constexpr):
+    """Merge the same split partials and append <=16 exact trailing keys.
+
+    A second constexpr R controls the number of query rows per merge CTA.
+    R=T retains the validated default; R=32/16 are independent experiments.
+    In the standard fused path the tail dot lives in every _tile_kernel
+    specialization. Here _tile_kernel is compiled without TAIL and this
+    existing merge launch is replaced, not supplemented.
+    """
+    t = tl.program_id(0)
+    r = tl.program_id(1) * R + tl.arange(0, R)
+    d = tl.arange(0, D)
+    mm = tl.full((R,), float("-inf"), tl.float32)
+    for si in tl.static_range(0, NS):
+        mm = tl.maximum(mm, tl.load(PM + (t * NS + si) * T + r))
+    mm = tl.where(mm == float("-inf"), 0.0, mm)
+    den = tl.zeros((R,), tl.float32)
+    num = tl.zeros((R, D), tl.float32)
+    for si in tl.static_range(0, NS):
+        w = tl.exp(tl.load(PM + (t * NS + si) * T + r) - mm)
+        den += tl.load(PL + (t * NS + si) * T + r) * w
+        num += tl.load(PACC + ((t * NS + si) * T + r)[:, None] * D + d[None, :]) * w[:, None]
+
+    j = tl.arange(0, 16)
+    jm = j < ntail
+    q = tl.load(Q + (t * T + r)[:, None] * D + d[None, :])
+    kt = tl.load(TK + j[:, None] * D + d[None, :],
+                 mask=jm[:, None], other=0.0)
+    vt = tl.load(TV + j[:, None] * D + d[None, :],
+                 mask=jm[:, None], other=0.0)
+    if DOT == 1:
+        scores = tl.dot(q.to(tl.bfloat16), tl.trans(kt)) * scale
+    else:
+        scores = tl.dot(q, tl.trans(kt.to(tl.float32)),
+                        input_precision=PREC) * scale
+    scores = tl.where(jm[None, :], scores, float("-inf"))
+    next_mm = tl.maximum(mm, tl.max(scores, axis=1))
+    alpha = tl.exp(mm - next_mm)
+    p = tl.exp(scores - next_mm[:, None])
+    den = den * alpha + tl.sum(p, axis=1)
+    if DOT == 1:
+        num = num * alpha[:, None] + tl.dot(p.to(tl.bfloat16), vt)
+    else:
+        num = num * alpha[:, None] + tl.dot(
+            p, vt.to(tl.float32), input_precision=PREC
+        )
+    tl.store(OUT + (t * T + r)[:, None] * D + d[None, :],
+             num / tl.maximum(den, 1.0e-30)[:, None])
 
 @triton.jit
 def _dequant_kernel(X8, S, OUT, rows, stride_x, stride_s, D: tl.constexpr, BR: tl.constexpr):
@@ -346,11 +452,23 @@ def leaf_stats(mu, kf, vf, nb, scale, leaf=16, prec="tf32", bt=16, bl=4, warps=4
 
 
 def tile_attention(q_c, mu_c, g, lz, vb, excl, idx, k_ex, v_ex, scale, leaf=16, prec="tf32",
-                   bn=32, warps=8, stages=1, splits=8, dot=0, tail=None, ws=None, group=1, sg=None, sv=None, out=None, rb=1, ks=None):
+                   bn=32, warps=8, stages=1, splits=8, dot=0, tail=None, ws=None, group=1, sg=None, sv=None, out=None, rb=1, ks=None,
+                   passes="fused", late_near_q=False, near_bn=None, resource_sink=None,
+                   tail_in_merge=False, tail_merge_rows=None, far_prefetch_lz=False,
+                   pv_dot_acc="none"):
     """q_c [tc,T,D], mu_c [tc,D], g/vb [tc,nb,D], lz [tc,nb], excl int8 [tc,nb], idx [tc,K];
     k_ex/v_ex: key/value tokens for the near field (fp32, or bf16 when dot=1).
     tail: optional (tk [n,D], tv [n,D]) fp32 keys beyond the last full leaf, attended exactly by
     every query as one extra softmax partial (host-side, graph-safe)."""
+    if passes not in ("fused", "split"):
+        raise ValueError("passes must be 'fused' or 'split'")
+    if pv_dot_acc not in ("none", "far", "near", "both"):
+        raise ValueError("pv_dot_acc must be none, far, near or both")
+    far_pv_acc = int(pv_dot_acc in ("far", "both"))
+    near_pv_acc = int(pv_dot_acc in ("near", "both"))
+    near_bn = int(bn if near_bn is None else near_bn)
+    if near_bn < 16 or near_bn > bn or (near_bn & (near_bn - 1)):
+        raise ValueError("near_bn must be power-of-two >=16 and <= far bn")
     _dll()
     tc, tile, d = (int(x) for x in q_c.shape)       # tc tiles; state arrays hold tc // group rows
     nb = int(lz.shape[1])
@@ -365,19 +483,46 @@ def tile_attention(q_c, mu_c, g, lz, vb, excl, idx, k_ex, v_ex, scale, leaf=16, 
     pacc = _buf(ws, "pacc", (tc, ns, tile, d), torch.float32, q_c.device)
     ntail = int(tail[0].shape[0]) if tail is not None else 0
     use_tail_kernel = 0 < ntail <= 16
+    merge_tail = bool(tail_in_merge and use_tail_kernel)
+    merge_rows = tile if tail_merge_rows is None else int(tail_merge_rows)
+    if merge_tail and (merge_rows < 16 or merge_rows > tile
+                       or tile % merge_rows or (merge_rows & (merge_rows - 1))):
+        raise ValueError("tail_merge_rows must divide tile and be power-of-two >=16")
     tk = tv = None
     if use_tail_kernel:
         tdt = torch.bfloat16 if dot == 1 else torch.float32
         tk, tv = tail[0].to(tdt).contiguous(), tail[1].to(tdt).contiguous()
-    _tile_kernel[(tc, ns, int(rb))](q_c.contiguous(), mu_c.contiguous(), g, lz, vb, excl,
+    if passes == "split":
+        _tile_kernel[(tc, ns, int(rb))](q_c.contiguous(), mu_c.contiguous(), g, lz, vb, excl,
+                               idx.to(torch.int32).contiguous(), k_ex, v_ex, pm, pl, pacc,
+                               sg if sg is not None else lz, sv if sv is not None else lz,
+                               tk if use_tail_kernel else lz, tv if use_tail_kernel else lz,
+                               ks if ks is not None else lz, nb, kx, lps, eps, ntail if use_tail_kernel else 0,
+                               float(scale), T=tile, D=d, BN=bn, BN_NEAR=near_bn, LEAF=leaf, PREC=prec, DOT=dot, GR=int(group),
+                               FP8=1 if (sg is not None and g.dtype != torch.int8) else 0, TAIL=1 if (use_tail_kernel and not merge_tail) else 0, RB=int(rb),
+                               I8=1 if g.dtype == torch.int8 else 0, FAR_PREFETCH_LZ=int(far_prefetch_lz),
+                               FAR_PV_ACC=far_pv_acc, NEAR_PV_ACC=near_pv_acc, PASS=1, LATE_NEAR_Q=int(late_near_q),
+                               num_warps=warps, num_stages=stages)
+    compiled_tile = _tile_kernel[(tc, ns, int(rb))](q_c.contiguous(), mu_c.contiguous(), g, lz, vb, excl,
                            idx.to(torch.int32).contiguous(), k_ex, v_ex, pm, pl, pacc,
                            sg if sg is not None else lz, sv if sv is not None else lz,
                            tk if use_tail_kernel else lz, tv if use_tail_kernel else lz,
                            ks if ks is not None else lz, nb, kx, lps, eps, ntail if use_tail_kernel else 0,
-                           float(scale), T=tile, D=d, BN=bn, LEAF=leaf, PREC=prec, DOT=dot, GR=int(group),
-                           FP8=1 if (sg is not None and g.dtype != torch.int8) else 0, TAIL=1 if use_tail_kernel else 0, RB=int(rb),
-                           I8=1 if g.dtype == torch.int8 else 0,
+                           float(scale), T=tile, D=d, BN=bn, BN_NEAR=near_bn, LEAF=leaf, PREC=prec, DOT=dot, GR=int(group),
+                           FP8=1 if (sg is not None and g.dtype != torch.int8) else 0, TAIL=1 if (use_tail_kernel and not merge_tail) else 0, RB=int(rb),
+                           I8=1 if g.dtype == torch.int8 else 0, FAR_PREFETCH_LZ=int(far_prefetch_lz),
+                               FAR_PV_ACC=far_pv_acc, NEAR_PV_ACC=near_pv_acc, PASS=(2 if passes == "split" else 0), LATE_NEAR_Q=int(late_near_q),
                            num_warps=warps, num_stages=stages)
+    if resource_sink is not None:
+        # Compile-specific metadata from the returned Triton kernel object.
+        meta = getattr(compiled_tile, "metadata", None)
+        for field, value in (
+            ("n_regs", getattr(compiled_tile, "n_regs", None)),
+            ("n_spills", getattr(compiled_tile, "n_spills", None)),
+            ("shared_B", getattr(meta, "shared", None)),
+            ("num_warps", getattr(meta, "num_warps", None)),
+        ):
+            resource_sink[field] = int(value) if value is not None else None
     if ntail > 16:                                            # large tails: host-side partial (rare)
         tk, tv = tail
         lg = torch.einsum("ctd,nd->ctn", q_c.float(), tk.float()) * float(scale)
@@ -387,5 +532,13 @@ def tile_attention(q_c, mu_c, g, lz, vb, excl, idx, k_ex, v_ex, scale, leaf=16, 
         pl = torch.cat([pl, te.sum(-1)[:, None]], 1)
         pacc = torch.cat([pacc, torch.einsum("ctn,nd->ctd", te, tv.float())[:, None]], 1)
     res = out if out is not None else torch.empty((tc, tile, d), device=q_c.device, dtype=torch.float32)
-    _merge_kernel[(tc,)](pm, pl, pacc, res, NS=int(pm.shape[1]), T=tile, D=d, num_warps=4)
+    if merge_tail:
+        _merge_tail_kernel[(tc, triton.cdiv(tile, merge_rows))](
+            pm, pl, pacc, q_c.contiguous(), tk, tv, res,
+            ntail, float(scale), NS=int(pm.shape[1]), T=tile,
+            R=merge_rows, D=d, DOT=dot, PREC=prec, num_warps=4,
+        )
+    else:
+        _merge_kernel[(tc,)](pm, pl, pacc, res,
+                             NS=int(pm.shape[1]), T=tile, D=d, num_warps=4)
     return res
