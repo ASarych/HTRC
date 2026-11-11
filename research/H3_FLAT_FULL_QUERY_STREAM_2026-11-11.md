@@ -65,9 +65,50 @@ by a K/V-state reuse experiment if full-Q timing proves expensive.
 No model checkpoint, 56 distinct model heads, CUDA Graph, or video
 quality/latency is exercised.
 
-Technical validation: standalone full-Q window/padding/group-loop
-logic received a mocked CPU smoke PASS, including a short final window.
-Integrated Python imports, GPU execution, full Q parity and full-Q
-speed **UNRUN** until user runs the command. Fail closed on any parity,
-K8 exactness, capture shape or OOM error. No BEST promotion and no
-production switch in this branch.
+## Full-Q GPU result: completed and bit-exact on RTX 5070 Ti
+
+User-run `flat_gpu_quant_isolation_combined_20261111-222800.json`
+from exact candidate `bbc5d1ecf632dfd1c24c94975169ebaa06fc9e78`
+and pinned BEST `e47cc7a310936547ab6c7d97bd07526eb6a135fe`.
+Combined `--head-cases 4,56 --query-coverage full` produced ONE
+persistent JSON with `completed: true`, `errors: []` and no
+OOM retries in either child case.
+
+Captured Q length is **40,759** rows per head, processed in
+**40 windows** of 16x64 rows (last valid Q range
+`[39936,40759)`, padded 201 Q rows). Coverage is complete.
+
+| Case | Windows × head groups | Torch K8 sum median wall | Triton K8 sum median wall | Gain | H12/4-group max incremental peak |
+|---|---:|---:|---:|---:|---:|
+| 4 distinct native heads | 40 × 1 = 40 | 179.444 ms | 103.692 ms | **1.73054x** | 262.552 → 163.695 MiB |
+| 56 logical heads, 4 repeated | 40 × 5 = 200 | 1564.081 ms | 848.830 ms | **1.84263x** | 785.218 → 491.485 MiB |
+
+Across all 240 window-group combinations, the three pairwise
+parity checks `torch_vs_pinned`, `triton_vs_pinned`,
+`torch_vs_triton` have **rel-L2=0, max-abs=0**, all PASS.
+Independent full Flat oracles for raw heads 1/16/27/55 PASS on
+windows 0, 20, 39 in both cases. All four K8 exact gates PASS
+in each case (40,752 rows/head, 0 INT8 byte mismatches and
+zero maximum absolute scale difference).
+
+**Research decision:** full-query window coverage and fused K8
+gain PASS. These are *sums of group-window medians* over repeated
+K/V preparation, not whole-model latency. There is no model
+checkpoint, CUDA Graph, 56 distinct native heads or video
+quality validation. No global BEST/production promotion.
+
+## Streaming console fix (after this measurement)
+
+The previous combined runner used `subprocess.run(capture_output=True)`
+and only printed the child process output *after* a head case
+finished. This explains the apparent hang despite a successful
+JSON. Now the parent uses `subprocess.Popen` and forwards each
+`WINDOW`/case-progress line immediately (with the same one
+persistent JSON result, temporary child files, parity and kernel
+math unchanged). **GPU re-run of the console-only change UNRUN**;
+the uploaded 2026-11-11 full-Q result applies to the previous
+mathematically identical candidate.
+
+Next most meaningful gate: prepare/reuse K/V-side state across
+query windows, then compare isolated cache reuse against this
+full-Q baseline.

@@ -178,17 +178,31 @@ def run_head_cases(args, parser):
             if args.max_heads_per_group is not None:
                 cmd.extend(["--max-heads-per-group", str(args.max_heads_per_group)])
             print(f"HEAD_CASE: {heads}", flush=True)
-            process = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            for line in process.stdout.splitlines():
-                if not line.startswith("REPORT:"):
-                    print(line, flush=True)
-            if process.stderr:
-                print(process.stderr, end="", file=sys.stderr, flush=True)
+            # Do NOT buffer child output until its full-Q work finishes.
+            # Forward each WINDOW/GROUP event immediately to PowerShell.
+            # Only the short trailing output is retained for failure diagnosis.
+            tail_output = []
+            with subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1, errors="replace"
+            ) as process:
+                if process.stdout is None:
+                    raise RuntimeError("Child benchmark stdout pipe unavailable")
+                for raw_line in process.stdout:
+                    line = raw_line.rstrip("\r\n")
+                    if not line.startswith("REPORT:"):
+                        print(line, flush=True)
+                    tail_output.append(line)
+                    if len(tail_output) > 32:
+                        tail_output.pop(0)
+                returncode = process.wait()
+            print(f"HEAD_CASE_DONE: {heads}, exit={returncode}", flush=True)
             matches = list(case_out.glob("flat_gpu_quant_isolation_ab_*.json"))
             if len(matches) != 1:
                 report["errors"].append({
-                    "head_count": heads, "returncode": process.returncode,
+                    "head_count": heads, "returncode": returncode,
                     "error": "Expected one temporary case JSON, found " + str(len(matches)),
+                    "child_output_tail": "\n".join(tail_output[-12:]),
                 })
                 break
             case = json.loads(matches[0].read_text(encoding="utf-8"))
@@ -210,9 +224,9 @@ def run_head_cases(args, parser):
                         for g in case["groups"]
                     ),
                 })
-            if process.returncode != 0 or not case.get("completed"):
+            if returncode != 0 or not case.get("completed"):
                 report["errors"].append({
-                    "head_count": heads, "returncode": process.returncode,
+                    "head_count": heads, "returncode": returncode,
                     "error": "Case failed; see embedded case errors and console output",
                 })
                 break
