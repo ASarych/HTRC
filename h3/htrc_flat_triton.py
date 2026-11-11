@@ -39,21 +39,60 @@ def _dll():
 
 
 @triton.jit
+def _quant_key_int8_rows(KBF, K8, KS, N: tl.constexpr, D: tl.constexpr,
+                         BR: tl.constexpr):
+    """Quantize BF16 K and per-token FP32 scales, no global FP32 K copy.
+
+    Mirrors pinned kf=kbf.float, scale=amax*(1/127), and
+    quotient rounded to nearest even then clamped to [-127,127].
+    PTX cvt.rni.s32.f32 rounds to nearest even (torch.round).
+    An independent GPU quantization exactness gate remains mandatory.
+    """
+    rr=tl.program_id(0)*BR+tl.arange(0,BR)
+    dd=tl.arange(0,D)
+    active=rr<N
+    k=tl.load(KBF+rr[:,None]*D+dd[None,:],
+              mask=active[:,None],other=0.0).to(tl.float32)
+    scale=tl.maximum(tl.max(tl.abs(k),axis=1)*(1.0/127.0),1.0e-20)
+    x=tl.div_rn(k,scale[:,None])
+    nearest=tl.inline_asm_elementwise(
+        asm="cvt.rni.s32.f32 $0, $1;",
+        constraints="=r,f",
+        args=[x],dtype=tl.int32,is_pure=True,pack=1
+    )
+    quant=tl.minimum(tl.maximum(nearest,-127),127).to(tl.int8)
+    tl.store(K8+rr[:,None]*D+dd[None,:],quant,mask=active[:,None])
+    tl.store(KS+rr,scale,mask=active)
+
+
+@triton.jit
 def _stats_kernel(MU, K, V, G, LZ, VB, SG, SV, tc, nb, scale,
                   D: tl.constexpr, BT: tl.constexpr, LEAF: tl.constexpr, BL: tl.constexpr,
-                  PREC: tl.constexpr, FP8: tl.constexpr = 0, I8: tl.constexpr = 0):
+                  PREC: tl.constexpr, FP8: tl.constexpr = 0, I8: tl.constexpr = 0,
+                  BATCH_TILES_PER_HEAD: tl.constexpr = 0,
+                  BATCH_KEY_ROWS: tl.constexpr = 0,
+                  BATCH_TILE_BLOCKS_PER_HEAD: tl.constexpr = 0):
     pt = tl.program_id(0)
     pl = tl.program_id(1)
-    t = pt * BT + tl.arange(0, BT)
-    tm = t < tc
+    if BATCH_TILES_PER_HEAD > 0:
+        # Last stats block of one head cannot spill into next head.
+        head = pt // BATCH_TILE_BLOCKS_PER_HEAD
+        local_t = (pt % BATCH_TILE_BLOCKS_PER_HEAD) * BT + tl.arange(0, BT)
+        t = head * BATCH_TILES_PER_HEAD + local_t
+        tm = local_t < BATCH_TILES_PER_HEAD
+        key_base = head * BATCH_KEY_ROWS
+    else:
+        t = pt * BT + tl.arange(0, BT)
+        tm = t < tc
+        key_base = 0
     d = tl.arange(0, D)
     s = tl.arange(0, LEAF)
     mu = tl.load(MU + t[:, None] * D + d[None, :], mask=tm[:, None], other=0.0)
     for j in tl.static_range(0, BL):
         l = pl * BL + j
         if l < nb:
-            kj = tl.load(K + (l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
-            vj = tl.load(V + (l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
+            kj = tl.load(K + (key_base + l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
+            vj = tl.load(V + (key_base + l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
             a = tl.dot(mu, tl.trans(kj), input_precision=PREC) * scale      # [BT, LEAF]
             m = tl.max(a, axis=1)
             w = tl.exp(a - m[:, None])
@@ -92,10 +131,21 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
                  TAIL: tl.constexpr = 0, RB: tl.constexpr = 1, I8: tl.constexpr = 0,
                  PASS: tl.constexpr = 0, LATE_NEAR_Q: tl.constexpr = 0,
                  FAR_PREFETCH_LZ: tl.constexpr = 0,
-                 FAR_PV_ACC: tl.constexpr = 0, NEAR_PV_ACC: tl.constexpr = 0):
+                 FAR_PV_ACC: tl.constexpr = 0, NEAR_PV_ACC: tl.constexpr = 0,
+                 BATCH_TILES_PER_HEAD: tl.constexpr = 0,
+                 BATCH_KEY_ROWS: tl.constexpr = 0):
     """Split-K over leaves: program (tile t, split sp) covers far leaves [sp*lps, +lps) and
     exact tokens [sp*eps, +eps); writes partial (max, sum, acc) merged on the host."""
     t = tl.program_id(0)
+    # New opt-in grid: t = head * tiles_per_head + local_tile.
+    # Per-head K/V/KS pointers use local key indices; Q/G/states/IDX/
+    # split output are flattened on the tile dimension. Original
+    # specialization compiles away this branch at BATCH_TILES_PER_HEAD=0.
+    if BATCH_TILES_PER_HEAD > 0:
+        head = t // BATCH_TILES_PER_HEAD
+        key_base = head * BATCH_KEY_ROWS
+    else:
+        key_base = 0
     gt = t // GR          # far-field state / near leaves are shared by GR consecutive tiles
     sp = tl.program_id(1)
     ns = tl.num_programs(1)
@@ -209,11 +259,11 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
             jm = j < e_hi
             leaf = tl.load(IDX + gt * kx + j // LEAF, mask=jm, other=0)
             tok = leaf * LEAF + j % LEAF
-            kk = tl.load(K + tok[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
-            vv = tl.load(V + tok[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
+            kk = tl.load(K + (key_base + tok)[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
+            vv = tl.load(V + (key_base + tok)[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
             if DOT == 1:
                 if I8:
-                    ksc = tl.load(KS + tok, mask=jm, other=0.0)
+                    ksc = tl.load(KS + key_base + tok, mask=jm, other=0.0)
                     sc = tl.dot(q8, tl.trans(kk)).to(tl.float32) * (sq[:, None] * ksc[None, :] * scale)
                 else:
                     sc = tl.dot(qb, tl.trans(kk)) * scale
@@ -330,7 +380,9 @@ def _merge_kernel(PM, PL, PACC, OUT, NS: tl.constexpr, T: tl.constexpr, D: tl.co
 @triton.jit
 def _merge_tail_kernel(PM, PL, PACC, Q, TK, TV, OUT, ntail, scale,
                        NS: tl.constexpr, T: tl.constexpr, R: tl.constexpr, D: tl.constexpr,
-                       DOT: tl.constexpr, PREC: tl.constexpr):
+                       DOT: tl.constexpr, PREC: tl.constexpr,
+                       BATCH_TILES_PER_HEAD: tl.constexpr = 0,
+                       BATCH_TAIL_ROWS: tl.constexpr = 0):
     """Merge the same split partials and append <=16 exact trailing keys.
 
     A second constexpr R controls the number of query rows per merge CTA.
@@ -355,10 +407,18 @@ def _merge_tail_kernel(PM, PL, PACC, Q, TK, TV, OUT, ntail, scale,
 
     j = tl.arange(0, 16)
     jm = j < ntail
+    # In a head-flattened grid each tile's tail is owned by its head.
+    # Default BATCH_TILES_PER_HEAD=0 preserves the pinned single-head
+    # specialization and its exact pointer math.
+    if BATCH_TILES_PER_HEAD > 0:
+        head = t // BATCH_TILES_PER_HEAD
+        tail_base = head * BATCH_TAIL_ROWS
+    else:
+        tail_base = 0
     q = tl.load(Q + (t * T + r)[:, None] * D + d[None, :])
-    kt = tl.load(TK + j[:, None] * D + d[None, :],
+    kt = tl.load(TK + (tail_base + j)[:, None] * D + d[None, :],
                  mask=jm[:, None], other=0.0)
-    vt = tl.load(TV + j[:, None] * D + d[None, :],
+    vt = tl.load(TV + (tail_base + j)[:, None] * D + d[None, :],
                  mask=jm[:, None], other=0.0)
     if DOT == 1:
         scores = tl.dot(q.to(tl.bfloat16), tl.trans(kt)) * scale
