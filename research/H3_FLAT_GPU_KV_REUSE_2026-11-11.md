@@ -116,3 +116,22 @@ not be treated as a same-group K/V reuse baseline.
 No ComfyNodes production switch in this experiment. Any
 model-resident OOM or quality regression is a hard blocker;
 choose lower-residency streaming, not speculative caching.
+
+## Local CLI smoke failure and fix (2026-11-11)
+
+Received `flat_gpu_kv_reuse_ab_20261111-224929.json`.
+Top-level `completed: false`, `cases: []`; only head case 4
+was started. The child process failed *before CUDA benchmarking* with
+`AttributeError: 'Namespace' object has no attribute 'case_heads'`
+at `single_case()`, because argparse defined `--_case-heads` as
+`args._case_heads`. This is a CLI wiring bug, not an A/B result,
+K/V-cache parity failure or GPU OOM. The benchmark source now reads
+`args._case_heads`; a CPU-only CLI regression test checks all used
+argparse names and child flag consistency at
+`tools/test_h3_flat_gpu_kv_reuse_cli.py`.
+
+The original uploaded JSON is a failure artifact, not performance
+evidence. CPU static argument-reference audit: PASS (13 used
+properties, all declared). CPU unittest / Python compile on the
+published fix: UNRUN; actual GPU cache test: **UNRUN** until rerun
+from corrected HEAD. Only one persistent JSON is emitted.
