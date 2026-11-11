@@ -171,7 +171,7 @@ def single_case(args):
         raise MemoryError("Not enough allowed GPU budget for even one cached head")
     group_size = min(plan.heads_per_group, int(with_cache))
     report = {
-        "experiment": "h3_flat_gpu_qkv_preparation_reuse_full_query_ab_v1",
+        "experiment": "h3_flat_gpu_qkv_preparation_reuse_full_query_ab_v2",
         "input_residency": "gpu",
         "gpu": torch.cuda.get_device_name(),
         "capture": str(capture_path),
@@ -208,7 +208,9 @@ def single_case(args):
             "MU-dependent leaf stats, rowmax/topk and Tile/Merge still recalculate per window.",
             "K/V cache is per single attention call and per head group; never across denoising steps.",
             "Both paths consume same captured GPU QKV. Original BEST is numerical oracle, not timed.",
-            "Cache build time is included in amortized comparison, not per-window steady timing.",
+            "First cache build is recorded separately: it may include Triton JIT and is NOT used as a per-call warmed build cost.",
+            "Amortized repeat-call comparison includes one median warmed cache build per head group.",
+            "Cold-start comparison retains measured first-build time, including potential compilation.",
             "Uncached ABBA runs with the unused persistent cache still allocated, for symmetric interleaving.",
             "Full-Q figures are sums of per-window group medians, not a whole-model step.",
             "56 logical heads repeat four native captures; no model or video inference.",
@@ -236,17 +238,60 @@ def single_case(args):
                 cache = None
                 pending = []
                 try:
+                    # First build may include a new Triton specialization/JIT.
+                    # Record that startup cost separately; do not mistake it
+                    # for the repeated per-attention-call cache build.
                     torch.cuda.synchronize()
-                    live_before = torch.cuda.memory_allocated()
+                    cold_live_before = torch.cuda.memory_allocated()
                     torch.cuda.reset_peak_memory_stats()
-                    start = time.perf_counter()
-                    cache = full.stage.prepare_gpu_head_kv_cache(cap, ids, tr_new)
+                    cold_start = time.perf_counter()
+                    cold_cache = full.stage.prepare_gpu_head_kv_cache(cap, ids, tr_new)
                     torch.cuda.synchronize()
-                    cache_build_wall_ms = (time.perf_counter() - start) * 1000.0
-                    cache_mib = full.stage.gpu_head_kv_cache_bytes(cache) / full.stage.MIB
-                    cache_build_peak_mib = (
-                        torch.cuda.max_memory_allocated() - live_before
+                    cache_first_build_wall_ms = (
+                        time.perf_counter() - cold_start
+                    ) * 1000.0
+                    cache_first_build_peak_mib = (
+                        torch.cuda.max_memory_allocated() - cold_live_before
                     ) / full.stage.MIB
+                    del cold_cache
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    # Rebuild after compilation. Use median of repeated
+                    # warm builds as the single per-call amortized cost.
+                    # Keep only the final complete cache for all Q windows.
+                    cache_build_samples_ms = []
+                    cache_build_peak_samples_mib = []
+                    for build_index in range(args.cache_build_rounds):
+                        torch.cuda.synchronize()
+                        live_before = torch.cuda.memory_allocated()
+                        torch.cuda.reset_peak_memory_stats()
+                        start = time.perf_counter()
+                        candidate_cache = full.stage.prepare_gpu_head_kv_cache(
+                            cap, ids, tr_new
+                        )
+                        torch.cuda.synchronize()
+                        cache_build_samples_ms.append(
+                            (time.perf_counter() - start) * 1000.0
+                        )
+                        cache_build_peak_samples_mib.append(
+                            (torch.cuda.max_memory_allocated() - live_before)
+                            / full.stage.MIB
+                        )
+                        if build_index + 1 == args.cache_build_rounds:
+                            cache = candidate_cache
+                        else:
+                            del candidate_cache
+                            gc.collect()
+                            torch.cuda.empty_cache()
+                    cache_build_wall_ms = statistics.median(cache_build_samples_ms)
+                    cache_build_peak_mib = max(cache_build_peak_samples_mib)
+                    cache_mib = full.stage.gpu_head_kv_cache_bytes(cache) / full.stage.MIB
+                    print(
+                        "KV_BUILD", pos, stop,
+                        "first_ms", f"{cache_first_build_wall_ms:.3f}",
+                        "warm_median_ms", f"{cache_build_wall_ms:.3f}",
+                        "resident_mib", f"{cache_mib:.3f}", flush=True
+                    )
                     checkpoints = {0, windows // 2, windows - 1}
                     for wi in range(windows):
                         qstart = wi * window_rows
@@ -295,15 +340,20 @@ def single_case(args):
                         "head_job_range": [pos, stop],
                         "raw_heads": ids,
                         "kv_cache_build_wall_ms": cache_build_wall_ms,
+                        "kv_cache_build_warm_samples_ms": cache_build_samples_ms,
+                        "kv_cache_first_build_wall_ms": cache_first_build_wall_ms,
                         "kv_cache_live_mib": cache_mib,
                         "kv_cache_build_incremental_peak_mib": cache_build_peak_mib,
+                        "kv_cache_first_build_incremental_peak_mib": cache_first_build_peak_mib,
                         "full_query_window_results": pending,
                         "sum_of_window_median_wall_ms": {
                             "uncached": cold,
                             "reuse_steady": hot,
                             "reuse_amortized_including_build": hot + cache_build_wall_ms,
+                            "reuse_cold_start_including_first_build": hot + cache_first_build_wall_ms,
                             "steady_speedup": cold / hot,
                             "amortized_speedup": cold / (hot + cache_build_wall_ms),
+                            "cold_start_speedup": cold / (hot + cache_first_build_wall_ms),
                         },
                         "max_peak_alloc_mib_including_resident_cache": {
                             which: max(
@@ -345,13 +395,17 @@ def single_case(args):
         hot = sum(g["sum_of_window_median_wall_ms"]["reuse_steady"]
                   for g in report["groups"])
         cache_build = sum(g["kv_cache_build_wall_ms"] for g in report["groups"])
+        first_build = sum(g["kv_cache_first_build_wall_ms"] for g in report["groups"])
         report["summary"] = {
             "sum_window_group_medians_uncached_ms": cold,
             "sum_window_group_medians_reuse_steady_ms": hot,
             "sum_kv_cache_build_wall_ms": cache_build,
+            "sum_kv_cache_first_build_wall_ms": first_build,
             "reuse_amortized_ms": hot + cache_build,
+            "reuse_cold_start_including_first_build_ms": hot + first_build,
             "speedup_steady": cold / hot,
             "speedup_amortized_with_build": cold / (hot + cache_build),
+            "speedup_cold_start_including_first_build": cold / (hot + first_build),
             "max_kv_cache_live_mib": max(g["kv_cache_live_mib"]
                                          for g in report["groups"]),
             "max_peak_alloc_mib_with_cache": {
@@ -372,6 +426,8 @@ def main():
     ap.add_argument("--tiles", type=int, default=16)
     ap.add_argument("--rounds", type=int, default=2)
     ap.add_argument("--warmups", type=int, default=1)
+    ap.add_argument("--cache-build-rounds", type=int, default=3,
+                    help="Warmed cache-build samples per group, after separately measuring the first build")
     ap.add_argument("--tolerance", type=float, default=1e-4)
     ap.add_argument("--budget-mib", type=float, default=1024)
     ap.add_argument("--reserve-mib", type=float, default=256)
@@ -379,7 +435,7 @@ def main():
     ap.add_argument("--out", default=r"D:\ComfyOutput\H3\math_probe")
     ap.add_argument("--_case-heads", type=int, default=None, help=argparse.SUPPRESS)
     args = ap.parse_args()
-    if min(args.tiles, args.rounds, args.warmups) < 1:
+    if min(args.tiles, args.rounds, args.warmups, args.cache_build_rounds) < 1:
         ap.error("tiles, rounds and warmups must be positive")
     if (not math.isfinite(args.budget_mib) or args.budget_mib <= 0
         or not math.isfinite(args.reserve_mib) or args.reserve_mib < 0):
@@ -405,7 +461,7 @@ def main():
     if len(set(heads)) != len(heads):
         ap.error("--head-cases must contain unique integers")
     combined = {
-        "experiment": "h3_flat_gpu_kv_preparation_reuse_combined_v1",
+        "experiment": "h3_flat_gpu_kv_preparation_reuse_combined_v2",
         "head_cases": heads, "input_residency": "gpu",
         "source_commits": {
             "pinned_best": full.base.BEST,
@@ -418,6 +474,8 @@ def main():
             "ONE persistent JSON; intermediate case JSONs are temporary.",
             "Each head count runs in a separate process to isolate CUDA residency.",
             "Both A/B paths use fused K8; KV cache reused only across Q windows of one call.",
+            "First GPU cache build includes cold-start costs; warmed-build median is used for steady repeated-call amortization.",
+            "Both cold-start and warmed-cache-build-inclusive speeds are retained.",
         ],
     }
     with tempfile.TemporaryDirectory(prefix="htrc_kv_reuse_cases_") as tmp:
@@ -430,6 +488,7 @@ def main():
                 "--capture", args.capture, "--mode", args.mode,
                 "--tiles", str(args.tiles), "--rounds", str(args.rounds),
                 "--warmups", str(args.warmups),
+                "--cache-build-rounds", str(args.cache_build_rounds),
                 "--tolerance", str(args.tolerance),
                 "--budget-mib", str(args.budget_mib),
                 "--reserve-mib", str(args.reserve_mib),
