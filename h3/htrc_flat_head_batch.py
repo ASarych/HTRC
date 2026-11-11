@@ -337,6 +337,12 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         raise ValueError(f"Head ID missing in capture: {exc}") from exc
     h=len(positions)
     q_cap,k_cap,v_cap=(capture[x] for x in ("q_qhd","k_khd","v_khd"))
+    if q_cap.device != k_cap.device or q_cap.device != v_cap.device:
+        raise ValueError("All Q/K/V capture tensors must share one device")
+    if q_cap.device.type not in ("cpu", "cuda"):
+        raise ValueError("Only CPU or CUDA Q/K/V capture tensors supported")
+    if q_cap.device.type == "cuda" and input_cast == "cpu":
+        raise ValueError("CPU BF16 staging is invalid for GPU-resident Q/K/V")
     tile=64
     n_query=tile_count*tile
     if n_query>int(q_cap.shape[0]):
@@ -352,14 +358,15 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     if kx<1:
         raise ValueError("Exact leaf count must be nonzero")
     dev=torch.device("cuda")
-    pos=torch.tensor(positions,dtype=torch.long)
-    # One CPU gather per Q/K/V, rather than 3*H separate copies.
+    pos=torch.tensor(positions,dtype=torch.long,device=q_cap.device)
+    # One source-device gather per Q/K/V rather than 3*H independent transfers.
     def gather(key, rows):
         raw=capture[key][:rows]
         return raw.index_select(1,pos).permute(1,0,2).contiguous()
     Q=gather("q_qhd",n_query).to(dev).float().view(h,tile_count,tile,dim).contiguous()
     MU=Q.mean(dim=2).contiguous()
-    mark_stage("query_gather_h2d_mu")
+    mark_stage("query_gather_h2d_mu" if q_cap.device.type=="cpu"
+               else "query_gather_gpu_mu")
     # CPU BF16 conversion avoids a whole-group FP32 GPU staging copy.
     def gather_bf16(name):
         raw=gather(name,nkeys)
@@ -368,7 +375,8 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         return raw.to(dev).to(torch.bfloat16).contiguous()
     kbf=gather_bf16("k_khd")
     vbf=gather_bf16("v_khd")
-    mark_stage("key_value_gather_h2d")
+    mark_stage("key_value_gather_h2d" if q_cap.device.type=="cpu"
+               else "key_value_gather_gpu")
     if quant_backend=="torch":
         # Retain the original numerical/allocator path as control.
         kf=kbf.float()

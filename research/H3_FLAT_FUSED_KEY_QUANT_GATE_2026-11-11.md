@@ -81,3 +81,33 @@ Do not promote until full input-to-output wins over pinned BEST
 at or below acceptable VRAM and real model integration gate.
 Previous compact dq8/sdq query cache remains independently UNRUN.
 
+
+## HTRC local GPU result, 2026-11-11: K8 exact PASS, whole-path promotion FAIL
+
+Evidence: user-supplied `flat_full_prep_quant_ab_20261111-201700.json`,
+RTX 5070 Ti. HTRC candidate branch was
+`experiment/flat-head-batching-quant-20261111@8d8ae6c79ab9c7ed1050cf7ede92dd8efe300ff3`.
+Pinned comparison remains the blob-identical HTRC `a8fe43e7`
+(original source `e47cc7a` in ComfyNodes).
+
+- Triton BF16-to-INT8 K/scales: **0 mismatches over 40,752 rows**;
+  scale maximum absolute difference 0 on captured head 1.
+- 56 **logical** head jobs, repeating four distinct captured heads
+  1/16/27/55, in groups 12+12+12+12+8; fast/16 tiles.
+- Five of five final attention parity comparisons are exact (relative L2
+  and max absolute difference both 0); four native full-Flat oracles PASS.
+- Sum of group medians, synchronized host full wall (not true single-run
+  end-to-end): pinned **509.1916 ms**, triton_cpu **545.4007 ms**,
+  candidate **7.11% slower** (speedup best/new **0.93361x**).
+- Peak incremental PyTorch allocation for 12-head group:
+  pinned 453.3125 MiB, candidate 491.6909 MiB (+38.38 MiB).
+- Group-specific signal: fused Tile/Merge decreases wall time,
+  but K/V gather+H2D dominates most preparation; an untimed
+  stage diagnostic shows ~103.84 ms K/V gather+H2D vs
+  ~0.74 ms K8 quant in one group.
+
+This falsifies an end-to-end speed gain **for CPU-resident captured QKV**.
+Do not promote the candidate into BEST. The GPU-resident input case
+was **not measured** in this uploaded report and is a separate experiment:
+`research/H3_FLAT_GPU_RESIDENT_QKV_2026-11-11.md`.
+No native 56-unique-head, 14GiB checkpoint-resident or full-video proof.

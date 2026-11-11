@@ -270,6 +270,8 @@ def main():
     ap.add_argument("--quant-mode",default="torch_gpu",
                     choices=("torch_gpu","torch_cpu","triton_gpu","triton_cpu"),
                     help="Candidate K8 quant/copy backend; BEST always pinned")
+    ap.add_argument("--input-residency",default="cpu",choices=("cpu","gpu"),
+                    help="CPU capture (H2D timed) or preloaded GPU QKV (H2D outside timing)")
     ap.add_argument("--tiles",type=int,default=16)
     ap.add_argument("--budget-mib",type=float,default=1024.0)
     ap.add_argument("--reserve-mib",type=float,default=256.0)
@@ -281,6 +283,8 @@ def main():
     args=ap.parse_args()
     if not torch.cuda.is_available():
         ap.error("CUDA GPU required")
+    if args.input_residency=="gpu" and args.quant_mode.endswith("_cpu"):
+        ap.error("GPU-resident QKV requires --quant-mode torch_gpu or triton_gpu")
     if any(v<1 for v in (
         args.heads,args.tiles,args.rounds,args.warmups
     )):
@@ -313,6 +317,18 @@ def main():
     else:
         selected=available[:args.heads]
         kind="distinct_native"
+    # Simulate model-native GPU input without mixing PCIe transfers into A/B.
+    # The default CPU-mmap workload remains unchanged and independent.
+    capture_gpu_mib=0.0
+    if args.input_residency=="gpu":
+        cap=dict(cap)
+        for key in ("q_qhd","k_khd","v_khd"):
+            cap[key]=cap[key].to("cuda").contiguous()
+        torch.cuda.synchronize()
+        capture_gpu_mib=sum(
+            cap[key].numel()*cap[key].element_size()
+            for key in ("q_qhd","k_khd","v_khd")
+        )/stage.MIB
     free,_=torch.cuda.mem_get_info()
     budget=min(free,int(args.budget_mib*stage.MIB))
     keys=(int(cap["k_khd"].shape[0])//16)*16
@@ -327,13 +343,19 @@ def main():
                   args.max_heads_per_group or planned.heads_per_group)
     print(json.dumps({
         "head_type":kind,"logical_heads":len(selected),
+        "input_residency":args.input_residency,
+        "capture_gpu_resident_mib":capture_gpu_mib,
         "free_mib_before":free/stage.MIB,
         "effective_budget_mib":budget/stage.MIB,
         "head_group_size":max_group,
         "groups":math.ceil(len(selected)/max_group),
     },indent=2),flush=True)
     report={
-        "experiment":"h3_flat_full_qkv_quantized_prep_ab_v2",
+        "experiment":("h3_flat_gpu_resident_qkv_prep_ab_v1"
+                      if args.input_residency=="gpu"
+                      else "h3_flat_full_qkv_quantized_prep_ab_v2"),
+        "input_residency":args.input_residency,
+        "capture_gpu_resident_mib":capture_gpu_mib,
         "quant_mode":args.quant_mode,
         "quantization_exact_gate":None,
         "gpu":torch.cuda.get_device_name(),
@@ -355,8 +377,9 @@ def main():
         "groups":[],"errors":[],"oom_group_retries":[],
         "notes":[
             "Pinned original full preparation + individual Tile/R32 tail Merge versus batched preparation+Tile+Merge.",
-            "Both paths start from SAME saved native CPU Q/K/V head tensors.",
-            "A/B uses synchronized HOST wall time inclusive of CPU gather and H2D, GPU stats/select/topk, Tile and Merge.",
+            "Both paths start from SAME captured Q/K/V head tensors at the reported input residency.",
+            "A/B uses synchronized HOST wall time inclusive of source-device gather/cast, GPU stats/select/topk, Tile and Merge; CPU mode also includes H2D.",
+            "GPU mode preloads captured QKV outside timings; capture VRAM persists and is excluded from group incremental peaks. This is NOT a checkpoint-resident test.",
             "No file IO, model denoise, or video included in timed region.",
             "All candidate final outputs checked against pinned final output, and first group unique heads checked against full pinned Flat.",
             "Repeated 4-head proxy does NOT prove real native 56-unique-head model behavior.",
@@ -461,7 +484,9 @@ def main():
         )
     out=Path(args.out)
     out.mkdir(parents=True,exist_ok=True)
-    report_path=out/f"flat_full_prep_quant_ab_{time.strftime('%Y%m%d-%H%M%S')}.json"
+    prefix=("flat_full_prep_gpu_qkv_ab" if args.input_residency=="gpu"
+            else "flat_full_prep_quant_ab")
+    report_path=out/f"{prefix}_{time.strftime('%Y%m%d-%H%M%S')}.json"
     report_path.write_text(json.dumps(report,indent=2),encoding="utf-8")
     print("REPORT:",report_path)
     if not report["completed"]:
