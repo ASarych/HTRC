@@ -46,7 +46,6 @@ def _triton():
     return module
 
 
-@torch.inference_mode()
 def flat_attention_bthd(
     q, k, v, *, heads, mode="fast", tiles=16,
     budget_mib=1024, reserve_mib=256, workspace=True,
@@ -137,6 +136,9 @@ def flat_attention_bthd(
                     out[qi:qe,begin:end,:].copy_(
                         selected.permute(1,0,2).to(source)
                     )
+                    # Drop ALL Python aliases before the next group/window;
+                    # otherwise previous K/V and workspace remain live.
+                    del selected,merged,parts,states,view,src
             finally:
                 # Releasing a group never allows reuse across denoising steps,
                 # model blocks, prompts, CFG passes or concurrent attention.
