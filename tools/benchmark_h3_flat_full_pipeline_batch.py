@@ -46,7 +46,8 @@ stage=prior.stage
 
 def eval_one(capture, raw_heads, tiles, mode, pinned, runner,
              tr_best, tr_new, path_name, keep_output=False,
-             quant_mode="torch_gpu", diagnose_prep=False):
+             quant_mode="torch_gpu", diagnose_prep=False,
+             kv_cache=None):
     """Allocate/prepare/work/sync in one bounded GPU group."""
     torch.cuda.synchronize()
     alloc_before=torch.cuda.memory_allocated()
@@ -64,7 +65,7 @@ def eval_one(capture, raw_heads, tiles, mode, pinned, runner,
         states,cfg,nkeys,nb,kx=stage.prepare_batched_head_states(
             capture,raw_heads,cfg,tr_new,tile_count=tiles,
             quant_backend=backend,input_cast=casting,
-            stage_timings_ms=stages
+            stage_timings_ms=stages,kv_cache=kv_cache
         )
     else:
         raise ValueError("Invalid A/B path name")
@@ -112,6 +113,9 @@ def eval_one(capture, raw_heads, tiles, mode, pinned, runner,
     measurements={
         "preparation_stage_sync_wall_ms_diagnostic_only":stages,
         "quant_mode":quant_mode if path_name=="batched" else "pinned_original",
+        "kv_cache_reused":kv_cache is not None,
+        "kv_cache_resident_mib":(stage.gpu_head_kv_cache_bytes(kv_cache)/stage.MIB
+                                  if kv_cache is not None else 0.0),
         "preparation_wall_ms":prep_ms,
         "tail_tile_merge_wall_ms":tile_merge_ms,
         "full_group_wall_ms":total_ms,
