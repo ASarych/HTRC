@@ -133,7 +133,7 @@ def main():
         if cn is None:
             raise FileNotFoundError(
                 "Missing ComfyNodes/h3/hybrid_loader.py; specify --comfynodes-root")
-        if not args.preflight_only and not unet.is_file():
+        if not unet.is_file():
             raise FileNotFoundError(f"Model checkpoint missing: {unet}")
         if args.preflight_only:
             report["status"]="PASS_PREFLIGHT_ONLY"
@@ -216,6 +216,9 @@ def main():
                 time.perf_counter()-start
             )*1000.0
             report["native_output_shape"]=list(original.shape)
+            if not bool(torch.isfinite(original).all().item()):
+                report["errors"].append("Original model attention returned non-finite values")
+                return original
             q=qc.peek() if hasattr(qc,"peek") else qc
             k=kc.peek() if hasattr(kc,"peek") else kc
             v=vc.peek() if hasattr(vc,"peek") else vc
