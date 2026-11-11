@@ -292,7 +292,8 @@ def launch_prepared_merge_batch(
 def prepare_batched_head_states(capture, raw_heads, config, triton_module,
                                 *, tile_count: int, quant_backend="torch",
                                 input_cast="gpu", stage_timings_ms=None,
-                                kv_cache=None, query_workspace=None):
+                                kv_cache=None, query_workspace=None,
+                                valid_query_rows=None):
     """One head-group preparation: one stats launch, one rowmax, one topk.
 
     Reads trusted native same-block captured Q/K/V; repeated raw head
@@ -356,6 +357,11 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     n_query=tile_count*tile
     if n_query>int(q_cap.shape[0]):
         raise ValueError("Not enough query rows in native capture")
+    if valid_query_rows is not None and (
+        not isinstance(valid_query_rows,int)
+        or not 1 <= valid_query_rows <= n_query
+    ):
+        raise ValueError("valid_query_rows must be in 1..tile_count*64")
     if k_cap.shape!=v_cap.shape or int(k_cap.shape[0])<16:
         raise ValueError("Capture K/V must have aligned full-leaf key rows")
     dim=int(q_cap.shape[-1])
@@ -374,6 +380,13 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         return raw.index_select(1,pos).permute(1,0,2).contiguous()
     Q=gather("q_qhd",n_query).to(dev).float().view(h,tile_count,tile,dim).contiguous()
     MU=Q.mean(dim=2).contiguous()
+    # Original Flat derives the final partial-tile centre from real
+    # query rows ONLY; padded rows must not change its far-field stats.
+    # All previous A/B callers omit valid_query_rows and are unchanged.
+    if valid_query_rows is not None and valid_query_rows % tile:
+        final_tile=(valid_query_rows-1)//tile
+        real_rows=valid_query_rows-final_tile*tile
+        MU[:,final_tile,:]=Q[:,final_tile,:real_rows,:].mean(dim=1)
     mark_stage("query_gather_h2d_mu" if q_cap.device.type=="cpu"
                else "query_gather_gpu_mu")
     if kv_cache is None:
