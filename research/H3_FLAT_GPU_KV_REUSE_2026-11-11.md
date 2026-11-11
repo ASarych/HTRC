@@ -135,3 +135,57 @@ evidence. CPU static argument-reference audit: PASS (13 used
 properties, all declared). CPU unittest / Python compile on the
 published fix: UNRUN; actual GPU cache test: **UNRUN** until rerun
 from corrected HEAD. Only one persistent JSON is emitted.
+
+## GPU A/B result, 2026-11-11 22:56:30: correctness PASS, first-build time contaminated
+
+User-uploaded one-file JSON `flat_gpu_kv_reuse_ab_20261111-225630.json`,
+candidate exact HEAD `2a971286a5ceb4ebd73026708512ac23aa870afb`.
+Top-level `completed: true`, 4+56 embedded cases completed,
+`errors: []`, OOM retries empty. RTX 5070 Ti 16 GiB,
+40,759 query rows/head (40 windows; final pad 201).
+Native captured raw heads 1/16/27/55 repeated for 56-head
+proxy. All **360** head-group/window comparisons were bit-identical
+to pinned and to each other (1080/1080 pairwise PASS checks);
+original independent Flat-oracle checks 216/216 PASS.
+All eight native-head K8 exact gates (4 per case):
+0 INT8 row mismatches over 40,752 K rows/head; max scale error 0.
+
+| Case | Uncached fused-K8 full-Q window-group medians | Cached reuse STEADY | Steady ratio | FIRST cache build total | Cold-start amortized ratio |
+|---|---:|---:|---:|---:|---:|
+| 4 distinct heads (H4 ×40 windows) | 95.65785 ms | 70.54295 ms | **1.3560x** | 622.9332 ms | **0.13794x (lose)** |
+| 56 logical proxy heads (H7 × 8 groups ×40 windows) | 1365.4917 ms | 837.5103 ms | **1.6304x** | 889.1519 ms | **0.79083x (lose)** |
+
+The first GPU cache build is anomalously slow:
+622.933 ms for the first H4, 838.225 ms for first H7.
+**Next seven H7 builds took 7.11–7.41 ms**, median ~7.29 ms.
+An unmeasured first-use Triton specialization/compilation is a
+strong hypothesis; the report cannot prove that compiler time was
+the sole cause. The uncached ABBA arm was warmed; the first cache
+build was not. The original `speedup_amortized_with_build`
+therefore answers the *cold-build* question but is **not** a
+representative recurring GPU attention-call cost.
+
+Recorded cache residency ~100.114 MiB at H4 and ~175.200 MiB at H7
+(plus the captured 119.411 MiB QKV). Both arms were timed with
+cache allocated; reported peak memory comparisons are NOT
+standalone no-cache memory requirements. These are CPU host
+wall sums over window/group medians, **not end-to-end H3 video**.
+
+### Corrected cost-accounting gate
+
+The subsequent code change separates:
+- `kv_cache_first_build_wall_ms`: first build, including
+  any JIT/allocator cold start, retained for cold-start analysis;
+- `kv_cache_build_warm_samples_ms`: 3 measured **warmed**
+  cache builds per group (configurable), with median
+  `kv_cache_build_wall_ms` counted ONCE per group;
+- `speedup_amortized_with_build`: real repeated-call style
+  full-Q estimate, including a single warmed build per group;
+- `speedup_cold_start_including_first_build`: distinct cold-start
+  estimate, preserving first-use cost.
+
+Numerical attention path, cached and uncached arms, pinned
+oracles, head planner, output format and 4+56 one-JSON workflow
+are unchanged. This accounting fix is **GPU UNRUN**.
+Do not claim an amortized positive speedup until new report
+confirms it; do not promote global BEST based on this proxy.

@@ -49,6 +49,21 @@ class KvReuseCliContractTest(unittest.TestCase):
         self.assertIn("count = args._case_heads", code)
         self.assertNotIn("args.case_heads", code)
 
+    def test_cache_build_cold_and_warm_accounting_contract(self):
+        code = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('ap.add_argument("--cache-build-rounds"', code)
+        self.assertIn('"--cache-build-rounds", str(args.cache_build_rounds)', code)
+        self.assertIn("cache_first_build_wall_ms", code)
+        self.assertIn("cache_build_samples_ms.append(", code)
+        self.assertIn("statistics.median(cache_build_samples_ms)", code)
+        for field in (
+            '"sum_kv_cache_first_build_wall_ms"',
+            '"sum_kv_cache_build_wall_ms"',
+            '"speedup_amortized_with_build"',
+            '"speedup_cold_start_including_first_build"',
+        ):
+            self.assertIn(field, code)
+
 
 if __name__ == "__main__":
     unittest.main()
