@@ -288,7 +288,8 @@ def launch_prepared_merge_batch(
 
 def prepare_batched_head_states(capture, raw_heads, config, triton_module,
                                 *, tile_count: int, quant_backend="torch",
-                                input_cast="gpu", stage_timings_ms=None):
+                                input_cast="gpu", stage_timings_ms=None,
+                                kv_cache=None):
     """One head-group preparation: one stats launch, one rowmax, one topk.
 
     Reads trusted native same-block captured Q/K/V; repeated raw head
@@ -367,32 +368,56 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     MU=Q.mean(dim=2).contiguous()
     mark_stage("query_gather_h2d_mu" if q_cap.device.type=="cpu"
                else "query_gather_gpu_mu")
-    # CPU BF16 conversion avoids a whole-group FP32 GPU staging copy.
-    def gather_bf16(name):
-        raw=gather(name,nkeys)
-        if input_cast=="cpu":
-            return raw.to(torch.bfloat16).to(dev).contiguous()
-        return raw.to(dev).to(torch.bfloat16).contiguous()
-    kbf=gather_bf16("k_khd")
-    vbf=gather_bf16("v_khd")
-    mark_stage("key_value_gather_h2d" if q_cap.device.type=="cpu"
-               else "key_value_gather_gpu")
-    if quant_backend=="torch":
-        # Retain the original numerical/allocator path as control.
-        kf=kbf.float()
-        KS=(kf.abs().amax(-1)*(1.0/127.0)).clamp_min_(1.0e-20).contiguous()
-        K=(kf/KS[:,:,None]).round_().clamp_(-127,127).to(torch.int8).contiguous()
-        del kf
+    if kv_cache is None:
+        # CPU BF16 conversion avoids a whole-group FP32 GPU staging copy.
+        def gather_bf16(name):
+            raw=gather(name,nkeys)
+            if input_cast=="cpu":
+                return raw.to(torch.bfloat16).to(dev).contiguous()
+            return raw.to(dev).to(torch.bfloat16).contiguous()
+        kbf=gather_bf16("k_khd")
+        vbf=gather_bf16("v_khd")
+        mark_stage("key_value_gather_h2d" if q_cap.device.type=="cpu"
+                   else "key_value_gather_gpu")
+        if quant_backend=="torch":
+            # Retain the original numerical/allocator path as control.
+            kf=kbf.float()
+            KS=(kf.abs().amax(-1)*(1.0/127.0)).clamp_min_(1.0e-20).contiguous()
+            K=(kf/KS[:,:,None]).round_().clamp_(-127,127).to(torch.int8).contiguous()
+            del kf
+        else:
+            # One fused K int8 / scale kernel for all grouped key rows.
+            K=torch.empty((h,nkeys,dim),device=dev,dtype=torch.int8)
+            KS=torch.empty((h,nkeys),device=dev,dtype=torch.float32)
+            br=8
+            triton_module._quant_key_int8_rows[
+                (triton_module.triton.cdiv(h*nkeys,br),)
+            ](kbf.view(h*nkeys,dim),K.view(h*nkeys,dim),
+              KS.view(h*nkeys),h*nkeys,dim,br,num_warps=4)
+        mark_stage("key_int8_quantization")
     else:
-        # One fused K int8 / scale kernel for all grouped key rows.
-        K=torch.empty((h,nkeys,dim),device=dev,dtype=torch.int8)
-        KS=torch.empty((h,nkeys),device=dev,dtype=torch.float32)
-        br=8
-        triton_module._quant_key_int8_rows[
-            (triton_module.triton.cdiv(h*nkeys,br),)
-        ](kbf.view(h*nkeys,dim),K.view(h*nkeys,dim),
-          KS.view(h*nkeys),h*nkeys,dim,br,num_warps=4)
-    mark_stage("key_int8_quantization")
+        # KBF/VBF/K8/KS are invariant only within this attention call.
+        # Stats/selection remain query-dependent and are recomputed below.
+        if quant_backend!="triton" or input_cast!="gpu" or q_cap.device.type!="cuda":
+            raise ValueError("KV cache supports only CUDA-resident Triton K8")
+        if (not isinstance(kv_cache,dict)
+            or kv_cache.get("raw_heads")!=tuple(map(int,raw_heads))
+            or kv_cache.get("source_k") is not k_cap
+            or kv_cache.get("source_v") is not v_cap
+            or kv_cache.get("nkeys")!=nkeys):
+            raise ValueError("KV cache identity, head order or K length mismatch")
+        kbf=kv_cache["KBF"]
+        vbf=kv_cache["VBF"]
+        K=kv_cache["K"]
+        KS=kv_cache["KS"]
+        if (kbf.shape!=(h,nkeys,dim) or vbf.shape!=kbf.shape
+            or K.shape!=kbf.shape or KS.shape!=(h,nkeys)
+            or kbf.dtype!=torch.bfloat16 or vbf.dtype!=torch.bfloat16
+            or K.dtype!=torch.int8 or KS.dtype!=torch.float32
+            or any(not t.is_contiguous() or t.device!=dev
+                   for t in (kbf,vbf,K,KS))):
+            raise ValueError("KV cache invalid tensor shape/dtype/device/layout")
+        mark_stage("kv_cache_hit")
     V=vbf
     G=torch.empty((h,tile_count,nb,dim),device=dev,dtype=torch.int8)
     VB=torch.empty((h,tile_count,nb,dim),device=dev,dtype=torch.bfloat16)
@@ -442,3 +467,61 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         "IDX":idx
     }
     return states,config,nkeys,nb,kx
+
+
+def prepare_gpu_head_kv_cache(capture, raw_heads, triton_module):
+    """Cache KBF, VBF, INT8 K and scale KS for one GPU attention call.
+
+    The caller must NOT reuse this across a different attention call,
+    K/V tensor, head order or denoising step. Leaf stats depend on
+    window-specific query MU and must be recomputed.
+    """
+    import torch
+    triton_module._dll()
+    if not isinstance(raw_heads,(list,tuple)) or not raw_heads:
+        raise ValueError("Cache requires nonempty head list")
+    if any(k not in capture for k in ("raw_head_index","k_khd","v_khd")):
+        raise ValueError("Capture missing native K/V or head IDs")
+    ksrc,vsrc=capture["k_khd"],capture["v_khd"]
+    if (ksrc.device.type!="cuda" or vsrc.device!=ksrc.device
+        or ksrc.ndim!=3 or ksrc.shape!=vsrc.shape or ksrc.shape[-1]!=128):
+        raise ValueError("Expected same-shape CUDA K/V [tokens,heads,128]")
+    nkeys=(int(ksrc.shape[0])//16)*16
+    if nkeys<16:
+        raise ValueError("Missing aligned K rows")
+    ids=capture["raw_head_index"]
+    available=[int(x) for x in (ids.tolist()
+                                if isinstance(ids,torch.Tensor) else ids)]
+    if not available or len(set(available))!=len(available):
+        raise ValueError("Invalid capture head IDs")
+    lookup={head:i for i,head in enumerate(available)}
+    try:
+        indices=[lookup[int(head)] for head in raw_heads]
+    except KeyError as exc:
+        raise ValueError(f"Uncaptured head ID {exc}") from exc
+    pos=torch.tensor(indices,device=ksrc.device,dtype=torch.long)
+    def gather(name):
+        return capture[name][:nkeys].index_select(
+            1,pos
+        ).permute(1,0,2).contiguous().to(torch.bfloat16).contiguous()
+    kbf=gather("k_khd")
+    vbf=gather("v_khd")
+    h=len(indices)
+    k8=torch.empty((h,nkeys,128),device=ksrc.device,dtype=torch.int8)
+    ks=torch.empty((h,nkeys),device=ksrc.device,dtype=torch.float32)
+    br=8
+    triton_module._quant_key_int8_rows[
+        (triton_module.triton.cdiv(h*nkeys,br),)
+    ](kbf.view(h*nkeys,128),k8.view(h*nkeys,128),
+      ks.view(h*nkeys),h*nkeys,128,br,num_warps=4)
+    return {
+        "raw_heads":tuple(map(int,raw_heads)),
+        "source_k":ksrc,"source_v":vsrc,"nkeys":nkeys,
+        "KBF":kbf,"VBF":vbf,"K":k8,"KS":ks,
+    }
+
+
+def gpu_head_kv_cache_bytes(cache):
+    """Size of unique resident K-side buffers (not aliased source QKV)."""
+    return sum(cache[k].numel()*cache[k].element_size()
+               for k in ("KBF","VBF","K","KS"))
