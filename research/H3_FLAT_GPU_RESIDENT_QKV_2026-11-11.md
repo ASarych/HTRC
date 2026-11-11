@@ -59,3 +59,42 @@ full-operator performance, VRAM and eventually model-resident tests PASS.
 
 Tests: CPU py_compile/unittest **UNRUN** in this commit; GPU validation
 **UNRUN** (CUDA runner only available on the user's system).
+
+## Next gate: fused K8 contribution without batching confound
+
+A **new paired backend-only** script was added at
+`tools/benchmark_h3_flat_gpu_quant_isolation.py` in
+`f2f90fead46890d6a66523bd85f4bf746c60dded`.
+
+Unlike the first GPU-resident experiment (pinned individual heads
+versus grouped+fused K8), this directly measures **two grouped paths**
+differing **only** in the quantizer: `torch_gpu` versus
+`triton_gpu`. GPU QKV is loaded once outside both timed paths.
+The pinned BEST and independent original Flat are used for **output
+parity checks only**, not included in this timing. ABBA within each
+group; exact BF16->INT8/scale gate on **all distinct captured native
+heads** before timing; arbitrary positive head count and VRAM planner.
+
+Run in the existing HTRC-branch worktree on RTX 5070 Ti:
+
+```powershell
+cd D:\ComfyNodes-flat-split-20261111
+git fetch htrc
+git switch --detach htrc/experiment/flat-gpu-resident-qkv-20261111
+$py = "C:\Users\Misya\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\.venv\Scripts\python.exe"
+& $py -m py_compile tools\benchmark_h3_flat_gpu_quant_isolation.py
+& $py -B tools\benchmark_h3_flat_gpu_quant_isolation.py --heads 4 --mode fast --tiles 16 --budget-mib 1024 --reserve-mib 256 --rounds 4 --warmups 1
+& $py -B tools\benchmark_h3_flat_gpu_quant_isolation.py --heads 56 --repeat-available-heads --mode fast --tiles 16 --budget-mib 1024 --reserve-mib 256 --rounds 4 --warmups 1
+```
+
+Output `flat_gpu_quant_isolation_ab_*.json` records quant exact
+gates, pairwise bit parity against pinned, independent full Flat
+oracles, ABBA samples, preparation/Tile+Merge/full-group medians
+and incremental PyTorch peak per group. 56-head run still repeats
+only four native heads.
+
+Validation status: exact authored Python source compiled successfully
+in isolated local CPU syntax check and its Git blob was verified
+identical (`961dfa0ce448741c546cbdda53695772ba52d756`).
+**GPU execution UNRUN**; no user-facing GPU claim about fused K8
+in isolation. No model or production changes.
