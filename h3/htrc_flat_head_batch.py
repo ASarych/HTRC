@@ -182,8 +182,10 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
         for name,shape in (("pm",partial_shape),("pl",partial_shape),("acc",acc_shape)):
             if name not in buffers or tuple(buffers[name].shape)!=shape:
                 raise ValueError(f"Missing/bad output partial: {name}")
-            if not buffers[name].is_contiguous():
-                raise ValueError("Partial buffers must be contiguous")
+            if (buffers[name].dtype!=torch.float32
+                or buffers[name].device!=q.device
+                or not buffers[name].is_contiguous()):
+                raise ValueError("Partial buffers must be contiguous CUDA float32 on Q device")
         pm,pl,acc=buffers["pm"],buffers["pl"],buffers["acc"]
     flat=lambda name:states[name].view((heads*tiles,)+states[name].shape[2:])
     lz=flat("LZ")
@@ -243,7 +245,8 @@ def launch_prepared_merge_batch(
         output=torch.empty((heads,tiles,tile,dim),
                            device=q.device,dtype=torch.float32)
     if (tuple(output.shape)!=(heads,tiles,tile,dim)
-            or output.dtype!=torch.float32 or not output.is_contiguous()):
+            or output.dtype!=torch.float32 or output.device!=q.device
+            or not output.is_contiguous()):
         raise ValueError("Output must be contiguous float32 [H,tiles,T,D]")
     pm=partials["pm"].view(heads*tiles,splits,tile)
     pl=partials["pl"].view(heads*tiles,splits,tile)
