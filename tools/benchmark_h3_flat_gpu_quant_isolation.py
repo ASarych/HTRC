@@ -113,10 +113,125 @@ def measure_group(capture, ids, tiles, mode, pinned, runner, tr_best, tr_new,
     return result
 
 
+
+def run_head_cases(args, parser):
+    """Run multiple head counts and publish exactly ONE persistent JSON report.
+
+    Each existing single-case benchmark executes in its own child process;
+    its per-case JSON is temporary and is embedded in the final combined JSON.
+    This preserves previously validated single-case semantics, avoids VRAM
+    cross-contamination and leaves no extra reports in the user's output dir.
+    """
+    parts = [part.strip() for part in args.head_cases.split(",")]
+    if not parts or any(not x or not x.isdecimal() for x in parts):
+        parser.error("--head-cases must be comma-separated positive head counts, e.g. 4,56")
+    counts = [int(x) for x in parts]
+    if any(x < 1 for x in counts) or len(set(counts)) != len(counts):
+        parser.error("--head-cases must contain unique positive integers")
+    if args.max_heads_per_group is not None and args.max_heads_per_group < 1:
+        parser.error("--max-heads-per-group must be positive")
+
+    report = {
+        "experiment": "h3_flat_gpu_resident_torch_vs_triton_K8_combined_v1",
+        "head_cases": counts,
+        "input_residency": "gpu",
+        "capture": args.capture,
+        "source_commits": {
+            "pinned_best": full.base.BEST,
+            "candidate": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip(),
+        },
+        "cases": [],
+        "summary": [],
+        "errors": [],
+        "completed": False,
+        "notes": [
+            "Exactly one persistent combined JSON is written; child case reports are removed.",
+            "Each count is a separate GPU process with its own memory planner and timing.",
+            "Comparison is torch_gpu versus triton_gpu in identical batched paths.",
+            "Repeated-head cases are labeled proxy and are not distinct native heads.",
+            "Group-median sums are not model end-to-end latency.",
+        ],
+    }
+    with tempfile.TemporaryDirectory(prefix="htrc_quant_cases_") as tmp:
+        for heads in counts:
+            case_out = Path(tmp) / str(heads)
+            case_out.mkdir()
+            cmd = [
+                sys.executable, "-B", str(Path(__file__).resolve()),
+                "--capture", args.capture,
+                "--heads", str(heads),
+                "--mode", args.mode,
+                "--tiles", str(args.tiles),
+                "--budget-mib", str(args.budget_mib),
+                "--reserve-mib", str(args.reserve_mib),
+                "--rounds", str(args.rounds),
+                "--warmups", str(args.warmups),
+                "--tolerance", str(args.tolerance),
+                "--out", str(case_out),
+            ]
+            if args.repeat_available_heads:
+                cmd.append("--repeat-available-heads")
+            if args.max_heads_per_group is not None:
+                cmd.extend(["--max-heads-per-group", str(args.max_heads_per_group)])
+            print(f"HEAD_CASE: {heads}", flush=True)
+            process = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            for line in process.stdout.splitlines():
+                if not line.startswith("REPORT:"):
+                    print(line, flush=True)
+            if process.stderr:
+                print(process.stderr, end="", file=sys.stderr, flush=True)
+            matches = list(case_out.glob("flat_gpu_quant_isolation_ab_*.json"))
+            if len(matches) != 1:
+                report["errors"].append({
+                    "head_count": heads, "returncode": process.returncode,
+                    "error": "Expected one temporary case JSON, found " + str(len(matches)),
+                })
+                break
+            case = json.loads(matches[0].read_text(encoding="utf-8"))
+            report["cases"].append(case)
+            totals = case.get("sum_of_group_median_wall_not_true_end_to_end")
+            if totals:
+                report["summary"].append({
+                    "head_count": heads,
+                    "input_kind": case["input_kind"],
+                    **totals,
+                    "max_incremental_peak_mib": {
+                        quant: max(
+                            g["timings"]["median_by_path"][quant]["incremental_peak_mib"]
+                            for g in case["groups"] if g["timings"] is not None
+                        ) for quant in MODES
+                    },
+                    "parity_pass": all(
+                        all(v["pass"] for v in g["parity"].values())
+                        for g in case["groups"]
+                    ),
+                })
+            if process.returncode != 0 or not case.get("completed"):
+                report["errors"].append({
+                    "head_count": heads, "returncode": process.returncode,
+                    "error": "Case failed; see embedded case errors and console output",
+                })
+                break
+    report["completed"] = (len(report["cases"]) == len(counts)
+                           and not report["errors"]
+                           and all(case.get("completed") for case in report["cases"]))
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"flat_gpu_quant_isolation_combined_{time.strftime('%Y%m%d-%H%M%S')}.json"
+    path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print("REPORT:", path, flush=True)
+    if not report["completed"]:
+        raise SystemExit("FAIL: combined GPU K8 A/B (see single JSON report)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capture", default=r"D:\ComfyOutput\H3\math_probe\20260926-201504\attention_block_00_call_01.pt")
     ap.add_argument("--heads", type=int, default=56)
+    ap.add_argument("--head-cases", type=str, default=None,
+                    help="Run comma-separated head counts in ONE JSON (e.g. 4,56)")
     ap.add_argument("--repeat-available-heads", action="store_true")
     ap.add_argument("--mode", choices=("fast", "balanced"), default="fast")
     ap.add_argument("--tiles", type=int, default=16)
@@ -128,6 +243,8 @@ def main():
     ap.add_argument("--tolerance", type=float, default=1e-4)
     ap.add_argument("--out", default=r"D:\ComfyOutput\H3\math_probe")
     args = ap.parse_args()
+    if args.head_cases is not None:
+        return run_head_cases(args, ap)
     if not torch.cuda.is_available():
         ap.error("CUDA is required")
     if min(args.heads, args.tiles, args.rounds, args.warmups) < 1:
