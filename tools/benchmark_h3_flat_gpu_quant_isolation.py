@@ -134,6 +134,7 @@ def run_head_cases(args, parser):
     report = {
         "experiment": "h3_flat_gpu_resident_torch_vs_triton_K8_combined_v1",
         "head_cases": counts,
+        "query_coverage": args.query_coverage,
         "input_residency": "gpu",
         "capture": args.capture,
         "source_commits": {
@@ -164,6 +165,7 @@ def run_head_cases(args, parser):
                 "--heads", str(heads),
                 "--mode", args.mode,
                 "--tiles", str(args.tiles),
+                "--query-coverage", args.query_coverage,
                 "--budget-mib", str(args.budget_mib),
                 "--reserve-mib", str(args.reserve_mib),
                 "--rounds", str(args.rounds),
@@ -226,6 +228,85 @@ def run_head_cases(args, parser):
         raise SystemExit("FAIL: combined GPU K8 A/B (see single JSON report)")
 
 
+def run_full_query_windows(args, capture, selected, plan, pinned, runner, tr_best, tr_new, report):
+    """Stream all Q rows through paired batched quant A/B, padding only the final Q window.
+
+    The full QKV source remains GPU-resident across windows. Each final padded
+    Q output is included in reference parity, but NOT in valid-query accounting.
+    """
+    query = capture["q_qhd"]
+    n_query = int(query.shape[0])
+    if n_query < 1:
+        raise ValueError("Q capture has no query rows")
+    window_rows = args.tiles * 64
+    count = math.ceil(n_query / window_rows)
+    checks = {0, count // 2, count - 1}
+    report["query_total_valid_rows_per_head"] = n_query
+    report["query_window_rows"] = window_rows
+    report["query_window_count"] = count
+    report["query_windows_completed"] = 0
+    report["query_total_padded_rows_per_head"] = count * window_rows - n_query
+    for wi in range(count):
+        start = wi * window_rows
+        end = min(n_query, start + window_rows)
+        valid = end - start
+        q = query[start:end]
+        if valid < window_rows:
+            # Padding is only local to the final query window, never written to K/V.
+            pad = torch.zeros((window_rows - valid, *query.shape[1:]),
+                              device=query.device, dtype=query.dtype)
+            q = torch.cat((q, pad), dim=0)
+        window_capture = dict(capture)
+        window_capture["q_qhd"] = q
+        pos, group_size = 0, plan.heads_per_group
+        while pos < len(selected):
+            group_end = min(len(selected), pos + group_size)
+            try:
+                row = measure_group(
+                    window_capture, selected[pos:group_end], args.tiles, args.mode,
+                    pinned, runner, tr_best, tr_new,
+                    args.warmups, args.rounds, args.tolerance,
+                    first_group=(pos == 0 and wi in checks),
+                )
+                row.update({
+                    "head_job_range": [pos, group_end],
+                    "raw_heads": selected[pos:group_end],
+                    "query_window_index": wi,
+                    "query_row_range_valid": [start, end],
+                    "query_pad_rows": window_rows - valid,
+                })
+                report["groups"].append(row)
+                if row["timings"] is None:
+                    raise RuntimeError("Full-Q query-window output parity / oracle FAIL")
+                print("WINDOW", wi + 1, "/", count, "HEADS", pos, group_end,
+                      "torch/triton", row["timings"]["speedup_torch_over_triton_full_wall"],
+                      flush=True)
+                pos = group_end
+            except torch.cuda.OutOfMemoryError as exc:
+                if group_size == 1:
+                    report["errors"].append({
+                        "query_window_index": wi, "job": pos,
+                        "exception": type(exc).__name__, "error": str(exc)[:1200],
+                    })
+                    return
+                before = group_size
+                group_size = max(1, group_size // 2)
+                report["oom_group_retries"].append({
+                    "query_window_index": wi, "job": pos,
+                    "from": before, "to": group_size, "message": str(exc)[:600],
+                })
+            except Exception as exc:
+                report["errors"].append({
+                    "query_window_index": wi, "job": pos,
+                    "exception": type(exc).__name__, "error": str(exc)[:1200],
+                })
+                return
+            finally:
+                gc.collect()
+                torch.cuda.empty_cache()
+        report["query_windows_completed"] += 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capture", default=r"D:\ComfyOutput\H3\math_probe\20260926-201504\attention_block_00_call_01.pt")
@@ -234,6 +315,8 @@ def main():
                     help="Run comma-separated head counts in ONE JSON (e.g. 4,56)")
     ap.add_argument("--repeat-available-heads", action="store_true")
     ap.add_argument("--mode", choices=("fast", "balanced"), default="fast")
+    ap.add_argument("--query-coverage", choices=("prefix", "full"), default="prefix",
+                    help="full streams all query rows in fixed-size windows, with final Q padding")
     ap.add_argument("--tiles", type=int, default=16)
     ap.add_argument("--budget-mib", type=float, default=1024)
     ap.add_argument("--reserve-mib", type=float, default=256)
@@ -294,7 +377,8 @@ def main():
             "pinned_best": full.base.BEST,
             "candidate": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         },
-        "input_residency": "gpu", "input_kind": "repeated_capture_proxy" if proxy else "distinct_native",
+        "input_residency": "gpu", "query_coverage": args.query_coverage,
+        "input_kind": "repeated_capture_proxy" if proxy else "distinct_native",
         "raw_head_indices": selected, "mode": args.mode, "tiles": args.tiles,
         "planned": vars(plan), "quantization_exact_gates": [],
         "groups": [], "errors": [], "oom_group_retries": [],
@@ -305,7 +389,8 @@ def main():
             "Both paths consume same preloaded GPU QKV; no H2D in timed region.",
             "Sum of group medians is not one true full-model end-to-end timing.",
             "Four-native-head repeated proxy is not 56 distinct model heads.",
-            "No model checkpoint, full Q tokens, graph, or video runtime.",
+            "No model checkpoint, graph, or video runtime; full Q is only covered with --query-coverage full.",
+            "Full-Q streaming redoes K quant/leaf stats per Q window; NOT a persistent KV-cache benchmark.",
         ],
     }
     group_size = plan.heads_per_group
@@ -322,33 +407,41 @@ def main():
                 report["quantization_exact_gates"].append(gate)
                 if not gate["pass"]:
                     raise RuntimeError("K8 quantization differs from PyTorch on raw head " + str(raw))
-            while pos < len(selected):
-                end = min(len(selected), pos + group_size)
-                try:
-                    row = measure_group(
-                        cap, selected[pos:end], args.tiles, args.mode,
-                        pinned, runner, tr_best, tr_new,
-                        args.warmups, args.rounds, args.tolerance,
-                        first_group=(pos == 0),
-                    )
-                    row["head_job_range"] = [pos, end]
-                    row["raw_heads"] = selected[pos:end]
-                    report["groups"].append(row)
-                    if row["timings"] is None:
-                        raise RuntimeError("Quant candidate parity/full oracle FAIL")
-                    print("GROUP", pos, end, "torch/triton speedup",
-                          row["timings"]["speedup_torch_over_triton_full_wall"], flush=True)
-                    pos = end
-                except torch.cuda.OutOfMemoryError as exc:
-                    if group_size == 1:
-                        raise
-                    before = group_size
-                    group_size = max(1, group_size // 2)
-                    report["oom_group_retries"].append({"job": pos,
-                        "from": before, "to": group_size, "message": str(exc)[:500]})
-                finally:
-                    gc.collect()
-                    torch.cuda.empty_cache()
+            if args.query_coverage == "full":
+                run_full_query_windows(
+                    args, cap, selected, plan, pinned, runner, tr_best, tr_new, report
+                )
+                pos = (len(selected)
+                       if report["query_windows_completed"] == report["query_window_count"]
+                       and not report["errors"] else 0)
+            else:
+                while pos < len(selected):
+                    end = min(len(selected), pos + group_size)
+                    try:
+                        row = measure_group(
+                            cap, selected[pos:end], args.tiles, args.mode,
+                            pinned, runner, tr_best, tr_new,
+                            args.warmups, args.rounds, args.tolerance,
+                            first_group=(pos == 0),
+                        )
+                        row["head_job_range"] = [pos, end]
+                        row["raw_heads"] = selected[pos:end]
+                        report["groups"].append(row)
+                        if row["timings"] is None:
+                            raise RuntimeError("Quant candidate parity/full oracle FAIL")
+                        print("GROUP", pos, end, "torch/triton speedup",
+                              row["timings"]["speedup_torch_over_triton_full_wall"], flush=True)
+                        pos = end
+                    except torch.cuda.OutOfMemoryError as exc:
+                        if group_size == 1:
+                            raise
+                        before = group_size
+                        group_size = max(1, group_size // 2)
+                        report["oom_group_retries"].append({"job": pos,
+                            "from": before, "to": group_size, "message": str(exc)[:500]})
+                    finally:
+                        gc.collect()
+                        torch.cuda.empty_cache()
     except Exception as exc:
         report["errors"].append({"job": pos, "exception": type(exc).__name__,
                                  "error": str(exc)[:1800],
