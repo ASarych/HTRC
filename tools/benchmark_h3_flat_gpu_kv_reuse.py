@@ -131,7 +131,7 @@ def single_case(args):
     available = [int(x) for x in (raw.tolist() if isinstance(raw, torch.Tensor) else raw)]
     if not available or len(set(available)) != len(available):
         raise ValueError("Invalid captured native head IDs")
-    count = args.case_heads
+    count = args._case_heads
     if count > len(available) and not args.repeat_available_heads:
         raise ValueError("Use --repeat-available-heads for proxy counts")
     selected = [available[i % len(available)] for i in range(count)]
