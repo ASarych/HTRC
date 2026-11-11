@@ -47,7 +47,7 @@ stage=prior.stage
 def eval_one(capture, raw_heads, tiles, mode, pinned, runner,
              tr_best, tr_new, path_name, keep_output=False,
              quant_mode="torch_gpu", diagnose_prep=False,
-             kv_cache=None):
+             kv_cache=None, query_workspace=None):
     """Allocate/prepare/work/sync in one bounded GPU group."""
     torch.cuda.synchronize()
     alloc_before=torch.cuda.memory_allocated()
@@ -65,7 +65,8 @@ def eval_one(capture, raw_heads, tiles, mode, pinned, runner,
         states,cfg,nkeys,nb,kx=stage.prepare_batched_head_states(
             capture,raw_heads,cfg,tr_new,tile_count=tiles,
             quant_backend=backend,input_cast=casting,
-            stage_timings_ms=stages,kv_cache=kv_cache
+            stage_timings_ms=stages,kv_cache=kv_cache,
+            query_workspace=query_workspace
         )
     else:
         raise ValueError("Invalid A/B path name")
@@ -76,7 +77,17 @@ def eval_one(capture, raw_heads, tiles, mode, pinned, runner,
         capture,raw_heads,nkeys,torch.device("cuda")
     )
     h=len(raw_heads)
-    out=torch.empty((h,tiles,64,128),device="cuda",dtype=torch.float32)
+    if query_workspace is None:
+        out=torch.empty((h,tiles,64,128),device="cuda",dtype=torch.float32)
+    else:
+        out=query_workspace.get("_out")
+        if out is None:
+            out=torch.empty((h,tiles,64,128),device=states["Q"].device,dtype=torch.float32)
+            query_workspace["_out"]=out
+        elif (tuple(out.shape)!=(h,tiles,64,128)
+              or out.device!=states["Q"].device or out.dtype!=torch.float32
+              or not out.is_contiguous()):
+            raise ValueError("Incompatible grouped query output workspace")
     workspaces=None
     partials=None
     if path_name=="best":
@@ -102,7 +113,13 @@ def eval_one(capture, raw_heads, tiles, mode, pinned, runner,
                 far_prefetch_lz=False,pv_dot_acc="none"
             )
     else:
-        partials,_=stage.launch_prepared_tile_batch(states,cfg,tr_new)
+        partials,_=stage.launch_prepared_tile_batch(
+            states,cfg,tr_new,
+            buffers=(query_workspace.get("_partials") if query_workspace is not None
+                     else None)
+        )
+        if query_workspace is not None:
+            query_workspace["_partials"]=partials
         out,_=stage.launch_prepared_merge_batch(
             states,cfg,tr_new,partials,tails=tails,output=out,merge_rows=32
         )
@@ -114,6 +131,10 @@ def eval_one(capture, raw_heads, tiles, mode, pinned, runner,
         "preparation_stage_sync_wall_ms_diagnostic_only":stages,
         "quant_mode":quant_mode if path_name=="batched" else "pinned_original",
         "kv_cache_reused":kv_cache is not None,
+        "query_workspace_reused":query_workspace is not None,
+        "query_workspace_resident_mib":(
+            stage.gpu_query_workspace_bytes(query_workspace)/stage.MIB
+            if query_workspace is not None else 0.0),
         "kv_cache_resident_mib":(stage.gpu_head_kv_cache_bytes(kv_cache)/stage.MIB
                                   if kv_cache is not None else 0.0),
         "preparation_wall_ms":prep_ms,
