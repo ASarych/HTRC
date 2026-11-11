@@ -127,3 +127,36 @@ production or global BEST switch.
 Next research priorities: full-query coverage, 56 genuinely
 unique head capture, and model-resident VRAM. The separate
 query-cache branch remains unmerged.
+
+## Combined 4+56 single-JSON rerun: PASS (2026-11-11)
+
+User-supplied source `flat_gpu_quant_isolation_combined_20261111-221657.json`.
+Its exact candidate is `9bfe07a5fe514967214eb04897401ec6377958b2`;
+pinned BEST `e47cc7a310936547ab6c7d97bd07526eb6a135fe`.
+The new `--head-cases 4,56` output protocol and subprocess isolation
+were successfully exercised; top-level `completed: true`,
+`errors: []`. Both embedded cases completed. No intermediate
+case JSON needs to be shared.
+
+| GPU-resident batched test | PyTorch K8 (ms) | Fused Triton K8 (ms) | Speedup | Peak incremental VRAM Torch -> Triton |
+|---|---:|---:|---:|---:|
+| 4 distinct native heads, one group | 3.26400 | 2.06170 | **1.58316x** | 262.552 -> 163.695 MiB |
+| 56 logical repeated heads, 5 groups | 39.74870 | 21.48310 | **1.85023x** | 785.218 -> 491.485 MiB (max H12 group) |
+
+4 K8 exact gates on 40,752 rows each: 0 INT8 byte mismatches,
+FP32 scale maximum abs difference 0 for heads 1/16/27/55
+in **each** case. All GPU output comparisons
+(`torch_vs_pinned`, `triton_vs_pinned`, `torch_vs_triton`)
+PASS with rel-L2=0 and max-abs=0 for all 6 groups combined;
+independent full Flat oracles on 4 native heads PASS in each case.
+No OOM retries. Compared to earlier separate 4-head/56-head
+reports, results are directionally consistent; modest timing
+variation is expected across executions.
+
+The single-JSON **reporting contract is verified**, as is the
+fused K8 performance gain at 16 tiles/head. Restrictions remain:
+56 jobs only four distinct heads; 1024 Q rows/head, not full query;
+checkpoint-free synthetic repeated-head workload; no CUDA Graph
+or actual denoise/video. Retain fused K8 as research winner,
+**do not promote to global or production BEST** without
+model-resident and full-Q gates.
