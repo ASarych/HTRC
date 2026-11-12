@@ -74,8 +74,8 @@ def flat_attention_bthd(
     # centre approximation in the live backend. Preserve the selected
     # fixed Flat mode geometry while optimizing its implementation.
     cfg=shared.flat_config(mode,tiles)
-    if query_staging not in ("gather", "view_copy"):
-        raise ValueError("Unsupported query staging: gather or view_copy")
+    if query_staging not in ("gather", "view_copy", "native_direct"):
+        raise ValueError("Unsupported query staging")
     tr=_triton()
     tr._dll()
     dev=q.device

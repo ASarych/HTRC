@@ -140,8 +140,11 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
     missing=[name for name in req if name not in states]
     if missing:
         raise ValueError(f"Missing prepared state: {missing}")
-    if any(not states[name].is_contiguous() for name in req):
-        raise ValueError("All prepared batch tensors must be contiguous")
+    direct=bool(states.get("_direct_q",False))
+    if any(not states[name].is_contiguous() for name in req if name!="Q"):
+        raise ValueError("Prepared non-Q state tensors must be contiguous")
+    if not direct and not states["Q"].is_contiguous():
+        raise ValueError("Staged Q must be contiguous")
     q=states["Q"]
     if q.ndim != 4:
         raise ValueError("Q must be [heads,tiles,rows,dim]")
@@ -199,9 +202,11 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
                 raise ValueError("Partial buffers must be contiguous CUDA float32 on Q device")
         pm,pl,acc=buffers["pm"],buffers["pl"],buffers["acc"]
     flat=lambda name:states[name].view((-1,)+states[name].shape[2:])
+    qptr=q if direct else flat("Q")
+    qstrides=tuple(map(int,q.stride())) if direct else (0,0,0,0)
     lz=flat("LZ")
     compiled=triton_module._tile_kernel[(heads*tiles,splits,1)](
-        flat("Q"),flat("MU"),flat("G"),lz,flat("VB"),
+        qptr,flat("MU"),flat("G"),lz,flat("VB"),
         flat("EXCL"),flat("IDX"),
         states["K"].view(heads*keys,dim),
         states["V"].view(heads*keys,dim),
@@ -218,6 +223,8 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
         PASS=0,LATE_NEAR_Q=0,FAR_PREFETCH_LZ=0,
         FAR_PV_ACC=0,NEAR_PV_ACC=0,
         BATCH_TILES_PER_HEAD=tiles,BATCH_KEY_ROWS=keys,
+        Q_DIRECT=int(direct),Q_SH=qstrides[0],Q_ST=qstrides[1],
+        Q_SR=qstrides[2],Q_SD=qstrides[3],
         num_warps=warps,num_stages=stages
     )
     return buffers,compiled
@@ -237,8 +244,9 @@ def launch_prepared_merge_batch(
     """
     import torch
     q=states["Q"]
-    if q.ndim!=4 or not q.is_contiguous():
-        raise ValueError("Q must be contiguous [heads,tiles,rows,dim]")
+    direct=bool(states.get("_direct_q",False))
+    if q.ndim!=4 or (not direct and not q.is_contiguous()):
+        raise ValueError("Q must be [heads,tiles,rows,dim], staged or native strided")
     heads,tiles,tile,dim=map(int,q.shape)
     if min(heads,tiles,tile,dim)<1 or dim!=128:
         raise ValueError("Nonempty dim128 head-major Q required")
@@ -288,13 +296,18 @@ def launch_prepared_merge_batch(
     compiled=triton_module._merge_tail_kernel[
         (heads*tiles,tile//merge_rows)
     ](
-        pm,pl,acc,q.view(heads*tiles,tile,dim),
+        pm,pl,acc,(q if direct else q.view(heads*tiles,tile,dim)),
         tkb.view(heads*ntail,dim),
         tvb.view(heads*ntail,dim),
         out,ntail,1.0/math.sqrt(dim),
         NS=splits,T=tile,R=merge_rows,D=dim,
         DOT=1,PREC="tf32",
         BATCH_TILES_PER_HEAD=tiles,BATCH_TAIL_ROWS=ntail,
+        Q_DIRECT=int(direct),
+        Q_SH=(int(q.stride(0)) if direct else 0),
+        Q_ST=(int(q.stride(1)) if direct else 0),
+        Q_SR=(int(q.stride(2)) if direct else 0),
+        Q_SD=(int(q.stride(3)) if direct else 0),
         num_warps=4
     )
     return output,compiled
@@ -318,10 +331,10 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         raise ValueError("quant_backend must be torch or triton")
     if input_cast not in ("gpu", "cpu"):
         raise ValueError("input_cast must be gpu or cpu")
-    if query_staging not in ("gather", "view_copy"):
-        raise ValueError("query_staging must be gather or view_copy")
-    if query_staging == "view_copy" and input_cast != "gpu":
-        raise ValueError("view_copy needs GPU-resident Q input")
+    if query_staging not in ("gather", "view_copy", "native_direct"):
+        raise ValueError("query_staging must be gather, view_copy or native_direct")
+    if query_staging in ("view_copy","native_direct") and input_cast != "gpu":
+        raise ValueError("Direct query staging needs GPU-resident Q input")
     if query_workspace is not None and (
         not isinstance(query_workspace, dict) or kv_cache is None
         or quant_backend != "triton" or input_cast != "gpu"
@@ -408,16 +421,31 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         native_hsd=native.permute(1,0,2)
         Q=torch.empty((h,tile_count,tile,dim),device=q_cap.device,dtype=torch.float32)
         Q.view(h,n_query,dim).copy_(native_hsd)
+    elif query_staging == "native_direct":
+        if (q_cap.device.type!="cuda" or
+            positions != list(range(positions[0],positions[0]+h))):
+            raise ValueError("native_direct requires consecutive unique CUDA heads")
+        native=q_cap[:n_query,positions[0]:positions[0]+h,:]
+        Q=native.permute(1,0,2).view(h,tile_count,tile,dim)
+        if Q.dtype not in (torch.bfloat16,torch.float16,torch.float32):
+            raise TypeError("Unsupported native Q dtype")
+        MU=torch.empty((h,centers,dim),device=dev,dtype=torch.float32)
+        triton_module._direct_q_mu_kernel[(h,centers)](
+            Q,MU,centers,group,tile,dim,
+            int(Q.stride(0)),int(Q.stride(1)),int(Q.stride(2)),int(Q.stride(3)),
+            int(valid_query_rows if valid_query_rows is not None else n_query),
+            num_warps=4
+        )
     else:
         # Pinned A/B control; exactly the same sequence as before.
         Q=gather("q_qhd",n_query).to(dev).float().view(h,tile_count,tile,dim).contiguous()
-    if group==1:
+    if query_staging != "native_direct" and group==1:
         MU=Q.mean(dim=2).contiguous()
         if valid_query_rows is not None and valid_query_rows % tile:
             final_tile=(valid_query_rows-1)//tile
             real_rows=valid_query_rows-final_tile*tile
             MU[:,final_tile,:]=Q[:,final_tile,:real_rows,:].mean(dim=1)
-    else:
+    elif query_staging != "native_direct":
         grouped_q=Q.view(h,centers,group*tile,dim)
         MU=grouped_q.mean(dim=2).contiguous()
         if valid_query_rows is not None and valid_query_rows % (group*tile):
@@ -519,17 +547,31 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     )
     mark_stage("leaf_stats")
     del kbf
-    qf=Q.view(h*centers,group*tile,dim)
     muf=MU.view(h*centers,dim)
     gf=G.view(h*centers,nb,dim)
     lzf=LZ.view(h*centers,nb)
     sgf=SG.view(h*centers,nb)
-    sel=triton_module.rowmax_select(
-        qf,muf,gf,lzf,
-        prec="tf32",bn=32,warps=4,
-        splits=int(config["splits"]),stride=1,dot=1,
-        ws=query_workspace,sg=sgf
-    )
+    if query_staging == "native_direct":
+        sel=state_buffer("sel",(h*centers,nb),torch.float32)
+        lps=triton_module._split(nb,int(config["splits"]),32)
+        triton_module._rowmax_kernel[
+            (h*centers,triton_module.triton.cdiv(nb,lps))
+        ](Q,muf,gf,lzf,sel,sgf,nb,lps,
+          T=group*tile,TS=group*tile,STRIDE=1,D=dim,BN=32,
+          PREC="tf32",DOT=1,I8=1,
+          Q_DIRECT=1,BATCH_CENTERS_PER_HEAD=centers,
+          Q_GROUP=group,Q_TILE=tile,
+          Q_SH=int(Q.stride(0)),Q_ST=int(Q.stride(1)),
+          Q_SR=int(Q.stride(2)),Q_SD=int(Q.stride(3)),
+          num_warps=4,num_stages=1)
+    else:
+        qf=Q.view(h*centers,group*tile,dim)
+        sel=triton_module.rowmax_select(
+            qf,muf,gf,lzf,
+            prec="tf32",bn=32,warps=4,
+            splits=int(config["splits"]),stride=1,dot=1,
+            ws=query_workspace,sg=sgf
+        )
     ids=torch.topk(sel,kx,dim=-1,sorted=False).indices
     if query_workspace is None:
         idx=ids.to(torch.int32).view(h,centers,kx).contiguous()
@@ -546,7 +588,8 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         "Q":Q,"MU":MU,"K":K,"V":V,"KS":KS,
         "G":G,"VB":VB,"LZ":LZ,"SG":SG,
         "EXCL":excl.view(h,centers,nb),
-        "IDX":idx
+        "IDX":idx,
+        "_direct_q":query_staging=="native_direct"
     }
     return states,config,nkeys,nb,kx
 

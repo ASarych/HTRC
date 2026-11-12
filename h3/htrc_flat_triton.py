@@ -66,6 +66,29 @@ def _quant_key_int8_rows(KBF, K8, KS, N: tl.constexpr, D: tl.constexpr,
 
 
 @triton.jit
+def _direct_q_mu_kernel(Q, MU, CENTERS: tl.constexpr, GR: tl.constexpr,
+                        TILE: tl.constexpr, D: tl.constexpr,
+                        SH: tl.constexpr, ST: tl.constexpr,
+                        SR: tl.constexpr, SD: tl.constexpr, VALID):
+    """Read native [H, tiles, 64, D] strided post-RoPE Q; materialize MU only.
+
+    Partial-final-window rows are excluded from the FP32 mean. No Q pack.
+    """
+    h=tl.program_id(0)
+    c=tl.program_id(1)
+    r=tl.arange(0, GR*TILE)
+    d=tl.arange(0,D)
+    local_tile=c*GR+r//TILE
+    local_row=r%TILE
+    active=(c*GR*TILE+r)<VALID
+    x=tl.load(Q+h*SH+local_tile[:,None]*ST+
+              local_row[:,None]*SR+d[None,:]*SD,
+              mask=active[:,None],other=0.0).to(tl.float32)
+    count=tl.maximum(tl.minimum(VALID-c*GR*TILE,GR*TILE),1)
+    tl.store(MU+(h*CENTERS+c)*D+d,tl.sum(x,axis=0)/count)
+
+
+@triton.jit
 def _stats_kernel(MU, K, V, G, LZ, VB, SG, SV, tc, nb, scale,
                   D: tl.constexpr, BT: tl.constexpr, LEAF: tl.constexpr, BL: tl.constexpr,
                   PREC: tl.constexpr, FP8: tl.constexpr = 0, I8: tl.constexpr = 0,
@@ -133,7 +156,10 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
                  FAR_PREFETCH_LZ: tl.constexpr = 0,
                  FAR_PV_ACC: tl.constexpr = 0, NEAR_PV_ACC: tl.constexpr = 0,
                  BATCH_TILES_PER_HEAD: tl.constexpr = 0,
-                 BATCH_KEY_ROWS: tl.constexpr = 0):
+                 BATCH_KEY_ROWS: tl.constexpr = 0,
+                 Q_DIRECT: tl.constexpr = 0, Q_SH: tl.constexpr = 0,
+                 Q_ST: tl.constexpr = 0, Q_SR: tl.constexpr = 0,
+                 Q_SD: tl.constexpr = 0):
     """Split-K over leaves: program (tile t, split sp) covers far leaves [sp*lps, +lps) and
     exact tokens [sp*eps, +eps); writes partial (max, sum, acc) merged on the host."""
     t = tl.program_id(0)
@@ -152,7 +178,13 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
     RT: tl.constexpr = T // RB          # rows per program: RB programs share one tile (same centre/near set), more warps resident
     r = tl.program_id(2) * RT + tl.arange(0, RT)
     d = tl.arange(0, D)
-    q = tl.load(Q + (t * T + r)[:, None] * D + d[None, :])
+    if Q_DIRECT:
+        qhead = t // BATCH_TILES_PER_HEAD
+        qtile = t % BATCH_TILES_PER_HEAD
+        q = tl.load(Q + qhead*Q_SH + qtile*Q_ST +
+                    r[:, None]*Q_SR+d[None,:]*Q_SD).to(tl.float32)
+    else:
+        q = tl.load(Q + (t * T + r)[:, None] * D + d[None, :])
     mu = tl.load(MU + gt * D + d)
     dq = q - mu[None, :]
     if DOT == 1:
@@ -317,13 +349,26 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
 @triton.jit
 def _rowmax_kernel(Q, MU, G, LZ, SEL, SG, nb, lps,
                    T: tl.constexpr, TS: tl.constexpr, STRIDE: tl.constexpr, D: tl.constexpr,
-                   BN: tl.constexpr, PREC: tl.constexpr, DOT: tl.constexpr, FP8: tl.constexpr = 0, I8: tl.constexpr = 0):
+                   BN: tl.constexpr, PREC: tl.constexpr, DOT: tl.constexpr, FP8: tl.constexpr = 0, I8: tl.constexpr = 0,
+                   Q_DIRECT: tl.constexpr = 0,
+                   BATCH_CENTERS_PER_HEAD: tl.constexpr = 0,
+                   Q_GROUP: tl.constexpr = 1, Q_TILE: tl.constexpr = 64,
+                   Q_SH: tl.constexpr = 0, Q_ST: tl.constexpr = 0,
+                   Q_SR: tl.constexpr = 0, Q_SD: tl.constexpr = 0):
     """SEL[t, l] = lz + max over TS rows (every STRIDE-th) of (q - mu).g_l; split over leaves."""
     t = tl.program_id(0)
     sp = tl.program_id(1)
     r = tl.arange(0, TS) * STRIDE
     d = tl.arange(0, D)
-    q = tl.load(Q + (t * T + r)[:, None] * D + d[None, :])
+    if Q_DIRECT:
+        qhead=t//BATCH_CENTERS_PER_HEAD
+        qcenter=t%BATCH_CENTERS_PER_HEAD
+        native_tile=qcenter*Q_GROUP+r//Q_TILE
+        native_row=r%Q_TILE
+        q=tl.load(Q+qhead*Q_SH+native_tile[:,None]*Q_ST+
+                  native_row[:,None]*Q_SR+d[None,:]*Q_SD).to(tl.float32)
+    else:
+        q = tl.load(Q + (t * T + r)[:, None] * D + d[None, :])
     mu = tl.load(MU + t * D + d)
     dq = q - mu[None, :]
     if DOT == 1:
@@ -382,7 +427,10 @@ def _merge_tail_kernel(PM, PL, PACC, Q, TK, TV, OUT, ntail, scale,
                        NS: tl.constexpr, T: tl.constexpr, R: tl.constexpr, D: tl.constexpr,
                        DOT: tl.constexpr, PREC: tl.constexpr,
                        BATCH_TILES_PER_HEAD: tl.constexpr = 0,
-                       BATCH_TAIL_ROWS: tl.constexpr = 0):
+                       BATCH_TAIL_ROWS: tl.constexpr = 0,
+                       Q_DIRECT: tl.constexpr = 0,
+                       Q_SH: tl.constexpr = 0, Q_ST: tl.constexpr = 0,
+                       Q_SR: tl.constexpr = 0, Q_SD: tl.constexpr = 0):
     """Merge the same split partials and append <=16 exact trailing keys.
 
     A second constexpr R controls the number of query rows per merge CTA.
@@ -415,7 +463,13 @@ def _merge_tail_kernel(PM, PL, PACC, Q, TK, TV, OUT, ntail, scale,
         tail_base = head * BATCH_TAIL_ROWS
     else:
         tail_base = 0
-    q = tl.load(Q + (t * T + r)[:, None] * D + d[None, :])
+    if Q_DIRECT:
+        qhead=t//BATCH_TILES_PER_HEAD
+        qtile=t%BATCH_TILES_PER_HEAD
+        q=tl.load(Q+qhead*Q_SH+qtile*Q_ST+
+                  r[:,None]*Q_SR+d[None,:]*Q_SD).to(tl.float32)
+    else:
+        q = tl.load(Q + (t * T + r)[:, None] * D + d[None, :])
     kt = tl.load(TK + (tail_base + j)[:, None] * D + d[None, :],
                  mask=jm[:, None], other=0.0)
     vt = tl.load(TV + (tail_base + j)[:, None] * D + d[None, :],
