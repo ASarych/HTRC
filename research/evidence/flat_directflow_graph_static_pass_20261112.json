@@ -1,0 +1,144 @@
+{
+  "experiment": "flat_directflow_cuda_graph_static_window_v1",
+  "completed": true,
+  "math": "fixed_fast_256_leaves",
+  "quality_coefficient_used": false,
+  "real_model": false,
+  "static_qkv_addresses": true,
+  "cases": [
+    {
+      "head_count": 11,
+      "window_start": 0,
+      "window_kind": "full",
+      "real_rows": 1024,
+      "active_tiles": 16,
+      "padded_rows": 1024,
+      "input_addresses_static": true,
+      "graph_capture_wall_ms": 7.380099999863887,
+      "bit_exact_eager_vs_replay": {
+        "IDX": {
+          "bit_exact": true,
+          "max_abs": 0.0
+        },
+        "EXCL": {
+          "bit_exact": true,
+          "max_abs": 0.0
+        },
+        "MU": {
+          "bit_exact": true,
+          "max_abs": 0.0
+        },
+        "OUT": {
+          "bit_exact": true,
+          "max_abs": 0.0
+        }
+      },
+      "timing_median_ms": {
+        "eager": {
+          "gpu_event_ms": 0.731328010559082,
+          "cpu_submit_ms": 0.676499999826774,
+          "cpu_sync_wall_ms": 1.4142999989417149
+        },
+        "graph": {
+          "gpu_event_ms": 0.7101439833641052,
+          "cpu_submit_ms": 0.012499998774728738,
+          "cpu_sync_wall_ms": 0.7748999996692874
+        }
+      },
+      "graph_speedup_gpu_event": 1.0298306085684532,
+      "graph_speedup_sync_wall": 1.8251387269909811,
+      "capture_break_even_replays_by_sync_wall": 12,
+      "memory": {
+        "allocated_before_capture_mib": 1014.5283203125,
+        "allocated_after_capture_mib": 1014.615234375,
+        "reserved_before_capture_mib": 1024.0,
+        "reserved_after_capture_mib": 1024.0,
+        "graph_extra_reserved_mib": 0.0,
+        "peak_allocated_in_capture_and_replay_mib": 1016.34326171875
+      }
+    },
+    {
+      "head_count": 11,
+      "window_start": 18432,
+      "window_kind": "short",
+      "real_rows": 291,
+      "active_tiles": 5,
+      "padded_rows": 320,
+      "input_addresses_static": true,
+      "graph_capture_wall_ms": 4.153399999268004,
+      "bit_exact_eager_vs_replay": {
+        "IDX": {
+          "bit_exact": true,
+          "max_abs": 0.0
+        },
+        "EXCL": {
+          "bit_exact": true,
+          "max_abs": 0.0
+        },
+        "MU": {
+          "bit_exact": true,
+          "max_abs": 0.0
+        },
+        "OUT": {
+          "bit_exact": true,
+          "max_abs": 0.0
+        }
+      },
+      "timing_median_ms": {
+        "eager": {
+          "gpu_event_ms": 0.4801279902458191,
+          "cpu_submit_ms": 0.7390999999188352,
+          "cpu_sync_wall_ms": 0.9477999992668629
+        },
+        "graph": {
+          "gpu_event_ms": 0.3256640136241913,
+          "cpu_submit_ms": 0.012599999536178075,
+          "cpu_sync_wall_ms": 0.3895999998348998
+        }
+      },
+      "graph_speedup_gpu_event": 1.4743047133229636,
+      "graph_speedup_sync_wall": 2.4327515391902224,
+      "capture_break_even_replays_by_sync_wall": 8,
+      "memory": {
+        "allocated_before_capture_mib": 868.19775390625,
+        "allocated_after_capture_mib": 868.2255859375,
+        "reserved_before_capture_mib": 1028.0,
+        "reserved_after_capture_mib": 890.0,
+        "graph_extra_reserved_mib": 0.0,
+        "peak_allocated_in_capture_and_replay_mib": 868.65673828125
+      }
+    }
+  ],
+  "errors": [],
+  "notes": [
+    "This is an opt-in SINGLE-group STATIC-pointer CUDA Graph feasibility probe.",
+    "No evidence graph capture can be reused between H3 blocks or denoising steps.",
+    "All timing uses CUDA events on identical native QKV and same math.",
+    "Graph capture wall and extra reserved memory reported separately.",
+    "A replay timing alone omits input copy and graph recapture costs.",
+    "No production or live-backend dispatch integration."
+  ],
+  "gpu": {
+    "device": "NVIDIA GeForce RTX 5070 Ti",
+    "free_before_gib": 14.6865234375,
+    "total_gib": 15.894287109375
+  },
+  "config": {
+    "tokens": 18723,
+    "heads": 56,
+    "group_heads": 11,
+    "tile_capacity": 16,
+    "query_mode": "native_torch_mu",
+    "kv_mode": "native_direct",
+    "exact_leaves": 256,
+    "center_group": 1,
+    "warmups": 4,
+    "rounds": 25,
+    "max_extra_reserved_mib": 512.0,
+    "native_stride": [
+      128,
+      2396544,
+      1
+    ]
+  }
+}
