@@ -66,6 +66,30 @@ def _quant_key_int8_rows(KBF, K8, KS, N: tl.constexpr, D: tl.constexpr,
 
 
 @triton.jit
+def _quant_key_int8_native(KBF, K8, KS, N: tl.constexpr, D: tl.constexpr,
+                           H: tl.constexpr, BR: tl.constexpr,
+                           SH: tl.constexpr, SS: tl.constexpr,
+                           SD: tl.constexpr):
+    """Same exact BF16 K8/scales as packed quantizer, without BF16 K staging."""
+    rr=tl.program_id(0)*BR+tl.arange(0,BR)
+    hh=rr//N
+    ss=rr%N
+    dd=tl.arange(0,D)
+    active=rr<H*N
+    k=tl.load(KBF+hh[:,None]*SH+ss[:,None]*SS+dd[None,:]*SD,
+              mask=active[:,None],other=0.0).to(tl.float32)
+    scale=tl.maximum(tl.max(tl.abs(k),axis=1)*(1.0/127.0),1.0e-20)
+    x=tl.div_rn(k,scale[:,None])
+    nearest=tl.inline_asm_elementwise(
+        asm="cvt.rni.s32.f32 $0, $1;",
+        constraints="=r,f",args=[x],dtype=tl.int32,is_pure=True,pack=1
+    )
+    quant=tl.minimum(tl.maximum(nearest,-127),127).to(tl.int8)
+    tl.store(K8+rr[:,None]*D+dd[None,:],quant,mask=active[:,None])
+    tl.store(KS+rr,scale,mask=active)
+
+
+@triton.jit
 def _direct_q_mu_kernel(Q, MU, CENTERS: tl.constexpr, GR: tl.constexpr,
                         TILE: tl.constexpr, D: tl.constexpr,
                         SH: tl.constexpr, ST: tl.constexpr,
@@ -94,7 +118,11 @@ def _stats_kernel(MU, K, V, G, LZ, VB, SG, SV, tc, nb, scale,
                   PREC: tl.constexpr, FP8: tl.constexpr = 0, I8: tl.constexpr = 0,
                   BATCH_TILES_PER_HEAD: tl.constexpr = 0,
                   BATCH_KEY_ROWS: tl.constexpr = 0,
-                  BATCH_TILE_BLOCKS_PER_HEAD: tl.constexpr = 0):
+                  BATCH_TILE_BLOCKS_PER_HEAD: tl.constexpr = 0,
+                  DIRECT_KV: tl.constexpr = 0,
+                  K_SH: tl.constexpr = 0, K_SS: tl.constexpr = 0,
+                  K_SD: tl.constexpr = 0, V_SH: tl.constexpr = 0,
+                  V_SS: tl.constexpr = 0, V_SD: tl.constexpr = 0):
     pt = tl.program_id(0)
     pl = tl.program_id(1)
     if BATCH_TILES_PER_HEAD > 0:
@@ -108,14 +136,21 @@ def _stats_kernel(MU, K, V, G, LZ, VB, SG, SV, tc, nb, scale,
         t = pt * BT + tl.arange(0, BT)
         tm = t < tc
         key_base = 0
+        head = 0
     d = tl.arange(0, D)
     s = tl.arange(0, LEAF)
     mu = tl.load(MU + t[:, None] * D + d[None, :], mask=tm[:, None], other=0.0)
     for j in tl.static_range(0, BL):
         l = pl * BL + j
         if l < nb:
-            kj = tl.load(K + (key_base + l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
-            vj = tl.load(V + (key_base + l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
+            if DIRECT_KV:
+                kj=tl.load(K+head*K_SH+(l*LEAF+s)[:,None]*K_SS+
+                           d[None,:]*K_SD).to(tl.float32)
+                vj=tl.load(V+head*V_SH+(l*LEAF+s)[:,None]*V_SS+
+                           d[None,:]*V_SD).to(tl.float32)
+            else:
+                kj = tl.load(K + (key_base + l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
+                vj = tl.load(V + (key_base + l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
             a = tl.dot(mu, tl.trans(kj), input_precision=PREC) * scale      # [BT, LEAF]
             m = tl.max(a, axis=1)
             w = tl.exp(a - m[:, None])
@@ -159,7 +194,9 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
                  BATCH_KEY_ROWS: tl.constexpr = 0,
                  Q_DIRECT: tl.constexpr = 0, Q_SH: tl.constexpr = 0,
                  Q_ST: tl.constexpr = 0, Q_SR: tl.constexpr = 0,
-                 Q_SD: tl.constexpr = 0):
+                 Q_SD: tl.constexpr = 0, V_DIRECT: tl.constexpr = 0,
+                 V_SH: tl.constexpr = 0, V_SS: tl.constexpr = 0,
+                 V_SD: tl.constexpr = 0):
     """Split-K over leaves: program (tile t, split sp) covers far leaves [sp*lps, +lps) and
     exact tokens [sp*eps, +eps); writes partial (max, sum, acc) merged on the host."""
     t = tl.program_id(0)
@@ -292,7 +329,11 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
             leaf = tl.load(IDX + gt * kx + j // LEAF, mask=jm, other=0)
             tok = leaf * LEAF + j % LEAF
             kk = tl.load(K + (key_base + tok)[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
-            vv = tl.load(V + (key_base + tok)[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
+            if V_DIRECT:
+                vv=tl.load(V+head*V_SH+tok[:,None]*V_SS+d[None,:]*V_SD,
+                           mask=jm[:,None],other=0.0)
+            else:
+                vv = tl.load(V + (key_base + tok)[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
             if DOT == 1:
                 if I8:
                     ksc = tl.load(KS + key_base + tok, mask=jm, other=0.0)

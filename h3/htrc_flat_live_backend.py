@@ -50,7 +50,7 @@ def _triton():
 def flat_attention_bthd(
     q, k, v, *, heads, mode="fast", tiles=16,
     budget_mib=1024, reserve_mib=256, workspace=True,
-    observer=None, query_staging="gather",
+    observer=None, query_staging="gather", kv_staging="gather",
 ):
     """Return the actual [1,S,H,128] BF16/FP16 Flat attention output.
 
@@ -76,6 +76,10 @@ def flat_attention_bthd(
     cfg=shared.flat_config(mode,tiles)
     if query_staging not in ("gather", "view_copy", "native_direct"):
         raise ValueError("Unsupported query staging")
+    if kv_staging not in ("gather","native_direct"):
+        raise ValueError("Unsupported KV staging")
+    if kv_staging=="native_direct" and (k.dtype!=torch.bfloat16 or v.dtype!=torch.bfloat16):
+        raise ValueError("Direct KV needs BF16 native model K/V")
     tr=_triton()
     tr._dll()
     dev=q.device
@@ -92,7 +96,7 @@ def flat_attention_bthd(
         "heads":count, "distinct_native_head_ids":True,
         "tokens":s,"mode":mode,"tiles":tiles,
         "quality_coefficient_used":False,
-        "query_staging":query_staging,
+        "query_staging":query_staging,"kv_staging":kv_staging,
         "center_group":cfg["kern"].get("group",1),
         "exact_leaves":cfg["exact_leaves"],
         "query_windows":math.ceil(s/(tiles*64)),
@@ -123,7 +127,9 @@ def flat_attention_bthd(
             ids=list(range(begin,end))
             # All K/V bytes are computed ONCE for this genuine head group.
             stage=phase_begin("kv_workspace_setup")
-            cache=batch.prepare_gpu_head_kv_cache(cap,ids,tr)
+            cache=batch.prepare_gpu_head_kv_cache(
+                cap,ids,tr,native_direct=(kv_staging=="native_direct")
+            )
             ws=(shared.alloc_workspace(cap,len(ids),tiles,cfg)
                 if workspace else None)
             tails=shared._tail(cap,ids)

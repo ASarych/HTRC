@@ -141,8 +141,12 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
     if missing:
         raise ValueError(f"Missing prepared state: {missing}")
     direct=bool(states.get("_direct_q",False))
-    if any(not states[name].is_contiguous() for name in req if name!="Q"):
-        raise ValueError("Prepared non-Q state tensors must be contiguous")
+    direct_v=bool(states.get("_direct_v",False))
+    if any(not states[name].is_contiguous()
+           for name in req if name not in (("Q","V") if direct_v else ("Q",))):
+        raise ValueError("Prepared packed state tensors must be contiguous")
+    if not direct_v and not states["V"].is_contiguous():
+        raise ValueError("Packed V must be contiguous")
     if not direct and not states["Q"].is_contiguous():
         raise ValueError("Staged Q must be contiguous")
     q=states["Q"]
@@ -204,12 +208,14 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
     flat=lambda name:states[name].view((-1,)+states[name].shape[2:])
     qptr=q if direct else flat("Q")
     qstrides=tuple(map(int,q.stride())) if direct else (0,0,0,0)
+    vptr=states["V"] if direct_v else states["V"].view(heads*keys,dim)
+    vstrides=tuple(map(int,states["V"].stride())) if direct_v else (0,0,0)
     lz=flat("LZ")
     compiled=triton_module._tile_kernel[(heads*tiles,splits,1)](
         qptr,flat("MU"),flat("G"),lz,flat("VB"),
         flat("EXCL"),flat("IDX"),
         states["K"].view(heads*keys,dim),
-        states["V"].view(heads*keys,dim),
+        vptr,
         pm.view(heads*tiles,splits,tile),
         pl.view(heads*tiles,splits,tile),
         acc.view(heads*tiles,splits,tile,dim),
@@ -225,6 +231,8 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
         BATCH_TILES_PER_HEAD=tiles,BATCH_KEY_ROWS=keys,
         Q_DIRECT=int(direct),Q_SH=qstrides[0],Q_ST=qstrides[1],
         Q_SR=qstrides[2],Q_SD=qstrides[3],
+        V_DIRECT=int(direct_v),V_SH=vstrides[0],
+        V_SS=vstrides[1],V_SD=vstrides[2],
         num_warps=warps,num_stages=stages
     )
     return buffers,compiled
@@ -499,15 +507,18 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         vbf=kv_cache["VBF"]
         K=kv_cache["K"]
         KS=kv_cache["KS"]
+        direct_kv=bool(kv_cache.get("native_kv",False))
         if (kbf.shape!=(h,nkeys,dim) or vbf.shape!=kbf.shape
             or K.shape!=kbf.shape or KS.shape!=(h,nkeys)
             or kbf.dtype!=torch.bfloat16 or vbf.dtype!=torch.bfloat16
             or K.dtype!=torch.int8 or KS.dtype!=torch.float32
-            or any(not t.is_contiguous() or t.device!=q_cap.device
-                   for t in (kbf,vbf,K,KS))):
+            or any(t.device!=q_cap.device for t in (kbf,vbf,K,KS))
+            or not K.is_contiguous() or not KS.is_contiguous()
+            or (not direct_kv and (not kbf.is_contiguous() or not vbf.is_contiguous()))):
             raise ValueError("KV cache invalid tensor shape/dtype/device/layout")
         mark_stage("kv_cache_hit")
     V=vbf
+    direct_kv=bool(kv_cache is not None and kv_cache.get("native_kv",False))
     def state_buffer(name, shape, dtype):
         if query_workspace is None:
             return torch.empty(shape,device=q_cap.device,dtype=dtype)
@@ -531,8 +542,8 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     # Head count is a dynamic grid dimension, not a kernel specialization.
     triton_module._stats_kernel[(h*blocks,triton_module.triton.cdiv(nb,BL))](
         MU.view(h*centers,dim),
-        kbf.view(h*nkeys,dim),
-        vbf.view(h*nkeys,dim),
+        (kbf if direct_kv else kbf.view(h*nkeys,dim)),
+        (vbf if direct_kv else vbf.view(h*nkeys,dim)),
         G.view(h*centers,nb,dim),
         LZ.view(h*centers,nb),
         VB.view(h*centers,nb,dim),
@@ -543,6 +554,13 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         BATCH_TILES_PER_HEAD=centers,
         BATCH_KEY_ROWS=nkeys,
         BATCH_TILE_BLOCKS_PER_HEAD=blocks,
+        DIRECT_KV=int(direct_kv),
+        K_SH=(int(kbf.stride(0)) if direct_kv else 0),
+        K_SS=(int(kbf.stride(1)) if direct_kv else 0),
+        K_SD=(int(kbf.stride(2)) if direct_kv else 0),
+        V_SH=(int(vbf.stride(0)) if direct_kv else 0),
+        V_SS=(int(vbf.stride(1)) if direct_kv else 0),
+        V_SD=(int(vbf.stride(2)) if direct_kv else 0),
         num_warps=4
     )
     mark_stage("leaf_stats")
@@ -589,12 +607,13 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         "G":G,"VB":VB,"LZ":LZ,"SG":SG,
         "EXCL":excl.view(h,centers,nb),
         "IDX":idx,
-        "_direct_q":query_staging=="native_direct"
+        "_direct_q":query_staging=="native_direct",
+        "_direct_v":direct_kv
     }
     return states,config,nkeys,nb,kx
 
 
-def prepare_gpu_head_kv_cache(capture, raw_heads, triton_module):
+def prepare_gpu_head_kv_cache(capture, raw_heads, triton_module, *, native_direct=False):
     """Cache KBF, VBF, INT8 K and scale KS for one GPU attention call.
 
     The caller must NOT reuse this across a different attention call,
@@ -625,34 +644,48 @@ def prepare_gpu_head_kv_cache(capture, raw_heads, triton_module):
     except KeyError as exc:
         raise ValueError(f"Uncaptured head ID {exc}") from exc
     pos=torch.tensor(indices,device=ksrc.device,dtype=torch.long)
-    def gather(name):
-        return capture[name][:nkeys].index_select(
-            1,pos
-        ).permute(1,0,2).contiguous().to(torch.bfloat16).contiguous()
-    kbf=gather("k_khd")
-    vbf=gather("v_khd")
     h=len(indices)
+    if native_direct:
+        # This first Direct KV gate is BF16-only. No hidden conversion or copy.
+        if (ksrc.dtype!=torch.bfloat16 or vsrc.dtype!=torch.bfloat16
+            or indices!=list(range(indices[0],indices[0]+h))):
+            raise ValueError("native_direct KV requires unique consecutive BF16 CUDA heads")
+        kbf=ksrc[:nkeys,indices[0]:indices[0]+h,:].permute(1,0,2)
+        vbf=vsrc[:nkeys,indices[0]:indices[0]+h,:].permute(1,0,2)
+    else:
+        def gather(name):
+            return capture[name][:nkeys].index_select(
+                1,pos
+            ).permute(1,0,2).contiguous().to(torch.bfloat16).contiguous()
+        kbf=gather("k_khd")
+        vbf=gather("v_khd")
     k8=torch.empty((h,nkeys,128),device=ksrc.device,dtype=torch.int8)
     ks=torch.empty((h,nkeys),device=ksrc.device,dtype=torch.float32)
     br=8
-    triton_module._quant_key_int8_rows[
-        (triton_module.triton.cdiv(h*nkeys,br),)
-    ](kbf.view(h*nkeys,128),k8.view(h*nkeys,128),
-      ks.view(h*nkeys),h*nkeys,128,br,num_warps=4)
+    if native_direct:
+        triton_module._quant_key_int8_native[
+            (triton_module.triton.cdiv(h*nkeys,br),)
+        ](kbf,k8.view(h*nkeys,128),ks.view(h*nkeys),
+          nkeys,128,h,br,*map(int,kbf.stride()),num_warps=4)
+    else:
+        triton_module._quant_key_int8_rows[
+            (triton_module.triton.cdiv(h*nkeys,br),)
+        ](kbf.view(h*nkeys,128),k8.view(h*nkeys,128),
+          ks.view(h*nkeys),h*nkeys,128,br,num_warps=4)
     return {
         "raw_heads":tuple(map(int,raw_heads)),
         "head_positions":tuple(indices),
         "source_k":ksrc,"source_v":vsrc,
         "source_k_version":_source_tensor_version(ksrc),"source_v_version":_source_tensor_version(vsrc),
-        "nkeys":nkeys,
+        "nkeys":nkeys,"native_kv":bool(native_direct),
         "KBF":kbf,"VBF":vbf,"K":k8,"KS":ks,
     }
 
 
 def gpu_head_kv_cache_bytes(cache):
     """Size of unique resident K-side buffers (not aliased source QKV)."""
-    return sum(cache[k].numel()*cache[k].element_size()
-               for k in ("KBF","VBF","K","KS"))
+    keys=("K","KS") if cache.get("native_kv",False) else ("KBF","VBF","K","KS")
+    return sum(cache[k].numel()*cache[k].element_size() for k in keys)
 
 def gpu_query_workspace_bytes(workspace):
     """Count unique LIVE preallocated query buffers, not cached K/V."""
