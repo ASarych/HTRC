@@ -128,3 +128,26 @@ kernel or future-state predictor. The measured old-state/synthetic-B
 oracle is not such a test. Do not rerun the rejected observed
 mean-leaf-delta candidate without a new exactness mechanism.
 No production integration, no quality coefficient, no BEST promotion.
+
+## Real same-block, distinct-timestep QKV collection now prepared
+
+The missing next evidence is NOT another synthetic mean-delta rerun. An
+opt-in ComfyNodes capture slice has been committed and source-verified:
+[ComfyNodes temporal real QKV pair instructions](https://github.com/ASarych/ComfyNodes/blob/e7b2a3412b7dc94684577fb9513851405e8578cc/research/H3_TEMPORAL_REAL_QKV_PAIR_2026-11-12.md),
+branch experiment/h3-temporal-real-qkv-pair-20261112,
+HEAD e7b2a3412b7dc94684577fb9513851405e8578cc. It captures
+four true post-RoPE heads at two DISTINCT timestep-embedding fingerprints
+from one block; this is opt-in only and does not affect normal Flat output.
+CPU capture contracts 3/3 PASS; real GPU capture UNRUN. CFG branch identity
+is not automatically established by different timestep fingerprints.
+
+Use that pair as --capture-a / --capture-b in the EXISTING HTRC
+tools/benchmark_h3_flat_temporal_leaf_delta_ab.py. The resulting one JSON
+will report real-pair IDX membership/order stability and exact dirty
+coverage. Do NOT use previous mean-leaf-delta as a candidate for
+quality-preserving integration: its synthetic performance and parity
+already failed. If true consecutive timesteps show low IDX churn,
+develop a mathematically exact bounded candidate-repair with a full
+fallback; otherwise prioritize Direct-Flow model validation and
+stats/rowmax/selection fusion. No new HTRC code was added in this
+documentation update.
