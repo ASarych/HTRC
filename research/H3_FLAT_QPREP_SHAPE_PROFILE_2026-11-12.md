@@ -30,6 +30,6 @@ The HTRC checkout was based at `1743dd8e442d9caf8753eb1be3fd83ab46a0b50f`. At me
 - `h3/htrc_flat_live_backend.py` SHA-256 `566f315430f085f2db26182b498aec8e2f5563120bbd272cad061a767f9afbd1`
 - `h3/htrc_flat_model_shadow.py` SHA-256 `74f232a4de4de330dcbac6e6cba08600809998905c9361b71f0fbf8252794b5c`
 
-This evidence commit contains the Markdown interpretation and raw JSON only; it does not contain those code edits or the local profiling script. Checking out this branch alone will not reproduce the exact measured source state.
+The measurement used these exact working-tree files. This follow-up commit adds their source snapshots and the shape-matched profiling script to this branch, preserving the SHA-256 values listed above. The profiler script is tailored to the existing Windows ComfyUI installation and its D: paths; it uses synthetic Q/K/V and does not load model weights.
 
-The detailed measured fields are preserved in [`H3_FLAT_QPREP_SHAPE_PROFILE_2026-11-12.json`](H3_FLAT_QPREP_SHAPE_PROFILE_2026-11-12.json).
+The exact profiler is [`tools/profile_h3_flat_qprep_shape.py`](../../tools/profile_h3_flat_qprep_shape.py), SHA-256 `87601a16394010b5e98ece1527e846bc991678498e8267b45e1c018ad5ce3e98`. The detailed measured fields are preserved in [`H3_FLAT_QPREP_SHAPE_PROFILE_2026-11-12.json`](H3_FLAT_QPREP_SHAPE_PROFILE_2026-11-12.json).

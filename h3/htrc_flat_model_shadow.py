@@ -77,19 +77,20 @@ def alloc_workspace(capture, head_count, tiles, cfg):
     """Preallocate query workspace, but NEVER share results between windows."""
     h,n=int(head_count),int(capture["k_khd"].shape[0])//16
     kx=min(int(cfg["exact_leaves"]),n)
+    centers=tiles//int(cfg.get("kern",{}).get("group",1))
     ns=int(cfg["splits"])
     dev=capture["q_qhd"].device
     def make(shape,dtype):
         return torch.empty(shape,dtype=dtype,device=dev)
     ps=(h,tiles,ns,64)
     return {
-        "G":make((h,tiles,n,128),torch.int8),
-        "VB":make((h,tiles,n,128),torch.bfloat16),
-        "LZ":make((h,tiles,n),torch.float32),
-        "SG":make((h,tiles,n),torch.float32),
-        "sel":make((h*tiles,n),torch.float32),
-        "IDX":make((h,tiles,kx),torch.int32),
-        "EXCL":make((h*tiles,n),torch.int8),
+        "G":make((h,centers,n,128),torch.int8),
+        "VB":make((h,centers,n,128),torch.bfloat16),
+        "LZ":make((h,centers,n),torch.float32),
+        "SG":make((h,centers,n),torch.float32),
+        "sel":make((h*centers,n),torch.float32),
+        "IDX":make((h,centers,kx),torch.int32),
+        "EXCL":make((h*centers,n),torch.int8),
         "_partials":{"pm":make(ps,torch.float32),
                      "pl":make(ps,torch.float32),
                      "acc":make(ps+(128,),torch.float32)},
@@ -117,8 +118,9 @@ def _head_plan(capture, cases, tiles, cfg, *, budget_mib, reserve_mib, workspace
     ns=int(cfg["splits"])
     kx=min(int(cfg["exact_leaves"]),nb)
     per_cache=nkeys*(128*2+128*2+128+4)
-    per_workspace=(tiles*nb*(128+256+4+4+4+1)
-                  +tiles*kx*4+tiles*ns*64*(4+4+128*4)
+    centers=tiles//int(cfg.get("kern",{}).get("group",1))
+    per_workspace=(centers*nb*(128+256+4+4+4+1)
+                  +centers*kx*4+tiles*ns*64*(4+4+128*4)
                   +tiles*64*128*4) if workspace else 0
     usable=budget-int(reserve_mib*mib)-128*mib
     per_head=(plan.estimated_bytes_per_head

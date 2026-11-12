@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import sys
+import time
 from pathlib import Path
 
 import torch
@@ -49,7 +50,7 @@ def _triton():
 def flat_attention_bthd(
     q, k, v, *, heads, mode="fast", tiles=16,
     budget_mib=1024, reserve_mib=256, workspace=True,
-    observer=None,
+    observer=None, quality=0.0,
 ):
     """Return the actual [1,S,H,128] BF16/FP16 Flat attention output.
 
@@ -70,6 +71,17 @@ def flat_attention_bthd(
     if budget_mib<1 or reserve_mib<0 or budget_mib<=reserve_mib+128:
         raise ValueError("Budget must exceed reserve plus 128 MiB fixed buffer")
     cfg=shared.flat_config(mode,tiles)
+    quality=float(quality)
+    if not 0.0<=quality<=0.3:
+        raise ValueError("This GPU path supports Q=0 (preset) and Q0.1..Q0.3; leaf32 modes not implemented")
+    if quality>=0.1:
+        qstep,center_group,fraction=(0.1,2,0.1005)
+        if quality>=0.2:qstep,center_group,fraction=(0.2,4,0.1005)
+        if quality>=0.3:qstep,center_group,fraction=(0.3,4,0.0754)
+        cfg["quality"]=qstep
+        cfg["kern"]["group"]=center_group
+        cfg["exact_leaves"]=max(1,round((s//16)*fraction))
+        if tiles%center_group:raise ValueError("Q coefficient requires a divisible query tile window")
     tr=_triton()
     tr._dll()
     dev=q.device
@@ -85,6 +97,7 @@ def flat_attention_bthd(
         "backend":"htrc_flat_gpu",
         "heads":count, "distinct_native_head_ids":True,
         "tokens":s,"mode":mode,"tiles":tiles,
+        "quality":cfg.get("quality",0.0),"center_group":cfg["kern"].get("group",1),"exact_leaves":cfg["exact_leaves"],
         "query_windows":math.ceil(s/(tiles*64)),
         "group_capacity":max_group,
         "number_of_groups":math.ceil(count/max_group),
@@ -95,14 +108,29 @@ def flat_attention_bthd(
         "kv_cache_scope":"one_attention_call",
         "workspace_reused":bool(workspace),
     }
+    phase_events=[]
+    phase_cpu={}
+    call_start=time.perf_counter()
+    def phase_begin(name):
+        if observer is None:return None
+        event=torch.cuda.Event(enable_timing=True);event.record()
+        return name,time.perf_counter(),event
+    def phase_end(token):
+        if token is None:return
+        name,started,event=token
+        finish=torch.cuda.Event(enable_timing=True);finish.record()
+        phase_events.append((name,event,finish))
+        phase_cpu[name]=phase_cpu.get(name,0.0)+(time.perf_counter()-started)*1000
     try:
         for begin,end in batch.iter_head_groups(count,max_group):
             ids=list(range(begin,end))
             # All K/V bytes are computed ONCE for this genuine head group.
+            stage=phase_begin("kv_workspace_setup")
             cache=batch.prepare_gpu_head_kv_cache(cap,ids,tr)
             ws=(shared.alloc_workspace(cap,len(ids),tiles,cfg)
                 if workspace else None)
             tails=shared._tail(cap,ids)
+            phase_end(stage)
             try:
                 for qi in range(0,s,tiles*64):
                     qe=min(s,qi+tiles*64)
@@ -116,26 +144,34 @@ def flat_attention_bthd(
                         ),dim=0)
                     view=dict(cap)
                     view["q_qhd"]=src
+                    stage=phase_begin("query_stats_selection")
                     states,_,_,_,_=batch.prepare_batched_head_states(
                         view,ids,cfg,tr,tile_count=tiles,
                         quant_backend="triton",input_cast="gpu",
                         kv_cache=cache,query_workspace=ws,
                         valid_query_rows=valid,
                     )
+                    phase_end(stage)
+                    stage=phase_begin("tile")
                     parts,_=batch.launch_prepared_tile_batch(
                         states,cfg,tr,buffers=(ws["_partials"] if ws else None)
                     )
+                    phase_end(stage)
+                    stage=phase_begin("merge_tail")
                     merged,_=batch.launch_prepared_merge_batch(
                         states,cfg,tr,parts,tails=tails,
                         output=(ws["_out"] if ws else None),
                         merge_rows=32,
                     )
+                    phase_end(stage)
+                    stage=phase_begin("output_copy")
                     # [H,Tiles,64,D] -> [valid,H,D], BF16 output to native
                     # projection. Copy results before reusing workspace.
                     selected=merged.reshape(len(ids),tiles*64,128)[:,:valid]
                     out[qi:qe,begin:end,:].copy_(
                         selected.permute(1,0,2).to(source)
                     )
+                    phase_end(stage)
                     # Drop ALL Python aliases before the next group/window;
                     # otherwise previous K/V and workspace remain live.
                     del selected,merged,parts,states,view,src
@@ -147,5 +183,14 @@ def flat_attention_bthd(
         del out
         raise
     if observer is not None:
+        fence=torch.cuda.Event();fence.record();fence.synchronize()
+        gpu={}
+        for name,start,finish in phase_events:gpu[name]=gpu.get(name,0.0)+start.elapsed_time(finish)
+        details["profile_cpu_enqueue_ms"]=phase_cpu
+        details["profile_gpu_stream_elapsed_ms"]=gpu
+        details["profile_call_wall_ms"]=(time.perf_counter()-call_start)*1000
+        details["profile_note"]="GPU event intervals include stream gaps; CPU and GPU times overlap, do not add them"
+        details["ts_perf"]=time.perf_counter()
+        details["free_bytes"]=torch.cuda.mem_get_info(dev)[0]
         observer("htrc_flat_gpu_dispatch",details)
     return out.unsqueeze(0)

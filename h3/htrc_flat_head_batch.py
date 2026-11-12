@@ -11,6 +11,13 @@ import math
 import time
 from typing import Iterator
 
+def _source_tensor_version(tensor):
+    # ComfyUI creates inference tensors without version counters. Cache users
+    # still require the identical source objects and a single-call lifetime;
+    # no cache-owning code mutates native K/V during that lifetime.
+    return None if tensor.is_inference() else tensor._version
+
+
 MIB = 1 << 20
 DEFAULT_FIXED_TEMP_BYTES = 128 * MIB
 
@@ -149,18 +156,22 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
         or config.get("dot")!="bf16" or config.get("sink_leaves",0)!=0
         or int(config["tile"])!=tile or dim!=128):
         raise ValueError("Only seq/int8/bf16/sink0/dim128 Tile is supported")
-    if states["MU"].shape!=(heads,tiles,dim):
+    group=int(config.get("kern",{}).get("group",1))
+    if group not in (1,2,4) or tiles % group:
+        raise ValueError("Query tile count must be divisible by centre group 1/2/4")
+    centers=tiles//group
+    if states["MU"].shape!=(heads,centers,dim):
         raise ValueError("MU dimensions do not match Q")
     if states["K"].shape!=(heads,keys,dim) or states["V"].shape!=states["K"].shape:
         raise ValueError("K/V must be [heads,keys,dim]")
     if states["KS"].shape!=(heads,keys):
         raise ValueError("KS scales mismatch")
-    if states["G"].shape!=(heads,tiles,leaves,dim) or states["VB"].shape!=states["G"].shape:
+    if states["G"].shape!=(heads,centers,leaves,dim) or states["VB"].shape!=states["G"].shape:
         raise ValueError("G/VB dims mismatch")
-    if any(states[name].shape!=(heads,tiles,leaves) for name in ("LZ","SG","EXCL")):
+    if any(states[name].shape!=(heads,centers,leaves) for name in ("LZ","SG","EXCL")):
         raise ValueError("LZ/SG/EXCL dims mismatch")
     idx=states["IDX"]
-    if idx.ndim!=3 or idx.shape[:2]!=(heads,tiles) or idx.shape[2]<1:
+    if idx.ndim!=3 or idx.shape[:2]!=(heads,centers) or idx.shape[2]<1:
         raise ValueError("IDX must be [heads,tiles,exact_leaves]")
     kx=int(idx.shape[2])
     splits=int(config["splits"])
@@ -187,7 +198,7 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
                 or not buffers[name].is_contiguous()):
                 raise ValueError("Partial buffers must be contiguous CUDA float32 on Q device")
         pm,pl,acc=buffers["pm"],buffers["pl"],buffers["acc"]
-    flat=lambda name:states[name].view((heads*tiles,)+states[name].shape[2:])
+    flat=lambda name:states[name].view((-1,)+states[name].shape[2:])
     lz=flat("LZ")
     compiled=triton_module._tile_kernel[(heads*tiles,splits,1)](
         flat("Q"),flat("MU"),flat("G"),lz,flat("VB"),
@@ -203,7 +214,7 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
         triton_module._split(kx*16,splits,bn),
         0,1.0/math.sqrt(dim),
         T=tile,D=dim,BN=bn,BN_NEAR=near_bn,LEAF=16,
-        PREC="tf32",DOT=1,GR=1,FP8=0,TAIL=0,RB=1,I8=1,
+        PREC="tf32",DOT=1,GR=group,FP8=0,TAIL=0,RB=1,I8=1,
         PASS=0,LATE_NEAR_Q=0,FAR_PREFETCH_LZ=0,
         FAR_PV_ACC=0,NEAR_PV_ACC=0,
         BATCH_TILES_PER_HEAD=tiles,BATCH_KEY_ROWS=keys,
@@ -354,6 +365,10 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     if q_cap.device.type == "cuda" and input_cast == "cpu":
         raise ValueError("CPU BF16 staging is invalid for GPU-resident Q/K/V")
     tile=64
+    group=int(config.get("kern",{}).get("group",1))
+    if group not in (1,2,4) or tile_count % group:
+        raise ValueError("Query tile count must divide centre group 1/2/4")
+    centers=tile_count//group
     n_query=tile_count*tile
     if n_query>int(q_cap.shape[0]):
         raise ValueError("Not enough query rows in native capture")
@@ -379,14 +394,19 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         raw=capture[key][:rows]
         return raw.index_select(1,pos).permute(1,0,2).contiguous()
     Q=gather("q_qhd",n_query).to(dev).float().view(h,tile_count,tile,dim).contiguous()
-    MU=Q.mean(dim=2).contiguous()
-    # Original Flat derives the final partial-tile centre from real
-    # query rows ONLY; padded rows must not change its far-field stats.
-    # All previous A/B callers omit valid_query_rows and are unchanged.
-    if valid_query_rows is not None and valid_query_rows % tile:
-        final_tile=(valid_query_rows-1)//tile
-        real_rows=valid_query_rows-final_tile*tile
-        MU[:,final_tile,:]=Q[:,final_tile,:real_rows,:].mean(dim=1)
+    if group==1:
+        MU=Q.mean(dim=2).contiguous()
+        if valid_query_rows is not None and valid_query_rows % tile:
+            final_tile=(valid_query_rows-1)//tile
+            real_rows=valid_query_rows-final_tile*tile
+            MU[:,final_tile,:]=Q[:,final_tile,:real_rows,:].mean(dim=1)
+    else:
+        grouped_q=Q.view(h,centers,group*tile,dim)
+        MU=grouped_q.mean(dim=2).contiguous()
+        if valid_query_rows is not None and valid_query_rows % (group*tile):
+            final_center=(valid_query_rows-1)//(group*tile)
+            real_rows=valid_query_rows-final_center*group*tile
+            MU[:,final_center,:]=grouped_q[:,final_center,:real_rows,:].mean(dim=1)
     mark_stage("query_gather_h2d_mu" if q_cap.device.type=="cpu"
                else "query_gather_gpu_mu")
     if kv_cache is None:
@@ -425,8 +445,8 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
             or kv_cache.get("raw_heads")!=tuple(map(int,raw_heads))
             or kv_cache.get("source_k") is not k_cap
             or kv_cache.get("source_v") is not v_cap
-            or kv_cache.get("source_k_version")!=k_cap._version
-            or kv_cache.get("source_v_version")!=v_cap._version
+            or kv_cache.get("source_k_version")!=_source_tensor_version(k_cap)
+            or kv_cache.get("source_v_version")!=_source_tensor_version(v_cap)
             or kv_cache.get("head_positions")!=tuple(positions)
             or kv_cache.get("nkeys")!=nkeys):
             raise ValueError("KV cache identity, head order or K length mismatch")
@@ -457,36 +477,36 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
             raise ValueError(f"Incompatible query workspace buffer: {name}")
         return buf
     # Reuse storage only; the stats kernel overwrites every element for every Q tile.
-    G=state_buffer("G",(h,tile_count,nb,dim),torch.int8)
-    VB=state_buffer("VB",(h,tile_count,nb,dim),torch.bfloat16)
-    LZ=state_buffer("LZ",(h,tile_count,nb),torch.float32)
-    SG=state_buffer("SG",(h,tile_count,nb),torch.float32)
+    G=state_buffer("G",(h,centers,nb,dim),torch.int8)
+    VB=state_buffer("VB",(h,centers,nb,dim),torch.bfloat16)
+    LZ=state_buffer("LZ",(h,centers,nb),torch.float32)
+    SG=state_buffer("SG",(h,centers,nb),torch.float32)
     BT,BL=16,4
-    blocks=math.ceil(tile_count/BT)
+    blocks=math.ceil(centers/BT)
     # Head count is a dynamic grid dimension, not a kernel specialization.
     triton_module._stats_kernel[(h*blocks,triton_module.triton.cdiv(nb,BL))](
-        MU.view(h*tile_count,dim),
+        MU.view(h*centers,dim),
         kbf.view(h*nkeys,dim),
         vbf.view(h*nkeys,dim),
-        G.view(h*tile_count,nb,dim),
-        LZ.view(h*tile_count,nb),
-        VB.view(h*tile_count,nb,dim),
-        SG.view(h*tile_count,nb),
-        LZ.view(h*tile_count,nb),
-        h*tile_count,nb,1.0/math.sqrt(dim),
+        G.view(h*centers,nb,dim),
+        LZ.view(h*centers,nb),
+        VB.view(h*centers,nb,dim),
+        SG.view(h*centers,nb),
+        LZ.view(h*centers,nb),
+        h*centers,nb,1.0/math.sqrt(dim),
         D=dim,BT=BT,LEAF=16,BL=BL,PREC="tf32",FP8=0,I8=1,
-        BATCH_TILES_PER_HEAD=tile_count,
+        BATCH_TILES_PER_HEAD=centers,
         BATCH_KEY_ROWS=nkeys,
         BATCH_TILE_BLOCKS_PER_HEAD=blocks,
         num_warps=4
     )
     mark_stage("leaf_stats")
     del kbf
-    qf=Q.view(h*tile_count,tile,dim)
-    muf=MU.view(h*tile_count,dim)
-    gf=G.view(h*tile_count,nb,dim)
-    lzf=LZ.view(h*tile_count,nb)
-    sgf=SG.view(h*tile_count,nb)
+    qf=Q.view(h*centers,group*tile,dim)
+    muf=MU.view(h*centers,dim)
+    gf=G.view(h*centers,nb,dim)
+    lzf=LZ.view(h*centers,nb)
+    sgf=SG.view(h*centers,nb)
     sel=triton_module.rowmax_select(
         qf,muf,gf,lzf,
         prec="tf32",bn=32,warps=4,
@@ -495,12 +515,12 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     )
     ids=torch.topk(sel,kx,dim=-1,sorted=False).indices
     if query_workspace is None:
-        idx=ids.to(torch.int32).view(h,tile_count,kx).contiguous()
-        excl=torch.zeros((h*tile_count,nb),device=dev,dtype=torch.int8)
+        idx=ids.to(torch.int32).view(h,centers,kx).contiguous()
+        excl=torch.zeros((h*centers,nb),device=dev,dtype=torch.int8)
     else:
-        idx=state_buffer("IDX",(h,tile_count,kx),torch.int32)
-        idx.copy_(ids.to(torch.int32).view(h,tile_count,kx))
-        excl=state_buffer("EXCL",(h*tile_count,nb),torch.int8)
+        idx=state_buffer("IDX",(h,centers,kx),torch.int32)
+        idx.copy_(ids.to(torch.int32).view(h,centers,kx))
+        excl=state_buffer("EXCL",(h*centers,nb),torch.int8)
         # Mandatory reset: do NOT reuse prior window's selection/EXCL contents.
         excl.zero_()
     excl.scatter_(1,ids,1)
@@ -508,7 +528,7 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     states={
         "Q":Q,"MU":MU,"K":K,"V":V,"KS":KS,
         "G":G,"VB":VB,"LZ":LZ,"SG":SG,
-        "EXCL":excl.view(h,tile_count,nb),
+        "EXCL":excl.view(h,centers,nb),
         "IDX":idx
     }
     return states,config,nkeys,nb,kx
@@ -563,7 +583,7 @@ def prepare_gpu_head_kv_cache(capture, raw_heads, triton_module):
         "raw_heads":tuple(map(int,raw_heads)),
         "head_positions":tuple(indices),
         "source_k":ksrc,"source_v":vsrc,
-        "source_k_version":ksrc._version,"source_v_version":vsrc._version,
+        "source_k_version":_source_tensor_version(ksrc),"source_v_version":_source_tensor_version(vsrc),
         "nkeys":nkeys,
         "KBF":kbf,"VBF":vbf,"K":k8,"KS":ks,
     }
