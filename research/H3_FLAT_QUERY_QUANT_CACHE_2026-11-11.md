@@ -73,3 +73,41 @@ Production branch and defaults unchanged. If this also loses,
 switch attention to removal of select/topk/split memory traffic
 rather than expanding the new cache.
 
+
+## RTX 5070 Ti GPU A/B completed — 2026-11-12: PASS_NUMERIC / MARGINAL PERFORMANCE, no integration
+
+The owner executed the ComfyNodes original experimental HEAD
+`8b3a5d4e7cd96e27f2244546aa6d3b6782c4fa18` with saved
+native H3 Q40759 head IDs 1 and 16, both `fast` and `balanced`,
+6 paired rounds / batch4. Exact report archived here as
+[one normalized JSON](evidence/flat_query_cache_ab_20261112.json).
+The historical `UNRUN` notation above describes the pre-GPU state.
+
+**All 4 cases pass**: `pinned_R32`, `new_none`, `cache_dq`, and
+`cache_both` each have `max_abs_vs_pinned=0`, `rel_l2_vs_pinned=0`,
+finite outputs, and no compilation/parity failures. This does NOT
+establish equality with native dense attention: rel-L2 against the old
+exact original is around 4-6e-7.
+
+| Head/mode | new_none speedup | cache_dq speedup | cache_both speedup |
+|---|---:|---:|---:|
+| 1 / fast | 0.99660x | **1.01036x** | 1.00760x |
+| 1 / balanced | 0.99911x | **1.00895x** | 0.99838x |
+| 16 / fast | 0.99872x | **1.00698x** | 1.01015x |
+| 16 / balanced | 0.99993x | **1.00672x** | 0.99832x |
+
+The `dq` variant saves about **0.67%-1.04%** of full-head
+synthetic/captured-input attention time. `both` is inconsistent,
+slower on two cases. Select kernel grows from 80 registers
+(`pinned_R32`/`new_none`) to 87 (`dq`) or 127 (`both`).
+Tile stays at 255 registers. All tested kernels have **zero spills**.
+Cache staging is ~2.06 MiB (`dq`) / 4.13 MiB (`both`) per
+256-tile chunk. No 56-distinct-head model-resident A/B, denoising,
+video quality or whole Direct-Flow CUDA Graph timing was performed.
+
+**Decision:** mark `PASS_NUMERIC / PERF_TOO_SMALL_TO_INTEGRATE`.
+Keep this opt-in experiment as a numerical control; do **not**
+merge into mutable Direct-Flow or production on this evidence.
+No repeat GPU test needed for the same configuration.
+Prefer experiments cutting the dominant stats / selection /
+dispatch cost before revisiting this ~1% micro-optimization.
