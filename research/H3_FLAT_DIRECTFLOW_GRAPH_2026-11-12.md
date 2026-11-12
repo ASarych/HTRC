@@ -43,3 +43,10 @@ If capture fails or graph storage exceeds memory cap, save this same JSON: \`com
 ## Status
 
 Source prepared, CUDA Graph **UNRUN**; local Python compile/unit tests **UNRUN** at GitHub authoring time. Production/main unchanged. Exact eager vs replay numerical gate mandatory.
+
+
+## RTX failure before capture: missing implicit `group` (2026-11-12)
+
+The local uploaded [`flat_directflow_graph_missing_group_20261112.json`](evidence/flat_directflow_graph_missing_group_20261112.json) reported `completed=false`, `cases=[]`, `KeyError: 'group'` in preflight at `cfg["kern"]["group"]`. No kernels were captured or timed; Graph numeric and performance gates stay **UNRUN**, not FAIL.
+
+Root cause: `flat_config("fast")` uses an implicit center group 1 when the `kern` dict omits the key, matching existing Flat callers. This benchmark incorrectly required the key twice. Added `center_group_from_config` and used its validated result both for preflight and for variable-window planning/reporting; the exact 256-leaf/group1 experiment contract is unchanged. Added an executable CPU-only unit test for absent/explicit/invalid group values. The original report is archived; rerun the same one-JSON command after updating the branch. A source-level/static review is not a substitute for a CUDA Graph capture PASS.

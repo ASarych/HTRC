@@ -43,10 +43,34 @@ class DirectFlowGraphStaticTest(unittest.TestCase):
         self.assertIn('if not requested:',s)
         self.assertNotIn('requested=[geometries[0]]',s)
 
+    def test_fast_preset_implicit_group_and_validation(self):
+        # Execute the real pure configuration helper without importing
+        # torch/Triton; catching absent `group` before GPU is allocated.
+        tree=ast.parse(BENCH.read_text(encoding="utf-8"))
+        helper=next(n for n in tree.body
+                    if isinstance(n,ast.FunctionDef)
+                    and n.name=="center_group_from_config")
+        subset=ast.Module(body=[helper],type_ignores=[])
+        ast.fix_missing_locations(subset)
+        env={}
+        exec(compile(subset,str(BENCH),"exec"),env)
+        resolve=env["center_group_from_config"]
+        self.assertEqual(resolve({"kern":{}}),1)
+        self.assertEqual(resolve({}),1)
+        for v in (1,2,4):
+            self.assertEqual(resolve({"kern":{"group":v}}),v)
+        for v in (None,False,0,-1,3,8,1.0,"1"):
+            with self.subTest(value=v),self.assertRaises(ValueError):
+                resolve({"kern":{"group":v}})
+        with self.assertRaises(ValueError):
+            resolve({"kern":None})
+
     def test_fixed_math_and_one_report(self):
         src=BENCH.read_text(encoding="utf-8")
         self.assertIn('"exact_leaves"])!=256',src)
-        self.assertIn('int(cfg["kern"]["group"])!=1',src)
+        self.assertIn('center_group=center_group_from_config(cfg)',src)
+        self.assertIn('center_group=center_group',src)
+        self.assertNotIn('cfg["kern"]["group"]',src)
         self.assertIn("flat_directflow_graph_ab.json",src)
         self.assertIn('default="both"',src)
         self.assertIn('window_capture(cap,geom)',src)

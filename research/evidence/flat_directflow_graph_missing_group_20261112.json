@@ -1,0 +1,29 @@
+{
+  "experiment": "flat_directflow_cuda_graph_static_window_v1",
+  "completed": false,
+  "math": "fixed_fast_256_leaves",
+  "quality_coefficient_used": false,
+  "real_model": false,
+  "static_qkv_addresses": true,
+  "cases": [],
+  "errors": [
+    {
+      "type": "KeyError",
+      "message": "'group'",
+      "traceback_tail": "Traceback (most recent call last):\n  File \"D:\\ComfyNodes-flat-split-20261111\\tools\\benchmark_h3_flat_directflow_graph_ab.py\", line 315, in main\n    run(args,report)\n    ~~~^^^^^^^^^^^^^\n  File \"D:\\ComfyNodes-flat-split-20261111\\tools\\benchmark_h3_flat_directflow_graph_ab.py\", line 222, in run\n    if int(cfg[\"exact_leaves\"])!=256 or int(cfg[\"kern\"][\"group\"])!=1:\n                                            ~~~~~~~~~~~^^^^^^^^^\nKeyError: 'group'\n"
+    }
+  ],
+  "notes": [
+    "This is an opt-in SINGLE-group STATIC-pointer CUDA Graph feasibility probe.",
+    "No evidence graph capture can be reused between H3 blocks or denoising steps.",
+    "All timing uses CUDA events on identical native QKV and same math.",
+    "Graph capture wall and extra reserved memory reported separately.",
+    "A replay timing alone omits input copy and graph recapture costs.",
+    "No production or live-backend dispatch integration."
+  ],
+  "gpu": {
+    "device": "NVIDIA GeForce RTX 5070 Ti",
+    "free_before_gib": 14.6865234375,
+    "total_gib": 15.894287109375
+  }
+}

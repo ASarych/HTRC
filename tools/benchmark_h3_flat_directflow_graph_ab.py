@@ -27,6 +27,21 @@ from h3 import htrc_flat_model_shadow as shared
 from h3 import htrc_flat_windows as windows
 
 
+def center_group_from_config(cfg):
+    """Resolve Flat's implicit group=1 without changing center geometry.
+
+    The fast preset omits the group key. Other parts of HTRC use
+    cfg["kern"].get("group", 1). Never hardcode a shape-specific group.
+    """
+    kern=cfg.get("kern",{})
+    if not isinstance(kern,dict):
+        raise ValueError("Flat kern configuration must be a dict")
+    group=kern.get("group",1)
+    if type(group) is not int or group not in (1,2,4):
+        raise ValueError("Flat center group must be 1, 2 or 4")
+    return group
+
+
 def window_capture(cap, geometry):
     q=cap["q_qhd"][geometry.start:geometry.end]
     if geometry.valid_rows<geometry.padded_rows:
@@ -219,7 +234,8 @@ def run(args,report):
     v=torch.randn(shape,device="cuda",dtype=torch.bfloat16)
     cap=shared.capture_from_bhsd(q,k,v,args.heads)
     cfg=shared.flat_config("fast",args.tiles)
-    if int(cfg["exact_leaves"])!=256 or int(cfg["kern"]["group"])!=1:
+    center_group=center_group_from_config(cfg)
+    if int(cfg["exact_leaves"])!=256 or center_group!=1:
         raise ValueError("Only fixed fast 256-leaf / group1 math")
     tr=live._triton()
     tr._dll()
@@ -229,7 +245,7 @@ def run(args,report):
     )
     geometries=list(windows.iter_query_windows(
         args.tokens,args.tiles,tile_rows=int(cfg["tile"]),
-        center_group=int(cfg["kern"]["group"])
+        center_group=center_group
     ))
     # Never re-capture the same window for a sequence shorter than capacity.
     # Do not assume a full or short window exists for every valid sequence.
@@ -256,7 +272,7 @@ def run(args,report):
         "tile_capacity":args.tiles,
         "query_mode":args.q_mode,
         "kv_mode":"native_direct",
-        "exact_leaves":256,"center_group":1,
+        "exact_leaves":256,"center_group":center_group,
         "warmups":args.warmups,"rounds":args.rounds,
         "max_extra_reserved_mib":args.max_extra_reserved_mib,
         "native_stride":list(cap["q_qhd"].stride()),
