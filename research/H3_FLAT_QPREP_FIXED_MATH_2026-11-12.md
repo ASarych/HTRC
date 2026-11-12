@@ -102,9 +102,10 @@ with both embedded head cases, every-window exact-state
 checks, representative final-output checks and GPU event
 medians. No separate temporary JSONs.
 
-Current CPU AST and GPU tests are UNRUN in this environment.
-Do not switch live H3 from gather to view_copy until
-GPU bit-equality and positive latency are observed.
+At source-authoring time CPU AST and GPU tests were UNRUN.
+The subsequent uploaded GPU report closes ONLY the view_copy A/B:
+bit-exact states and output PASS, but latency is neutral/negative.
+Do not change the live default from gather to view_copy.
 
 ## Next optimization decision after the gate
 
@@ -122,3 +123,17 @@ centres to gain speed. Validate real model VRAM/headroom
 on RTX 5070 Ti, denoise-step runtime and video consistency.
 Preserve full source SHA, exact commit, one combined report
 per coherent experiment. BEST/production unchanged.
+
+## Follow-up local RTX 5070 Ti gate: GPU PASS, speed NO-GO (2026-11-12)
+
+Uploaded raw evidence retained as [flat_qprep_fixed_math_ab_20261112.json](evidence/flat_qprep_fixed_math_ab_20261112.json).
+Source under test: `d996053cf48da20c9836dd4427ee0b306e3aa796`. No new inference or retest was performed while committing the report.
+
+- `completed=true`, `errors=[]`, 4 + 56 distinct native heads; 19 windows, 1,064 state checks and 21 representative final-output checks.
+- Both cases: `PASS_BIT_EXACT_STATES_AND_OUTPUT`; 0 mismatches.
+- 4-head group summed preparation median: gather `0.644896 ms`, view_copy `0.644864 ms`, ratio `1.00005x` (neutral).
+- 56-head six-group sum of per-group GPU-event medians: gather `4.955920 ms`, view_copy `4.974960 ms`, ratio `0.996173x` (view_copy ~0.38% slower).
+- This statistic is a SUM OF GROUP MEDIANS, not a total model-step wall time or a standalone kernel runtime.
+- Synthetic nonzero native-style BF16 QKV, 18,723 tokens, 256 exact leaves, group=1, RTX 5070 Ti; no checkpoint or real video loaded.
+
+Decision: Mark `view_copy GPU parity A/B` **PASS_NUMERIC / NO_GO_PERFORMANCE**. Keep `gather` as default and do not spend another optimization slice polishing view_copy. Direct native-QKV strided reads (eliminating materialized FP32 Q) and Direct-Flow dispatcher are distinct future experiments, NOT covered by this PASS. No quality coefficients, leaf reduction, or production switch.

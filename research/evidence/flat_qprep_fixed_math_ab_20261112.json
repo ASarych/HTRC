@@ -1,0 +1,218 @@
+{
+  "experiment": "h3_flat_query_pack_no_quality_coefficient_v1",
+  "completed": true,
+  "quality_coefficient_used": false,
+  "fixed_math": true,
+  "parity_reference": "same pinned Flat mode, gather Q input",
+  "cases": [
+    {
+      "head_count": 4,
+      "native_heads_unique": true,
+      "status": "PASS_BIT_EXACT_STATES_AND_OUTPUT",
+      "checked_windows": 19,
+      "state_checks": 152,
+      "mismatches": [],
+      "output_full_flat_checks": 3,
+      "groups": [
+        {
+          "head_range": [
+            0,
+            4
+          ],
+          "windows_checked": 19,
+          "gpu_event_median_prepare_ms": {
+            "gather": 0.644896000623703,
+            "view_copy": 0.6448639929294586
+          },
+          "gpu_event_total_samples_ms": {
+            "gather": 110.90684801340103,
+            "view_copy": 99.79049569368362
+          },
+          "cpu_enqueue_median_prepare_ms": {
+            "gather": 0.8362999997189036,
+            "view_copy": 0.7729499998276879
+          },
+          "speedup_gather_over_view_copy": 1.0000496347983379
+        }
+      ],
+      "summary": {
+        "sum_group_median_prepare_ms": {
+          "gather": 0.644896000623703,
+          "view_copy": 0.6448639929294586
+        },
+        "speedup_gather_over_view_copy": 1.0000496347983379,
+        "state_checks": 152,
+        "representative_final_output_checks": 3
+      }
+    },
+    {
+      "head_count": 56,
+      "native_heads_unique": true,
+      "status": "PASS_BIT_EXACT_STATES_AND_OUTPUT",
+      "checked_windows": 114,
+      "state_checks": 912,
+      "mismatches": [],
+      "output_full_flat_checks": 18,
+      "groups": [
+        {
+          "head_range": [
+            0,
+            11
+          ],
+          "windows_checked": 19,
+          "gpu_event_median_prepare_ms": {
+            "gather": 0.8694559931755066,
+            "view_copy": 0.8700479865074158
+          },
+          "gpu_event_total_samples_ms": {
+            "gather": 69.56195187568665,
+            "view_copy": 70.50246369838715
+          },
+          "cpu_enqueue_median_prepare_ms": {
+            "gather": 1.0149499998988176,
+            "view_copy": 0.9997000001931156
+          },
+          "speedup_gather_over_view_copy": 0.9993195854239194
+        },
+        {
+          "head_range": [
+            11,
+            22
+          ],
+          "windows_checked": 19,
+          "gpu_event_median_prepare_ms": {
+            "gather": 0.8715360164642334,
+            "view_copy": 0.8738240003585815
+          },
+          "gpu_event_total_samples_ms": {
+            "gather": 70.75136011838913,
+            "view_copy": 70.41817623376846
+          },
+          "cpu_enqueue_median_prepare_ms": {
+            "gather": 1.0098999996444036,
+            "view_copy": 1.0056000000986387
+          },
+          "speedup_gather_over_view_copy": 0.9973816421917809
+        },
+        {
+          "head_range": [
+            22,
+            33
+          ],
+          "windows_checked": 19,
+          "gpu_event_median_prepare_ms": {
+            "gather": 0.8730240166187286,
+            "view_copy": 0.875760018825531
+          },
+          "gpu_event_total_samples_ms": {
+            "gather": 71.78611195087433,
+            "view_copy": 72.53123235702515
+          },
+          "cpu_enqueue_median_prepare_ms": {
+            "gather": 1.059950000126264,
+            "view_copy": 1.0074000006170536
+          },
+          "speedup_gather_over_view_copy": 0.9968758539462996
+        },
+        {
+          "head_range": [
+            33,
+            44
+          ],
+          "windows_checked": 19,
+          "gpu_event_median_prepare_ms": {
+            "gather": 0.8666400015354156,
+            "view_copy": 0.8703360259532928
+          },
+          "gpu_event_total_samples_ms": {
+            "gather": 70.23513579368591,
+            "view_copy": 70.3632960319519
+          },
+          "cpu_enqueue_median_prepare_ms": {
+            "gather": 1.0098000002471963,
+            "view_copy": 1.0031500000877713
+          },
+          "speedup_gather_over_view_copy": 0.9957533362889018
+        },
+        {
+          "head_range": [
+            44,
+            55
+          ],
+          "windows_checked": 19,
+          "gpu_event_median_prepare_ms": {
+            "gather": 0.9231039881706238,
+            "view_copy": 0.9203839898109436
+          },
+          "gpu_event_total_samples_ms": {
+            "gather": 73.88268804550171,
+            "view_copy": 76.36067229509354
+          },
+          "cpu_enqueue_median_prepare_ms": {
+            "gather": 1.0896499998125364,
+            "view_copy": 1.0654500001692213
+          },
+          "speedup_gather_over_view_copy": 1.0029552864780262
+        },
+        {
+          "head_range": [
+            55,
+            56
+          ],
+          "windows_checked": 19,
+          "gpu_event_median_prepare_ms": {
+            "gather": 0.5521600246429443,
+            "view_copy": 0.5646079778671265
+          },
+          "gpu_event_total_samples_ms": {
+            "gather": 44.29401624202728,
+            "view_copy": 45.03811192512512
+          },
+          "cpu_enqueue_median_prepare_ms": {
+            "gather": 0.7103999996616039,
+            "view_copy": 0.6924999997863779
+          },
+          "speedup_gather_over_view_copy": 0.9779529271421106
+        }
+      ],
+      "summary": {
+        "sum_group_median_prepare_ms": {
+          "gather": 4.955920040607452,
+          "view_copy": 4.974959999322891
+        },
+        "speedup_gather_over_view_copy": 0.9961728418483706,
+        "state_checks": 912,
+        "representative_final_output_checks": 18
+      }
+    }
+  ],
+  "errors": [],
+  "notes": [
+    "Original selection/leaf geometry retained; no speed-quality coefficient.",
+    "All Q and intermediate prepared state tensors must be BITWISE equal.",
+    "Tile/Merge output equality checked on first/middle/last Q window per group.",
+    "Synthetic nonzero native-style BF16 QKV; no weights or video quality inference.",
+    "CUDA-event times include kernel launch gaps; do not equate to video speed.",
+    "One JSON result; the experimental live backend defaults to original gather."
+  ],
+  "gpu": {
+    "device": "NVIDIA GeForce RTX 5070 Ti",
+    "free_before_gib": 14.687,
+    "total_gib": 15.894
+  },
+  "configuration": {
+    "mode": "fast",
+    "quality_coefficient_used": false,
+    "exact_leaves": 256,
+    "center_group": 1,
+    "tokens": 18723,
+    "native_heads": 56,
+    "dtype": "torch.bfloat16",
+    "qkv_layout": "B,H,S,D views",
+    "head_group_limit": 11,
+    "tile_window_rows": 1024,
+    "query_windows": 19,
+    "rounds": 2,
+    "warmups": 1
+  }
+}

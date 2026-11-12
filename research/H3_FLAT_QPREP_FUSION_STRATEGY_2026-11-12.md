@@ -102,11 +102,18 @@ microkernel saving to a 49-block, six-step video until observed.
 
 The first isolated `view_copy` alternative and full-window
 parity tool are already committed on the current branch.
-GPU A/B is **UNRUN**. If it is exact but neutral, do not
-spend time polishing it: proceed straight to the
-single fused Q-pack+MU prototype. That should be followed
-by an eager-vs-Graph dispatch-cost experiment, not another
-quality-coefficient search.
+GPU A/B was **UNRUN when this plan was written**. The subsequent
+uploaded run PASSed bit-exact parity for 4+56 distinct native heads
+but showed no useful preparation speedup (56-head sum-median ratio
+`0.996173x`). Retain gather as default; do not polish view_copy.
+Proceed with an opt-in direct-native QKV access experiment, then isolate
+eager-vs-Graph dispatch, then test the combined Direct-Flow path.
+No quality-coefficient search.
 
 No change to production BEST, model weights, or ComfyNodes
 loader. This note is design only; new fusion kernels UNRUN.
+
+
+## Direct QKV + Direct-Flow follow-up (2026-11-12)
+
+See [unified architecture and A/B gates](H3_FLAT_DIRECT_QKV_FLOW_PLAN_2026-11-12.md). These two methods are complementary but must be benchable independently. Neither is implemented or GPU tested by the uploaded view_copy PASS; production and global BEST unchanged.
