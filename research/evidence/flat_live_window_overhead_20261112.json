@@ -1,0 +1,185 @@
+{
+ "tool": "benchmark_h3_flat_live_window_overhead.py",
+ "gpu": "NVIDIA GeForce RTX 5070 Ti",
+ "tokens": 18723,
+ "heads": 56,
+ "mode": "fast",
+ "rounds": 5,
+ "data": "synthetic random BF16 QKV; no model weights resident; not a video measurement",
+ "note": "wall_ms = call + final synchronize; host_return_ms = time until the call returned",
+ "cases": [
+  {
+   "tiles": 16,
+   "budget_mib": 1024,
+   "query_staging": "gather",
+   "kv_staging": "gather",
+   "groups": 6,
+   "group_capacity": 11,
+   "windows": 19,
+   "iterations": 114,
+   "wall_ms": 118.33,
+   "host_return_ms": 118.2,
+   "peak_extra_mib": 752.8,
+   "implicit_syncs": {
+    "": 1,
+    "htrc_flat_live_backend.py:147 <- htrc_flat_head_batch.py:683": 6,
+    "htrc_flat_live_backend.py:152 <- htrc_flat_model_shadow.py:147": 6
+   },
+   "bitwise_equal_to_first_case": true,
+   "finite": true
+  },
+  {
+   "tiles": 32,
+   "budget_mib": 1024,
+   "query_staging": "gather",
+   "kv_staging": "gather",
+   "groups": 8,
+   "group_capacity": 7,
+   "windows": 10,
+   "iterations": 80,
+   "wall_ms": 89.57,
+   "host_return_ms": 89.4,
+   "peak_extra_mib": 738.5,
+   "implicit_syncs": {
+    "htrc_flat_live_backend.py:147 <- htrc_flat_head_batch.py:683": 8,
+    "htrc_flat_live_backend.py:152 <- htrc_flat_model_shadow.py:147": 8
+   },
+   "bitwise_equal_to_first_case": true,
+   "finite": true
+  },
+  {
+   "tiles": 64,
+   "budget_mib": 3072,
+   "query_staging": "gather",
+   "kv_staging": "gather",
+   "groups": 4,
+   "group_capacity": 18,
+   "windows": 5,
+   "iterations": 20,
+   "wall_ms": 78.28,
+   "host_return_ms": 78.01,
+   "peak_extra_mib": 1479.2,
+   "implicit_syncs": {
+    "htrc_flat_live_backend.py:147 <- htrc_flat_head_batch.py:683": 4,
+    "htrc_flat_live_backend.py:152 <- htrc_flat_model_shadow.py:147": 4
+   },
+   "bitwise_equal_to_first_case": true,
+   "finite": true
+  },
+  {
+   "tiles": 16,
+   "budget_mib": 1024,
+   "query_staging": "native_torch_mu",
+   "kv_staging": "native_direct",
+   "groups": 6,
+   "group_capacity": 11,
+   "windows": 19,
+   "iterations": 114,
+   "wall_ms": 115.7,
+   "host_return_ms": 115.55,
+   "peak_extra_mib": 650.8,
+   "implicit_syncs": {
+    "htrc_flat_live_backend.py:147 <- htrc_flat_head_batch.py:683": 6,
+    "htrc_flat_live_backend.py:152 <- htrc_flat_model_shadow.py:147": 6
+   },
+   "bitwise_equal_to_first_case": true,
+   "finite": true
+  },
+  {
+   "tiles": 32,
+   "budget_mib": 1024,
+   "query_staging": "native_torch_mu",
+   "kv_staging": "native_direct",
+   "groups": 8,
+   "group_capacity": 7,
+   "windows": 10,
+   "iterations": 80,
+   "wall_ms": 78.52,
+   "host_return_ms": 78.34,
+   "peak_extra_mib": 668.3,
+   "implicit_syncs": {
+    "htrc_flat_live_backend.py:147 <- htrc_flat_head_batch.py:683": 8,
+    "htrc_flat_live_backend.py:152 <- htrc_flat_model_shadow.py:147": 8
+   },
+   "bitwise_equal_to_first_case": true,
+   "finite": true
+  },
+  {
+   "tiles": 64,
+   "budget_mib": 1024,
+   "query_staging": "native_torch_mu",
+   "kv_staging": "native_direct",
+   "groups": 14,
+   "group_capacity": 4,
+   "windows": 5,
+   "iterations": 70,
+   "wall_ms": 87.09,
+   "host_return_ms": 86.38,
+   "peak_extra_mib": 712.1,
+   "implicit_syncs": {
+    "htrc_flat_live_backend.py:147 <- htrc_flat_head_batch.py:683": 14,
+    "htrc_flat_live_backend.py:152 <- htrc_flat_model_shadow.py:147": 14
+   },
+   "bitwise_equal_to_first_case": true,
+   "finite": true
+  },
+  {
+   "tiles": 32,
+   "budget_mib": 1536,
+   "query_staging": "native_torch_mu",
+   "kv_staging": "native_direct",
+   "groups": 5,
+   "group_capacity": 13,
+   "windows": 10,
+   "iterations": 50,
+   "wall_ms": 73.18,
+   "host_return_ms": 73.1,
+   "peak_extra_mib": 800.7,
+   "implicit_syncs": {
+    "htrc_flat_live_backend.py:147 <- htrc_flat_head_batch.py:683": 5,
+    "htrc_flat_live_backend.py:152 <- htrc_flat_model_shadow.py:147": 5
+   },
+   "bitwise_equal_to_first_case": true,
+   "finite": true
+  },
+  {
+   "tiles": 32,
+   "budget_mib": 2048,
+   "query_staging": "native_torch_mu",
+   "kv_staging": "native_direct",
+   "groups": 3,
+   "group_capacity": 19,
+   "windows": 10,
+   "iterations": 30,
+   "wall_ms": 67.02,
+   "host_return_ms": 55.25,
+   "peak_extra_mib": 934.6,
+   "implicit_syncs": {
+    "htrc_flat_live_backend.py:147 <- htrc_flat_head_batch.py:683": 3,
+    "htrc_flat_live_backend.py:152 <- htrc_flat_model_shadow.py:147": 3
+   },
+   "bitwise_equal_to_first_case": true,
+   "finite": true
+  },
+  {
+   "tiles": 64,
+   "budget_mib": 2048,
+   "query_staging": "native_torch_mu",
+   "kv_staging": "native_direct",
+   "groups": 6,
+   "group_capacity": 11,
+   "windows": 5,
+   "iterations": 30,
+   "wall_ms": 70.17,
+   "host_return_ms": 70.07,
+   "peak_extra_mib": 1002.5,
+   "implicit_syncs": {
+    "htrc_flat_live_backend.py:147 <- htrc_flat_head_batch.py:683": 6,
+    "htrc_flat_live_backend.py:152 <- htrc_flat_model_shadow.py:147": 6
+   },
+   "bitwise_equal_to_first_case": true,
+   "finite": true
+  }
+ ],
+ "completed": true
+}
