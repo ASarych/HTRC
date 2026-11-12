@@ -50,6 +50,9 @@ class MutableGraphContract(unittest.TestCase):
         self.assertIn('checks[name]=bool(torch.equal(eager[name],graph[name]))',src)
         self.assertIn('snapshot_state(st)',src)
         self.assertIn('K8/KS refreshed once per attention call',src)
+        self.assertIn('"eager_vs_replay_bit_exact":True',src)
+        self.assertIn('report["cases"].append({',src)
+        self.assertIn('"source_bank_total_bytes":sum(',src)
 
     def test_eager_workspace_needs_complete_qkv_capture(self):
         src=BENCH.read_text(encoding="utf-8")

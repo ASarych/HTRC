@@ -336,6 +336,10 @@ def main_run(args,report):
         "tail_refresh_each_call":True,
         "q_window_refresh_each_replay":True,
         "native_qkv_banks":2,
+        "source_bank_total_bytes":sum(
+            tensor.numel()*tensor.element_size()
+            for bank in sources for tensor in bank
+        ),
         "exact_leaves":256,"center_group":group,
         "rounds":args.rounds,"warmups":args.warmups,
         "source_geometry":"synthetic_11_or_custom_distinct_bf16_heads",
@@ -362,6 +366,15 @@ def main_run(args,report):
         del a,b
     report["parity_checks"]=checks_per_bank
     report["different_banks_produce_different_outputs"]=True
+    report["cases"].append({
+        "head_count":args.group_heads,
+        "window_count":len(geoms),
+        "graph_count":len(stage["registry"]),
+        "different_qkv_banks":2,
+        "eager_vs_replay_bit_exact":True,
+        "distinct_bank_outputs":True,
+        "status":"PASS_NUMERIC",
+    })
     # Measure entire 19-window attention call; refresh K8/KS once per
     # call, not per window. Never extrapolate single-window graph replay.
     times={"fresh_native_eager":[],"mutable_staged_graph":[]}
