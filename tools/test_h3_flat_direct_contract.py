@@ -73,6 +73,39 @@ class DirectQKVContractTest(unittest.TestCase):
         self.assertIn('"native_torch_mu"',live)
         self.assertIn('"_direct_q":query_staging in ("native_direct","native_torch_mu")',src)
 
+    def test_dynamic_kv_cache_dispatch_covers_existing_and_future_arms(self):
+        # Execute the actual pure mapper and ARMS declaration from the
+        # benchmark AST; no torch import, no GPU or model required.
+        src=BENCH.read_text(encoding="utf-8")
+        tree=ast.parse(src)
+        assignment=next(
+            n for n in tree.body
+            if isinstance(n,ast.Assign) and any(
+                isinstance(t,ast.Name) and t.id=="ARMS"
+                for t in n.targets
+            )
+        )
+        mapper=next(
+            n for n in tree.body
+            if isinstance(n,ast.FunctionDef) and n.name=="kv_cache_by_arm"
+        )
+        subset=ast.Module(body=[assignment,mapper],type_ignores=[])
+        ast.fix_missing_locations(subset)
+        context={}
+        exec(compile(subset,str(BENCH),"exec"),context)
+        packed=object()
+        native=object()
+        cache=context["kv_cache_by_arm"](packed,native)
+        self.assertEqual(set(context["ARMS"]),set(cache))
+        for arm,(_q_mode,use_native_kv) in context["ARMS"].items():
+            self.assertIs(cache[arm], native if use_native_kv else packed)
+        context["ARMS"]["future_direct_kv_arm"]=("native_torch_mu",True)
+        future=context["kv_cache_by_arm"](packed,native)
+        self.assertEqual(set(future),set(context["ARMS"]))
+        self.assertIs(future["future_direct_kv_arm"],native)
+        self.assertIn("kv=kv_cache_by_arm(packed,native)",src)
+        self.assertNotIn('kv={"baseline":packed',src)
+
     def test_benchmark_four_arms_and_one_json(self):
         s=BENCH.read_text(encoding="utf-8")
         for name in ("baseline","direct_q","direct_kv","direct_qkv",

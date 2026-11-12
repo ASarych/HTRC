@@ -32,6 +32,19 @@ ARMS={
     "direct_q_torch_mu":("native_torch_mu",False),
     "direct_qkv_torch_mu":("native_torch_mu",True),
 }
+
+
+def kv_cache_by_arm(packed, native):
+    """Derive cache selection from ARMS metadata; never hardcode arm names.
+
+    Every future benchmark arm must declare (query_staging, native_kv).
+    """
+    return {
+        arm: (native if use_native_kv else packed)
+        for arm, (_query_staging, use_native_kv) in ARMS.items()
+    }
+
+
 STATES=("Q","MU","G","VB","LZ","SG","IDX","EXCL")
 # Explicit fixed-math numerical gates, not video-quality acceptance thresholds.
 MAX_ABS={"MU":2e-5,"G":1.0,"VB":0.01,"LZ":3e-5,"SG":3e-5}
@@ -187,8 +200,7 @@ def run(args,report):
                 raise AssertionError(f"Direct K8 scales differ for heads {begin}:{end}")
             if not torch.equal(packed["VBF"],native["VBF"]):
                 raise AssertionError(f"Native VBF differs for heads {begin}:{end}")
-            kv={"baseline":packed,"direct_q":packed,
-                "direct_kv":native,"direct_qkv":native}
+            kv=kv_cache_by_arm(packed,native)
             ws={
                 arm:shared.alloc_workspace(cap,len(ids),args.tiles,cfg)
                 for arm in ARMS
@@ -512,7 +524,7 @@ def main():
         "fixed_math":True,"real_model":False,
         "cases":[],"errors":[],
         "notes":[
-            "All four arms use the same BF16 synthetic native QKV.",
+            f"All {len(ARMS)} arms use the same BF16 synthetic native QKV.",
             "Timing: GPU event medians per group, not whole-video wall.",
             "JIT cold cache-build cost reported separately.",
             "No model-resident or production acceptance implied.",

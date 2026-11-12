@@ -1,0 +1,182 @@
+{
+  "experiment": "flat_direct_qkv_strided_v2_torch_mu",
+  "completed": false,
+  "quality_coefficient_used": false,
+  "fixed_math": true,
+  "real_model": false,
+  "cases": [
+    {
+      "head_count": 4,
+      "unique_synthetic_heads": true,
+      "completed": false,
+      "group_reports": [],
+      "state_checks": 0,
+      "output_checks": 0,
+      "legacy_tail_output_checks": 0,
+      "errors": [],
+      "max_stage_error": {},
+      "max_output_error": {
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      }
+    }
+  ],
+  "errors": [
+    {
+      "type": "KeyError",
+      "message": "'direct_q_torch_mu'",
+      "traceback_tail": "Traceback (most recent call last):\n  File \"D:\\ComfyNodes-flat-split-20261111\\tools\\benchmark_h3_flat_direct_qkv_ab.py\", line 532, in main\n    run(args,report)\n    ~~~^^^^^^^^^^^^^\n  File \"D:\\ComfyNodes-flat-split-20261111\\tools\\benchmark_h3_flat_direct_qkv_ab.py\", line 225, in run\n    arm:prepare(window,ids,cfg,tr,kv[arm],active_ws[arm],\n                                  ~~^^^^^\nKeyError: 'direct_q_torch_mu'\n"
+    }
+  ],
+  "notes": [
+    "All four arms use the same BF16 synthetic native QKV.",
+    "Timing: GPU event medians per group, not whole-video wall.",
+    "JIT cold cache-build cost reported separately.",
+    "No model-resident or production acceptance implied.",
+    "Dynamic group-aligned last window; no hardcoded tail tile count.",
+    "Only real rows compared with legacy full-pad Flat on each short window.",
+    "Short window aliases the original per-head workspace; no extra GPU cache.",
+    "native_torch_mu avoids a materialized FP32 Q and uses ATen FP32 mean.",
+    "Both native-direct Q reductions are opt-in; main default gather unchanged.",
+    "Graph and persistent Direct-Flow DISPATCH are UNRUN."
+  ],
+  "gpu": {
+    "device": "NVIDIA GeForce RTX 5070 Ti",
+    "free_before_gib": 14.687,
+    "total_gib": 15.894
+  },
+  "config": {
+    "mode": "fast",
+    "exact_leaves": 256,
+    "center_group": 1,
+    "tokens": 18723,
+    "heads": 56,
+    "tiles": 16,
+    "query_windows": 19,
+    "window_geometry": [
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 291,
+        "active_tiles": 5,
+        "padded_rows": 320
+      }
+    ],
+    "group_cap": 11,
+    "qkv_dtype": "bfloat16",
+    "rounds": 2,
+    "warmups": 1,
+    "q_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "k_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "v_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "output_atol": 0.0002,
+    "output_rtol": 0.0002,
+    "stage_max_abs": {
+      "MU": 2e-05,
+      "G": 1.0,
+      "VB": 0.01,
+      "LZ": 3e-05,
+      "SG": 3e-05
+    }
+  }
+}

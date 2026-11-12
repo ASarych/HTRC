@@ -42,3 +42,26 @@ git switch --detach htrc/experiment/flat-direct-qkv-kernels-20261112
 Use the **same** \`$py\` known to import torch+Triton from the previous PASS. One output: \`D:\ComfyOutput\H3\math_probe\flat_direct_qkv_ab.json\`. If and only if numerical parity PASSes, use \`--diagnose-only --rounds 7 --warmups 2\` to investigate stage savings, which will overwrite the same JSON. Save the first output before running diagnostics if both results are needed.
 
 Do not interpret an isolated synthetic benchmark as end-to-end H3 model-resident speed.
+
+
+## GPU A/B run blocked by stale cache-arm mapping (2026-11-12)
+
+The uploaded \`flat_direct_qkv_ab(4).json\` is archived as
+[\`flat_direct_qkv_torch_mu_keyerror_20261112.json\`](evidence/flat_direct_qkv_torch_mu_keyerror_20261112.json).
+
+The 6-arm benchmark was stopped on 4 synthetic heads before any state/output comparisons:
+\`KeyError: 'direct_q_torch_mu'\` at \`kv[arm]\`. The four-entry \`kv\`
+dictionary had been left unchanged when \`ARMS\` was expanded to six.
+This is an **A/B harness integration failure**, not a Triton/PyTorch MU
+numerical mismatch. Status **BENCH_HARNESS_BLOCKED**, new GPU math **UNRUN**.
+
+Fixed by deriving the K/V map from the second element of **every**
+\`ARMS[arm]\` tuple (whether the arm needs native K/V). The matching
+CPU contract executes the actual pure mapper through AST extraction,
+asserts that cache keys exactly match \`ARMS\`, and adds a simulated
+future arm to guard against recurrence. Both normal A/B and diagnostic
+arms read the same declarative mapping. The CLI and single JSON report
+path remain unchanged.
+
+**GPU status after fix: UNRUN until the user reruns the 6-arm test.**
+Keep \`gather\` default and no quality coefficients.
