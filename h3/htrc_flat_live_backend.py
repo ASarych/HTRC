@@ -21,6 +21,7 @@ import torch
 
 from . import htrc_flat_head_batch as batch
 from . import htrc_flat_model_shadow as shared
+from . import htrc_flat_windows as windows
 
 
 _TRITON_NAME = "_apl_htrc_external_live_flat_triton"
@@ -100,6 +101,7 @@ def flat_attention_bthd(
         "center_group":cfg["kern"].get("group",1),
         "exact_leaves":cfg["exact_leaves"],
         "query_windows":math.ceil(s/(tiles*64)),
+        "short_window_strategy":"dynamic_group_aligned_storage_alias",
         "group_capacity":max_group,
         "number_of_groups":math.ceil(count/max_group),
         "budget_mib":int(budget_mib),
@@ -135,50 +137,58 @@ def flat_attention_bthd(
             tails=shared._tail(cap,ids)
             phase_end(stage)
             try:
-                for qi in range(0,s,tiles*64):
-                    qe=min(s,qi+tiles*64)
-                    valid=qe-qi
+                for window in windows.iter_query_windows(
+                    s,tiles,tile_rows=int(cfg["tile"]),
+                    center_group=int(cfg["kern"].get("group",1))
+                ):
+                    qi,qe=window.start,window.end
+                    valid=window.valid_rows
+                    active_tiles=window.tile_count
                     src=cap["q_qhd"][qi:qe]
-                    if valid<tiles*64:
-                        # Repeat last true Q row. Correct the partial tile
-                        # mean using valid_query_rows in preparation.
+                    if valid<window.padded_rows:
+                        # Repeat only the final partial tile/group, not
+                        # every unused slot of the maximum query window.
+                        # valid_query_rows excludes padded rows from MU.
                         src=torch.cat((
-                            src,src[-1:].expand(tiles*64-valid,-1,-1)
+                            src,src[-1:].expand(window.padded_rows-valid,-1,-1)
                         ),dim=0)
                     view=dict(cap)
                     view["q_qhd"]=src
+                    active_ws=windows.compact_workspace_view(
+                        ws,len(ids),active_tiles,cfg
+                    ) if ws is not None else None
                     stage=phase_begin("query_stats_selection")
                     states,_,_,_,_=batch.prepare_batched_head_states(
-                        view,ids,cfg,tr,tile_count=tiles,
+                        view,ids,cfg,tr,tile_count=active_tiles,
                         quant_backend="triton",input_cast="gpu",
-                        kv_cache=cache,query_workspace=ws,
+                        kv_cache=cache,query_workspace=active_ws,
                         valid_query_rows=valid,
                         query_staging=query_staging,
                     )
                     phase_end(stage)
                     stage=phase_begin("tile")
                     parts,_=batch.launch_prepared_tile_batch(
-                        states,cfg,tr,buffers=(ws["_partials"] if ws else None)
+                        states,cfg,tr,buffers=(active_ws["_partials"] if active_ws else None)
                     )
                     phase_end(stage)
                     stage=phase_begin("merge_tail")
                     merged,_=batch.launch_prepared_merge_batch(
                         states,cfg,tr,parts,tails=tails,
-                        output=(ws["_out"] if ws else None),
+                        output=(active_ws["_out"] if active_ws else None),
                         merge_rows=32,
                     )
                     phase_end(stage)
                     stage=phase_begin("output_copy")
                     # [H,Tiles,64,D] -> [valid,H,D], BF16 output to native
                     # projection. Copy results before reusing workspace.
-                    selected=merged.reshape(len(ids),tiles*64,128)[:,:valid]
+                    selected=merged.reshape(len(ids),active_tiles*64,128)[:,:valid]
                     out[qi:qe,begin:end,:].copy_(
                         selected.permute(1,0,2).to(source)
                     )
                     phase_end(stage)
                     # Drop ALL Python aliases before the next group/window;
                     # otherwise previous K/V and workspace remain live.
-                    del selected,merged,parts,states,view,src
+                    del selected,merged,parts,states,view,src,active_ws
             finally:
                 # Releasing a group never allows reuse across denoising steps,
                 # model blocks, prompts, CFG passes or concurrent attention.

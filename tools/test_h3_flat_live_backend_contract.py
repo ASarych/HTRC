@@ -28,15 +28,17 @@ class FlatLiveContract(unittest.TestCase):
     def test_full_q_and_unique_heads_only(self):
         src=BACKEND.read_text(encoding="utf-8")
         self.assertIn("ids=list(range(begin,end))",src)
-        self.assertIn("for qi in range(0,s,tiles*64):",src)
+        self.assertIn("for window in windows.iter_query_windows(",src)
+        self.assertIn("tile_count=active_tiles",src)
+        self.assertIn("windows.compact_workspace_view(",src)
         self.assertIn("valid_query_rows=valid",src)
         self.assertIn("tails=shared._tail(cap,ids)",src)
-        self.assertIn("kv_cache=cache,query_workspace=ws",src)
+        self.assertIn("kv_cache=cache,query_workspace=active_ws",src)
         self.assertNotIn("repeat_available_heads",src)
 
     def test_release_per_window_and_per_group(self):
         src=BACKEND.read_text(encoding="utf-8")
-        self.assertIn("del selected,merged,parts,states,view,src",src)
+        self.assertIn("del selected,merged,parts,states,view,src,active_ws",src)
         self.assertIn("del cache,ws,tails",src)
         self.assertIn("_head_plan(",src)
         self.assertIn("budget_mib=int(budget_mib)",src)
