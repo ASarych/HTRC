@@ -151,3 +151,70 @@ develop a mathematically exact bounded candidate-repair with a full
 fallback; otherwise prioritize Direct-Flow model validation and
 stats/rowmax/selection fusion. No new HTRC code was added in this
 documentation update.
+
+## Real paired H3 QKV GPU report — 2026-11-12 (NO-GO for mean-delta, structural signal retained)
+
+[Evidence: flat_temporal_leaf_delta_real_pair_20261112.json](evidence/flat_temporal_leaf_delta_real_pair_20261112.json)
+was pushed in commit `5d72ca2e0d25917c869b127fd80b2349691bb29d`.
+The report records trusted local captures `real_temporal_qkv_a.pt` and
+`real_temporal_qkv_b.pt`, `input_kind=paired_real_QKV_captures`,
+`completed=true`, `errors=[]`, RTX 5070 Ti, **15,275 tokens**,
+4 distinct native heads **1,16,27,55**, 954 fixed leaves/head,
+16 query centres/head (64 overall), 256 selected leaves/centre,
+and **one 1024-query-row window**. It is NOT a 56-head full denoise
+A/B. The isolated benchmark loads no real model weights itself; its
+inputs are from the previously captured real run.
+
+| Measurement | Real pair |
+|---|---:|
+| Changed Q mean centres | 64/64 = 100% |
+| Changed K or V leaves | 3,816/3,816 = 100% |
+| Exactly reusable (centre,leaf) stats pairs | 0/61,056 = 0% |
+| Centres with exactly same selected-leaf membership | 0/64 |
+| Membership removals / insertions | 1,532 / 1,532 |
+| Selected membership replacements | 1,532/16,384 = **9.3506%** |
+| Replacements in ordered IDX positions | 11,979/16,384 = **73.1140%** |
+| Ordered positional patch | 95,832 bytes vs full IDX 65,536 bytes |
+| Oracle set-membership patch | 12,256 bytes vs full IDX 65,536 bytes |
+| Approximate mean-delta vs fresh output | rel-L2 **0.00473217**, max-abs **2.103657**, **FAIL** |
+| Fresh stats+selection+Tile+Merge median GPU | **2.045472 ms** |
+| Approximate observed-mean-delta median GPU | **1.596224 ms** (1.28x faster but **incorrect**) |
+| Fresh / delta synchronized host wall | **3.0340 / 1.9725 ms** |
+| Predict next timestep before new QKV arrives | **NO** |
+
+**Interpretation:** the retained membership is about 90.65%, but
+all 64 centres do undergo *some* membership change and all derived
+centre-leaf stats are dirty. A difference/patch representation of
+the **set** is more compact than patching positions in PyTorch's
+`sorted=False` top-k output. However this measurement is an
+**oracle**: finding the 1,532 additions/removals required **fresh IDX
+selection** in this benchmark, so its patch size is NOT evidence
+of saved selection computation. Ordered positional patch is larger
+than simply copying the complete small-window IDX.
+
+**Decision:** `NO_GO_APPROX_MEAN_DELTA`; `UNPROVEN_EXACT_SET_REPAIR`.
+Do not integrate approximate G/VB/LZ/SG or treat 1.28x GPU as a
+quality-preserving gain. Both `strict_bitwise_identity_pass=false`
+and `accepted_for_runtime=false`, with no deployed forecast.
+
+**Important provenance gap:** the combined JSON records the capture
+paths, raw heads and labels, but does **not** embed timestep SHA256
+fingerprints, raw .pt metadata, guidance branch or the exact sampler
+step IDs. The opt-in ComfyNodes capture code is designed to select
+the first two **distinct** timestep embeddings of the same block;
+the report alone does not independently prove adjacent timesteps
+or same CFG branch. Verify that separately before broad claims.
+
+The estimate for **this shorter 15,275-token geometry** is
+0.333 GiB of persistent full G/VB/LZ/SG per H3 block across all Q
+windows versus 0.934 MiB of selected IDX alone (56-head projection);
+neither includes weights/other scratch. Retaining derived stats across
+all 49 blocks is still unreasonable on a 16 GiB card.
+
+**Next action, conditional:** validate multiple real adjacent same-branch
+timesteps and, only if an efficient way to discover new entrants can
+be *proved cheaper than full selection and mathematically exact*
+(or fail-closed to full selection), test a compact membership-repair
+algorithm. Otherwise concentrate on the already planned
+**real-H3 Direct-Flow A/B** and **stats/rowmax + top-k packaging fusion**.
+No more synthetic mean-leaf-delta reruns.
