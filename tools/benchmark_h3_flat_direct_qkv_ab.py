@@ -335,6 +335,151 @@ def run(args,report):
                             for c in report["cases"])
 
 
+
+def diagnose_stages(args,report):
+    """Isolate Direct Q slowdown without another full 4/56-head parity run.
+
+    The main A/B's earlier PASS must be checked separately. Event intervals
+    deliberately include launch gaps, but do not synchronize between stages.
+    Every arm uses the identical QKV source and the SAME fixed Flat math.
+    """
+    if not torch.cuda.is_available():
+        raise RuntimeError("Stage diagnostics require CUDA")
+    free,total=torch.cuda.mem_get_info()
+    if free < args.min_free_gib * 2**30:
+        raise MemoryError("Insufficient free GPU memory for stage diagnostics")
+    report["gpu"]={
+        "device":torch.cuda.get_device_name(),
+        "free_before_gib":round(free/2**30,3),
+        "total_gib":round(total/2**30,3),
+    }
+    torch.manual_seed(args.seed)
+    dev=torch.device("cuda")
+    shape=(1,args.heads,args.tokens,128)
+    q=torch.randn(shape,device=dev,dtype=torch.bfloat16)
+    k=torch.randn(shape,device=dev,dtype=torch.bfloat16)
+    v=torch.randn(shape,device=dev,dtype=torch.bfloat16)
+    cap=shared.capture_from_bhsd(q,k,v,args.heads)
+    tr=live._triton()
+    tr._dll()
+    cfg=shared.flat_config("fast",args.tiles)
+    group=int(cfg["kern"].get("group",1))
+    if int(cfg["exact_leaves"])!=256 or group!=1:
+        raise ValueError("Fixed-math stage probe requires fast 256 leaves, group=1")
+    seq=list(windows.iter_query_windows(args.tokens,args.tiles,
+        tile_rows=int(cfg["tile"]),center_group=group))
+    positions=[("full",seq[0])]
+    if seq[-1].padded_rows<args.tiles*int(cfg["tile"]):
+        positions.append(("short",seq[-1]))
+    counts=sorted(set((1,min(4,args.heads,args.group_cap),
+                       min(11,args.heads,args.group_cap))))
+    report.update({
+        "diagnostic_only":True,
+        "numerical_parity":"NOT_REPEATED_IN_STAGE_DIAGNOSTIC",
+        "arithmetic":"fixed_fast_256_exact_leaves_group1",
+        "config":{
+            "source_heads":args.heads,"tokens":args.tokens,
+            "tile_capacity":args.tiles,"center_group":group,
+            "head_group_sizes":counts,
+            "samples_per_stage":args.rounds,
+            "warmups":args.warmups,
+            "q_stride":list(cap["q_qhd"].stride()),
+        },
+        "diagnostic_cases":[],
+    })
+    if args.rounds<3:
+        raise ValueError("Use --rounds >= 3 for stage-profile medians")
+    for count in counts:
+        ids=list(range(count))
+        packed=batch.prepare_gpu_head_kv_cache(cap,ids,tr)
+        native=batch.prepare_gpu_head_kv_cache(
+            cap,ids,tr,native_direct=True
+        )
+        for name,geom in positions:
+            window,valid=capture_window(
+                cap,geom.start,geom.end,geom.padded_rows
+            )
+            selected={
+                "head_count":count,"window":name,
+                "valid_rows":valid,"active_tiles":geom.tile_count,
+                "arms":{},
+            }
+            report["diagnostic_cases"].append(selected)
+            tail=shared._tail(cap,ids)
+            for arm,(mode,use_native) in ARMS.items():
+                cache=native if use_native else packed
+                ws=shared.alloc_workspace(cap,count,args.tiles,cfg)
+                active_ws=windows.compact_workspace_view(
+                    ws,count,geom.tile_count,cfg
+                )
+                for _ in range(args.warmups):
+                    st=prepare(window,ids,cfg,tr,cache,active_ws,
+                               geom.tile_count,valid,mode)
+                    output(st,cfg,tr,active_ws,tail)
+                    del st
+                torch.cuda.synchronize()
+                stage_samples={}
+                cpu_wall=[]
+                for _ in range(args.rounds):
+                    marks=[]
+                    started=time.perf_counter()
+                    st,*_=batch.prepare_batched_head_states(
+                        window,ids,cfg,tr,tile_count=geom.tile_count,
+                        quant_backend="triton",input_cast="gpu",
+                        kv_cache=cache,query_workspace=active_ws,
+                        valid_query_rows=valid,query_staging=mode,
+                        stage_gpu_events=marks,
+                    )
+                    tile_start=torch.cuda.Event(enable_timing=True)
+                    tile_end=torch.cuda.Event(enable_timing=True)
+                    merge_end=torch.cuda.Event(enable_timing=True)
+                    tile_start.record()
+                    parts,_=batch.launch_prepared_tile_batch(
+                        st,cfg,tr,buffers=active_ws["_partials"]
+                    )
+                    tile_end.record()
+                    merged,_=batch.launch_prepared_merge_batch(
+                        st,cfg,tr,parts,tails=tail,
+                        output=active_ws["_out"],merge_rows=32
+                    )
+                    merge_end.record()
+                    merge_end.synchronize()
+                    cpu_wall.append((time.perf_counter()-started)*1000)
+                    for stage,a,b in marks:
+                        stage_samples.setdefault(stage,[]).append(
+                            float(a.elapsed_time(b))
+                        )
+                    stage_samples.setdefault("tile",[]).append(
+                        float(tile_start.elapsed_time(tile_end))
+                    )
+                    stage_samples.setdefault("merge_tail",[]).append(
+                        float(tile_end.elapsed_time(merge_end))
+                    )
+                    del st,parts,merged
+                med={k:float(statistics.median(vals))
+                     for k,vals in stage_samples.items()}
+                selected["arms"][arm]={
+                    "gpu_stream_stage_interval_medians_ms":med,
+                    "sum_gpu_stream_intervals_ms":float(sum(med.values())),
+                    "synchronized_cpu_wall_median_ms":float(
+                        statistics.median(cpu_wall)
+                    ),
+                }
+                print(f"DIAG heads={count} window={name} "
+                      f"arm={arm} GPU-stage-intervals={med}",flush=True)
+                del ws,active_ws
+            del window,tail
+        del packed,native
+    report["completed"]=True
+    report["notes"].append(
+        "Stage events include CPU enqueue gaps/idle GPU intervals; "
+        "do not label them pure kernel durations."
+    )
+    report["notes"].append(
+        "Diagnostic status is not a new numerical parity or video PASS."
+    )
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument("--tokens",type=int,default=18723)
@@ -346,6 +491,7 @@ def main():
     parser.add_argument("--warmups",type=int,default=1)
     parser.add_argument("--seed",type=int,default=20261112)
     parser.add_argument("--min-free-gib",type=float,default=4.0)
+    parser.add_argument("--diagnose-only",action="store_true")
     parser.add_argument("--out",type=Path,default=Path(
         r"D:\ComfyOutput\H3\math_probe\flat_direct_qkv_ab.json"))
     args=parser.parse_args()
@@ -375,7 +521,11 @@ def main():
         ]
     }
     try:
-        run(args,report)
+        if args.diagnose_only:
+            report["experiment"]="flat_direct_qkv_stage_diagnostic_v1"
+            diagnose_stages(args,report)
+        else:
+            run(args,report)
     except BaseException as exc:
         report["errors"].append({
             "type":type(exc).__name__,
@@ -385,7 +535,7 @@ def main():
     args.out.parent.mkdir(parents=True,exist_ok=True)
     args.out.write_text(json.dumps(report,indent=2),encoding="utf-8")
     print("REPORT:",args.out,flush=True)
-    print("STATUS:","PASS" if report["completed"] else "FAIL",flush=True)
+    print("STATUS:",("DIAG_COMPLETE" if args.diagnose_only else "PASS") if report["completed"] else "FAIL",flush=True)
     return 0 if report["completed"] else 1
 
 

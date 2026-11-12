@@ -325,7 +325,8 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
                                 *, tile_count: int, quant_backend="torch",
                                 input_cast="gpu", stage_timings_ms=None,
                                 kv_cache=None, query_workspace=None,
-                                valid_query_rows=None, query_staging="gather"):
+                                valid_query_rows=None, query_staging="gather",
+                                stage_gpu_events=None):
     """One head-group preparation: one stats launch, one rowmax, one topk.
 
     Reads trusted native same-block captured Q/K/V; repeated raw head
@@ -348,10 +349,23 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         or quant_backend != "triton" or input_cast != "gpu"
     ):
         raise ValueError("Query workspace requires GPU K/V cache and Triton quantizer")
-    # Synchronized stages are for an optional untimed diagnostic.
+    # Optional GPU event stage intervals: no CPU synchronization and no
+    # change to the default path. They include GPU stream enqueue gaps.
+    # They are diagnostics, NOT kernel-only execution measurements.
+    stage_gpu_prev=None
+    if stage_gpu_events is not None:
+        if not isinstance(stage_gpu_events,list) or capture["q_qhd"].device.type!="cuda":
+            raise ValueError("stage_gpu_events requires a CUDA capture and list")
+        stage_gpu_prev=torch.cuda.Event(enable_timing=True)
+        stage_gpu_prev.record()
     stage_start=time.perf_counter()
     def mark_stage(name):
-        nonlocal stage_start
+        nonlocal stage_start,stage_gpu_prev
+        if stage_gpu_prev is not None:
+            stage_finish=torch.cuda.Event(enable_timing=True)
+            stage_finish.record()
+            stage_gpu_events.append((name,stage_gpu_prev,stage_finish))
+            stage_gpu_prev=stage_finish
         if stage_timings_ms is not None:
             torch.cuda.synchronize()
             now=time.perf_counter()

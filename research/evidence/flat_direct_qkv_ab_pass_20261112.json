@@ -1,0 +1,468 @@
+{
+  "experiment": "flat_direct_qkv_strided_v1",
+  "completed": true,
+  "quality_coefficient_used": false,
+  "fixed_math": true,
+  "real_model": false,
+  "cases": [
+    {
+      "head_count": 4,
+      "unique_synthetic_heads": true,
+      "completed": true,
+      "group_reports": [
+        {
+          "heads": [
+            0,
+            4
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 908.024899999873,
+            "native": 25.741399998878478
+          },
+          "kv_cache_bytes": {
+            "packed": 48222720,
+            "native": 9884160
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.0093599557876587,
+            "direct_q": 0.9895359873771667,
+            "direct_kv": 0.9917920231819153,
+            "direct_qkv": 0.9728640019893646
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.2350500001048204,
+            "direct_q": 1.1166500007675495,
+            "direct_kv": 1.1192000001756242,
+            "direct_qkv": 1.0993000005328213
+          }
+        }
+      ],
+      "state_checks": 456,
+      "output_checks": 9,
+      "legacy_tail_output_checks": 1,
+      "errors": [],
+      "max_stage_error": {
+        "direct_q:Q": 0.0,
+        "direct_q:MU": 1.4901161193847656e-08,
+        "direct_q:G": 0.0,
+        "direct_q:VB": 0.0,
+        "direct_q:LZ": 0.0,
+        "direct_q:SG": 0.0,
+        "direct_q:IDX": 0.0,
+        "direct_q:EXCL": 0.0,
+        "direct_kv:Q": 0.0,
+        "direct_kv:MU": 0.0,
+        "direct_kv:G": 0.0,
+        "direct_kv:VB": 0.0,
+        "direct_kv:LZ": 0.0,
+        "direct_kv:SG": 0.0,
+        "direct_kv:IDX": 0.0,
+        "direct_kv:EXCL": 0.0,
+        "direct_qkv:Q": 0.0,
+        "direct_qkv:MU": 1.4901161193847656e-08,
+        "direct_qkv:G": 0.0,
+        "direct_qkv:VB": 0.0,
+        "direct_qkv:LZ": 0.0,
+        "direct_qkv:SG": 0.0,
+        "direct_qkv:IDX": 0.0,
+        "direct_qkv:EXCL": 0.0
+      },
+      "max_output_error": {
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "sum_group_gpu_event_medians_ms": {
+        "baseline": 1.0093599557876587,
+        "direct_q": 0.9895359873771667,
+        "direct_kv": 0.9917920231819153,
+        "direct_qkv": 0.9728640019893646
+      },
+      "speedup_vs_baseline": {
+        "baseline": 1.0,
+        "direct_q": 1.0200336002564563,
+        "direct_kv": 1.0177133231515425,
+        "direct_qkv": 1.0375139317763482
+      }
+    },
+    {
+      "head_count": 56,
+      "unique_synthetic_heads": true,
+      "completed": true,
+      "group_reports": [
+        {
+          "heads": [
+            0,
+            11
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 101.77440000006754,
+            "native": 254.00029999946128
+          },
+          "kv_cache_bytes": {
+            "packed": 132612480,
+            "native": 27181440
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.536128044128418,
+            "direct_q": 1.7020320296287537,
+            "direct_kv": 1.542144000530243,
+            "direct_qkv": 1.7038080096244812
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.7590999996173196,
+            "direct_q": 1.8342999992455589,
+            "direct_kv": 1.6692500003046007,
+            "direct_qkv": 1.8313999999008956
+          }
+        },
+        {
+          "heads": [
+            11,
+            22
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 1.883000000816537,
+            "native": 0.455000001238659
+          },
+          "kv_cache_bytes": {
+            "packed": 132612480,
+            "native": 27181440
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.5599040389060974,
+            "direct_q": 1.7139840126037598,
+            "direct_kv": 1.560192048549652,
+            "direct_qkv": 1.709439992904663
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.9040000006498303,
+            "direct_q": 1.8461999998180545,
+            "direct_kv": 1.6891499999474036,
+            "direct_qkv": 1.83759999981703
+          }
+        },
+        {
+          "heads": [
+            22,
+            33
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 1.8860999989556149,
+            "native": 0.4571999998006504
+          },
+          "kv_cache_bytes": {
+            "packed": 132612480,
+            "native": 27181440
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.532047986984253,
+            "direct_q": 1.697055995464325,
+            "direct_kv": 1.5400480031967163,
+            "direct_qkv": 1.6991519927978516
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.9601499998316285,
+            "direct_q": 1.8249000004288973,
+            "direct_kv": 1.6680999997333856,
+            "direct_qkv": 1.8261000004713424
+          }
+        },
+        {
+          "heads": [
+            33,
+            44
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 2.0927000005031005,
+            "native": 0.4712999998446321
+          },
+          "kv_cache_bytes": {
+            "packed": 132612480,
+            "native": 27181440
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.5355679988861084,
+            "direct_q": 1.6951679587364197,
+            "direct_kv": 1.5425919890403748,
+            "direct_qkv": 1.7015359997749329
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.747849999446771,
+            "direct_q": 1.8227999998998712,
+            "direct_kv": 1.66940000053728,
+            "direct_qkv": 1.8295000008947682
+          }
+        },
+        {
+          "heads": [
+            44,
+            55
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 1.994399999603047,
+            "native": 0.4643000011128606
+          },
+          "kv_cache_bytes": {
+            "packed": 132612480,
+            "native": 27181440
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.5354080200195312,
+            "direct_q": 1.7011359930038452,
+            "direct_kv": 1.5342079997062683,
+            "direct_qkv": 1.6896480321884155
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 2.0859000005657435,
+            "direct_q": 1.8322499990972574,
+            "direct_kv": 1.6596999994362704,
+            "direct_qkv": 1.815500000702741
+          }
+        },
+        {
+          "heads": [
+            55,
+            56
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 15.606599999955506,
+            "native": 253.9238999997906
+          },
+          "kv_cache_bytes": {
+            "packed": 12055680,
+            "native": 2471040
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 0.919264018535614,
+            "direct_q": 0.9007840156555176,
+            "direct_kv": 0.8951199948787689,
+            "direct_qkv": 0.8715839982032776
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.089499999579857,
+            "direct_q": 1.0279999996782863,
+            "direct_kv": 1.0221500006082351,
+            "direct_qkv": 1.0068500005218084
+          }
+        }
+      ],
+      "state_checks": 2736,
+      "output_checks": 54,
+      "legacy_tail_output_checks": 6,
+      "errors": [],
+      "max_stage_error": {
+        "direct_q:Q": 0.0,
+        "direct_q:MU": 2.9802322387695312e-08,
+        "direct_q:G": 1.0,
+        "direct_q:VB": 0.001953125,
+        "direct_q:LZ": 7.152557373046875e-07,
+        "direct_q:SG": 6.33008312433958e-08,
+        "direct_q:IDX": 0.0,
+        "direct_q:EXCL": 0.0,
+        "direct_kv:Q": 0.0,
+        "direct_kv:MU": 0.0,
+        "direct_kv:G": 0.0,
+        "direct_kv:VB": 0.0,
+        "direct_kv:LZ": 0.0,
+        "direct_kv:SG": 0.0,
+        "direct_kv:IDX": 0.0,
+        "direct_kv:EXCL": 0.0,
+        "direct_qkv:Q": 0.0,
+        "direct_qkv:MU": 2.9802322387695312e-08,
+        "direct_qkv:G": 1.0,
+        "direct_qkv:VB": 0.001953125,
+        "direct_qkv:LZ": 7.152557373046875e-07,
+        "direct_qkv:SG": 6.33008312433958e-08,
+        "direct_qkv:IDX": 0.0,
+        "direct_qkv:EXCL": 0.0
+      },
+      "max_output_error": {
+        "max_abs": 3.725290298461914e-09,
+        "relative_l2": 3.545681526162525e-09
+      },
+      "sum_group_gpu_event_medians_ms": {
+        "baseline": 8.618320107460022,
+        "direct_q": 9.41016000509262,
+        "direct_kv": 8.614304035902023,
+        "direct_qkv": 9.375168025493622
+      },
+      "speedup_vs_baseline": {
+        "baseline": 1.0,
+        "direct_q": 0.9158526638012459,
+        "direct_kv": 1.000466209637048,
+        "direct_qkv": 0.9192710022929163
+      }
+    }
+  ],
+  "errors": [],
+  "notes": [
+    "All four arms use the same BF16 synthetic native QKV.",
+    "Timing: GPU event medians per group, not whole-video wall.",
+    "JIT cold cache-build cost reported separately.",
+    "No model-resident or production acceptance implied.",
+    "Dynamic group-aligned last window; no hardcoded tail tile count.",
+    "Only real rows compared with legacy full-pad Flat on each short window.",
+    "Short window aliases the original per-head workspace; no extra GPU cache.",
+    "Graph and persistent Direct-Flow DISPATCH are UNRUN."
+  ],
+  "gpu": {
+    "device": "NVIDIA GeForce RTX 5070 Ti",
+    "free_before_gib": 14.687,
+    "total_gib": 15.894
+  },
+  "config": {
+    "mode": "fast",
+    "exact_leaves": 256,
+    "center_group": 1,
+    "tokens": 18723,
+    "heads": 56,
+    "tiles": 16,
+    "query_windows": 19,
+    "window_geometry": [
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 291,
+        "active_tiles": 5,
+        "padded_rows": 320
+      }
+    ],
+    "group_cap": 11,
+    "qkv_dtype": "bfloat16",
+    "rounds": 2,
+    "warmups": 1,
+    "q_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "k_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "v_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "output_atol": 0.0002,
+    "output_rtol": 0.0002,
+    "stage_max_abs": {
+      "MU": 2e-05,
+      "G": 1.0,
+      "VB": 0.01,
+      "LZ": 3e-05,
+      "SG": 3e-05
+    }
+  }
+}

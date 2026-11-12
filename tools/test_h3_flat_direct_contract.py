@@ -52,6 +52,17 @@ class DirectQKVContractTest(unittest.TestCase):
             ).args
         ))
 
+    def test_optional_gpu_stage_diagnostics_do_not_change_default(self):
+        prep=PREP.read_text(encoding="utf-8")
+        bench=BENCH.read_text(encoding="utf-8")
+        self.assertIn('stage_gpu_events=None',prep)
+        self.assertIn('if stage_gpu_events is not None:',prep)
+        self.assertIn('stage_gpu_events.append((name,stage_gpu_prev,stage_finish))',prep)
+        self.assertIn('--diagnose-only',bench)
+        self.assertIn('def diagnose_stages(args,report):',bench)
+        self.assertIn('"numerical_parity":"NOT_REPEATED_IN_STAGE_DIAGNOSTIC"',bench)
+        self.assertIn('GPU-stage-intervals=',bench)
+
     def test_benchmark_four_arms_and_one_json(self):
         s=BENCH.read_text(encoding="utf-8")
         for name in ("baseline","direct_q","direct_kv","direct_qkv"):
