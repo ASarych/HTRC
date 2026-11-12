@@ -50,7 +50,7 @@ def _triton():
 def flat_attention_bthd(
     q, k, v, *, heads, mode="fast", tiles=16,
     budget_mib=1024, reserve_mib=256, workspace=True,
-    observer=None, quality=0.0,
+    observer=None, query_staging="gather",
 ):
     """Return the actual [1,S,H,128] BF16/FP16 Flat attention output.
 
@@ -70,18 +70,12 @@ def flat_attention_bthd(
         raise ValueError("tiles must be a positive integer")
     if budget_mib<1 or reserve_mib<0 or budget_mib<=reserve_mib+128:
         raise ValueError("Budget must exceed reserve plus 128 MiB fixed buffer")
+    # No Q quality coefficient, dynamic leaf-count reduction, or grouped
+    # centre approximation in the live backend. Preserve the selected
+    # fixed Flat mode geometry while optimizing its implementation.
     cfg=shared.flat_config(mode,tiles)
-    quality=float(quality)
-    if not 0.0<=quality<=0.3:
-        raise ValueError("This GPU path supports Q=0 (preset) and Q0.1..Q0.3; leaf32 modes not implemented")
-    if quality>=0.1:
-        qstep,center_group,fraction=(0.1,2,0.1005)
-        if quality>=0.2:qstep,center_group,fraction=(0.2,4,0.1005)
-        if quality>=0.3:qstep,center_group,fraction=(0.3,4,0.0754)
-        cfg["quality"]=qstep
-        cfg["kern"]["group"]=center_group
-        cfg["exact_leaves"]=max(1,round((s//16)*fraction))
-        if tiles%center_group:raise ValueError("Q coefficient requires a divisible query tile window")
+    if query_staging not in ("gather", "view_copy"):
+        raise ValueError("Unsupported query staging: gather or view_copy")
     tr=_triton()
     tr._dll()
     dev=q.device
@@ -97,7 +91,10 @@ def flat_attention_bthd(
         "backend":"htrc_flat_gpu",
         "heads":count, "distinct_native_head_ids":True,
         "tokens":s,"mode":mode,"tiles":tiles,
-        "quality":cfg.get("quality",0.0),"center_group":cfg["kern"].get("group",1),"exact_leaves":cfg["exact_leaves"],
+        "quality_coefficient_used":False,
+        "query_staging":query_staging,
+        "center_group":cfg["kern"].get("group",1),
+        "exact_leaves":cfg["exact_leaves"],
         "query_windows":math.ceil(s/(tiles*64)),
         "group_capacity":max_group,
         "number_of_groups":math.ceil(count/max_group),
@@ -150,6 +147,7 @@ def flat_attention_bthd(
                         quant_backend="triton",input_cast="gpu",
                         kv_cache=cache,query_workspace=ws,
                         valid_query_rows=valid,
+                        query_staging=query_staging,
                     )
                     phase_end(stage)
                     stage=phase_begin("tile")
