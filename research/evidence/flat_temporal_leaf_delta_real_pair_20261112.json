@@ -1,0 +1,183 @@
+{
+  "experiment": "h3_flat_temporal_leaf_summary_delta_feasibility_v1",
+  "completed": true,
+  "accepted_for_runtime": false,
+  "real_model_weights_loaded": false,
+  "predicts_future_timestep_before_new_qkv": false,
+  "quality_coefficient_used": false,
+  "leaf_rows": 16,
+  "fixed_exact_leaves": 256,
+  "fixed_center_group": 1,
+  "inputs": {
+    "capture_a": "D:\\ComfyOutput\\H3\\math_probe\\real_temporal_qkv_a.pt",
+    "raw_head_ids": [
+      1,
+      16,
+      27,
+      55
+    ],
+    "capture_b": "D:\\ComfyOutput\\H3\\math_probe\\real_temporal_qkv_b.pt",
+    "heads": 4,
+    "tokens": 15275,
+    "delta_std": 0.02,
+    "sparse_fraction": 0.05,
+    "scenarios": [
+      "real_pair"
+    ]
+  },
+  "cases": [
+    {
+      "name": "real_pair",
+      "input_kind": "paired_real_QKV_captures",
+      "heads": 4,
+      "tokens": 15275,
+      "valid_query_rows": 1024,
+      "query_start": 0,
+      "query_centers": 16,
+      "leaves": 954,
+      "exact_leaves_selected": 256,
+      "dirty_coverage": {
+        "total_head_center_leaf_pairs": 61056,
+        "changed_mu_centers": 64,
+        "total_mu_centers": 64,
+        "changed_k_leaves": 3816,
+        "changed_v_leaves": 3816,
+        "changed_k_or_v_leaves": 3816,
+        "total_head_leaves": 3816,
+        "dirty_head_center_leaf_pairs": 61056,
+        "exact_reusable_pairs": 0,
+        "exact_reusable_fraction": 0.0,
+        "selection_must_still_be_recomputed": true
+      },
+      "actual_selected_leaf_change_between_steps": {
+        "head_centers": 64,
+        "selected_per_center": 256,
+        "unchanged_selected_set_centers": 0,
+        "unchanged_selected_set_fraction": 0.0,
+        "removed_memberships": 1532,
+        "added_memberships": 1532,
+        "replaced_fraction_of_selected": 0.093505859375,
+        "full_idx_int32_bytes": 65536,
+        "oracle_minimum_pair_patch_bytes": 12256,
+        "patch_discovery_is_free": false,
+        "selection_unchanged_does_not_imply_stats_or_output_unchanged": true
+      },
+      "exact_ordered_idx_position_patch_oracle": {
+        "replaced_index_positions": 11979,
+        "total_index_positions": 16384,
+        "position_change_fraction": 0.73114013671875,
+        "patch_bytes_position_u32_plus_id_i32": 95832,
+        "full_idx_bytes": 65536,
+        "round_trip_ordered_idx_bit_exact": true,
+        "requires_fresh_idx_for_patch_discovery": true
+      },
+      "estimated_selected_leaf_error_vs_fresh": {
+        "head_centers": 64,
+        "selected_per_center": 256,
+        "unchanged_selected_set_centers": 1,
+        "unchanged_selected_set_fraction": 0.015625,
+        "removed_memberships": 579,
+        "added_memberships": 579,
+        "replaced_fraction_of_selected": 0.03533935546875,
+        "full_idx_int32_bytes": 65536,
+        "oracle_minimum_pair_patch_bytes": 4632,
+        "patch_discovery_is_free": false,
+        "selection_unchanged_does_not_imply_stats_or_output_unchanged": true
+      },
+      "cache_footprint_if_all_query_windows_persist": {
+        "centers_per_head": 239,
+        "leaves_per_head": 954,
+        "estimated_G_VB_LZ_SG_bytes_one_block": 357513408,
+        "estimated_G_VB_LZ_SG_gib_one_block": 0.332960307598114,
+        "estimated_selected_IDX_int32_bytes_one_block": 978944,
+        "estimated_selected_IDX_int32_mib_one_block": 0.93359375,
+        "note": "All full-Q centres, one H3 block, one step; does not include keys, values, masks, projection weights, concurrency or 49-block persistence."
+      },
+      "summary_error_vs_fresh": {
+        "G": {
+          "relative_l2": 0.06297709047794342,
+          "max_abs": 64.0,
+          "mean_abs": 1.0201470851898193,
+          "bit_exact": false
+        },
+        "VB": {
+          "relative_l2": 0.13854041695594788,
+          "max_abs": 6.125,
+          "mean_abs": 0.16680917143821716,
+          "bit_exact": false
+        },
+        "LZ": {
+          "relative_l2": 0.017811086028814316,
+          "max_abs": 0.6589298248291016,
+          "mean_abs": 0.044012948870658875,
+          "bit_exact": false
+        },
+        "SG": {
+          "relative_l2": 0.018819671124219894,
+          "max_abs": 0.0008263541385531425,
+          "mean_abs": 3.7370580685092136e-05,
+          "bit_exact": false
+        },
+        "G_dequantized": {
+          "relative_l2": 0.056830666959285736,
+          "max_abs": 0.15997126698493958,
+          "mean_abs": 0.0029077583458274603,
+          "bit_exact": false
+        }
+      },
+      "selected_leaf_set_different_centers": 63,
+      "selected_leaf_set_total_centers": 64,
+      "selected_leaf_set_different_fraction": 0.984375,
+      "output_error_vs_fresh_flat": {
+        "relative_l2": 0.004732172004878521,
+        "max_abs": 2.103656768798828,
+        "mean_abs": 0.0035565593279898167,
+        "bit_exact": false
+      },
+      "strict_bitwise_identity_pass": false,
+      "eligible_for_quality_preserving_integration": false,
+      "timings": {
+        "fresh_stats_selection_tile_merge": {
+          "median_gpu_ms": 2.0454719066619873,
+          "median_sync_wall_ms": 3.0340000012074597,
+          "samples_gpu_ms": [
+            2.024319887161255,
+            2.0454719066619873,
+            2.0634241104125977,
+            2.0809600353240967,
+            2.0432000160217285
+          ]
+        },
+        "observed_delta_selection_tile_merge": {
+          "median_gpu_ms": 1.5962239503860474,
+          "median_sync_wall_ms": 1.972499998373678,
+          "samples_gpu_ms": [
+            1.7505600452423096,
+            1.951200008392334,
+            1.5962239503860474,
+            1.54367995262146,
+            1.53603196144104
+          ]
+        },
+        "boundary": "Post-MU/post-K8: includes full leaf-stats or both K/V mean deltas, selection/topk/EXCL, Tile and Merge; EXCLUDES new QKV projection, Q MU, K8, tensor input allocation and GPU model weights.",
+        "wall_speedup_fresh_over_delta": 1.5381495582808549
+      },
+      "note": "Delta candidate uses observed NEW K/V (not a forecast) and approximated previous INT8 G; no quality regression accepted; numerical FAIL is a valid feasibility result."
+    }
+  ],
+  "errors": [],
+  "notes": [
+    "The 16-token leaf partition itself does NOT need rebuilding in Flat.",
+    "Primary compact-structure signal: count changed selected leaf IDs (IDX membership) and oracle patch bytes between states, without treating the full G/VB cache as portable across steps.",
+    "Secondary diagnostic: approximate derived per-centre per-leaf G8/SG/VB/LZ from previous summaries and observed K/V mean deltas + changed MU, only on one group/window.",
+    "A full cross-step G/VB/LZ/SG cache for ALL query windows is prohibitively large at H3 shape; selected IDX is compact but computing its correct next members is still unsolved.",
+    "Covariance effects omitted: approximation NOT safe for production unless parity/quality is proven.",
+    "Native HTRC Triton exact full leaf-stats and unchanged Tile/Merge are the control.",
+    "Exact dirty gate counts reusable stats only when BOTH MU and all K/V tokens are unchanged; selection depends on full Q.",
+    "Synthetic drift tests cannot establish temporal similarity in real successive H3 denoising steps.",
+    "One JSON, no H3 production hook or CUDA Graph, no video generation."
+  ],
+  "gpu": "NVIDIA GeForce RTX 5070 Ti",
+  "peak_torch_allocated_mib": 537.62255859375,
+  "all_cases_bit_exact": false
+}
