@@ -427,9 +427,14 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     if kx<1:
         raise ValueError("Exact leaf count must be nonzero")
     dev=torch.device("cuda")
-    pos=torch.tensor(positions,dtype=torch.long,device=q_cap.device)
-    # One source-device gather per Q/K/V rather than 3*H independent transfers.
+    # Native strided Q with a prebuilt K/V cache never gathers a head.
+    # Defer this small CPU->CUDA positions upload until an actual gather;
+    # unneeded H2D copies inside CUDA Graph capture would be invalid.
+    pos=None
     def gather(key, rows):
+        nonlocal pos
+        if pos is None:
+            pos=torch.tensor(positions,dtype=torch.long,device=q_cap.device)
         raw=capture[key][:rows]
         return raw.index_select(1,pos).permute(1,0,2).contiguous()
     if query_staging == "view_copy":
