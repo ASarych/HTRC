@@ -121,9 +121,9 @@ class MutableGraphContract(unittest.TestCase):
         class FakeQuant:
             def __getitem__(self,grid):
                 def run(kbf,k8,ks,n,d,h,br,sh,ss,sd,*,num_warps):
-                    src=kbf.float().reshape(h*n,d)
+                    src=kbf.float().reshape(h,n,d)
                     k8.copy_(torch.where(src>=0,1,-1).to(torch.int8))
-                    ks.copy_(src.abs().mean(dim=1))
+                    ks.copy_(src.abs().mean(dim=2))
                 return run
         tri=SimpleNamespace(
             _quant_key_int8_native=FakeQuant(),
