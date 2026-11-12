@@ -1,5 +1,18 @@
 # H3 Flat: model-resident shadow gate (2026-11-11)
 
+
+## CLOSED / SUPERSEDED — do NOT rerun this standalone shadow gate (owner decision 2026-11-12)
+
+**Decision:** The standalone `tools/run_h3_flat_model_shadow.py` gate is **CANCELLED AS UNNECESSARY**, not `PASS`. Do not schedule, execute, or request its `flat_model_resident_shadow.json` solely to establish that Flat works on real MiniMax H3 weights / 56 distinct model heads. Its separate run is **not verified**; keep the historical instructions below for provenance only.
+
+**Stronger evidence already archived:** two completed, output-producing real HyperFlow H3 NVFP4 video runs with `attention_profile=htrc_flat_gpu`, 56 distinct native heads, 56 frames / 6 denoising steps / RTX 5070 Ti, in
+[real-run evidence review](https://github.com/ASarych/HTRC/blob/d996053cf48da20c9836dd4427ee0b306e3aa796/research/H3_FLAT_QPREP_LAUNCH_EVIDENCE_2026-11-12/ANALYSIS_2026-11-12.md). The Fast Q=0 run completed; Q=0.3 also completed but its visual quality was rejected. These runs validate actual Flat output and model execution, **not** numerical equivalence to dense attention or user-approved final image quality.
+
+**Still UNRUN:** integrating the new mutable-QKV Direct-Flow CUDA Graph into real H3, measuring its full denoising latency, memory headroom, and output/temporal quality. The old shadow test is not a prerequisite for this separate gate. No quality coefficients or reduction of fixed Flat leaves/centres are authorized.
+
+---
+
+
 Experiment only, never a production backend. Source branch: experiment/flat-model-resident-shadow-20261111.
 Derived from the verified query-workspace gate: real 4-head 1.02571x and 56-logical proxy 1.03404x, all 520 group/window outputs exact.
 The next missing proof is actual 56 distinct H3 heads with model weights resident.

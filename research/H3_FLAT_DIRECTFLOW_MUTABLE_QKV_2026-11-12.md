@@ -107,3 +107,10 @@ this documentation update.
 
 **Next gate: real model-resident H3 (56 distinct heads, model weights resident
 on RTX 5070 Ti 16 GiB) and full-call timing / peak VRAM / parity; UNRUN.**
+
+
+## Historical model-shadow gate disposition — 2026-11-12
+
+**Do not run** `tools/run_h3_flat_model_shadow.py` as a standalone prerequisite. The owner closed that task as **SUPERSEDED / NOT REQUIRED**, not PASS. Its independent JSON has not been confirmed, but actual output-producing H3 Flat runs with 56 distinct model heads are already archived in `research/H3_FLAT_QPREP_LAUNCH_EVIDENCE_2026-11-12/` (see [review](https://github.com/ASarych/HTRC/blob/d996053cf48da20c9836dd4427ee0b306e3aa796/research/H3_FLAT_QPREP_LAUNCH_EVIDENCE_2026-11-12/ANALYSIS_2026-11-12.md)). Q=0.3 was visually rejected.
+
+The only distinct pending model gate for this branch is **mutable-QKV CUDA Graph integration and A/B inside actual H3**. Synthetic Direct-Flow A/B has GPU numerical PASS and local CPU tests 8/8 PASS; neither establishes real H3 Direct-Flow speed/VRAM/video parity. Do not recreate a shadow-only experiment.
