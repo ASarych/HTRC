@@ -85,3 +85,25 @@ Raw local report archived as [`flat_directflow_mutable_qkv_gpu_pass_20261112.jso
 - **Fix**: reshape the fake INT8 and scale results back to `[H*N,D]` and `[H*N]` before `.copy_`, with explicit ABI shape assertions. Real CUDA quantizer and inference math are untouched. A focused standalone CPU reproduction of the corrected fake layout passed; the full repository unittest on the user's interpreter is **UNRUN after this fix**.
 
 Decision: **PASS_NUMERIC / PASS_MUTABLE_GRAPH_PROBE**, performance advantage measured at **1.086x in sync wall for one synthetic 11-head group**; CUDA Graph persistent staging memory must be evaluated with actual H3 weights before any production promotion. CPU harness fix must be retested independently.
+
+## Local CPU contract gate complete (2026-11-12)
+
+The owner ran the full CPU contract suite on the exact code HEAD
+`b01a79c2c824e253b4b19d52a72c342dd572740b`:
+
+```text
+Ran 8 tests in 2.645s
+OK
+git rev-parse HEAD
+b01a79c2c824e253b4b19d52a72c342dd572740b
+```
+
+Status: **CPU CONTRACT PASS (8/8)** on the tested code HEAD. The previous
+CPU `UNRUN` notation above describes the historical state immediately after
+the fixture fix, not the current result. The mutable-input CUDA Graph
+synthetic GPU probe is independently **PASS_NUMERIC / PASS_MUTABLE_GRAPH_PROBE**
+on the same code. No new GPU benchmark or real-model test was performed for
+this documentation update.
+
+**Next gate: real model-resident H3 (56 distinct heads, model weights resident
+on RTX 5070 Ti 16 GiB) and full-call timing / peak VRAM / parity; UNRUN.**
