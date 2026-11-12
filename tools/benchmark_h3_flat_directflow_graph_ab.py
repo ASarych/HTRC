@@ -231,15 +231,25 @@ def run(args,report):
         args.tokens,args.tiles,tile_rows=int(cfg["tile"]),
         center_group=int(cfg["kern"]["group"])
     ))
-    requested=[geometries[0]]
+    # Never re-capture the same window for a sequence shorter than capacity.
+    # Do not assume a full or short window exists for every valid sequence.
+    full=next((g for g in geometries
+               if g.valid_rows==args.tiles*int(cfg["tile"])),None)
+    short=next((g for g in reversed(geometries)
+                if g.tile_count<args.tiles),None)
+    requested=[]
+    if args.window in ("full","both"):
+        if full is None and args.window=="full":
+            raise ValueError("No full-size query window for this sequence")
+        if full is not None:
+            requested.append(full)
     if args.window in ("short","both"):
-        if geometries[-1].tile_count==args.tiles:
-            if args.window=="short":
-                raise ValueError("No distinct short window in this sequence")
-        else:
-            if args.window=="short":
-                requested=[]
-            requested.append(geometries[-1])
+        if short is None and args.window=="short":
+            raise ValueError("No smaller query window for this sequence")
+        if short is not None:
+            requested.append(short)
+    if not requested:
+        raise ValueError("No query window for requested graph probe")
     report["config"]={
         "tokens":args.tokens,"heads":args.heads,
         "group_heads":args.group_heads,

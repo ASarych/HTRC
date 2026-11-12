@@ -36,6 +36,13 @@ class DirectFlowGraphStaticTest(unittest.TestCase):
         self.assertIn("if pos is None:",prep)
         self.assertIn("raw.index_select(1,pos)",prep)
 
+    def test_full_and_short_geometry_never_duplicate_same_window(self):
+        s=BENCH.read_text(encoding="utf-8")
+        self.assertIn("full=next((g for g in geometries",s)
+        self.assertIn("short=next((g for g in reversed(geometries)",s)
+        self.assertIn('if not requested:',s)
+        self.assertNotIn('requested=[geometries[0]]',s)
+
     def test_fixed_math_and_one_report(self):
         src=BENCH.read_text(encoding="utf-8")
         self.assertIn('"exact_leaves"])!=256',src)
