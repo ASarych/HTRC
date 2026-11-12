@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -52,6 +53,7 @@ def flat_attention_bthd(
     q, k, v, *, heads, mode="fast", tiles=16,
     budget_mib=1024, reserve_mib=256, workspace=True,
     observer=None, query_staging="gather", kv_staging="gather",
+    dispatch=None,
 ):
     """Return the actual [1,S,H,128] BF16/FP16 Flat attention output.
 
@@ -62,6 +64,19 @@ def flat_attention_bthd(
     """
     if torch.is_grad_enabled():
         raise RuntimeError("HTRC Flat live backend is inference-only")
+    # Explicit opt-in: default live Flat remains exactly the pinned eager
+    # path. Graph is only valid for the fixed-math research configuration.
+    choice=(os.environ.get("APL_HTRC_FLAT_DISPATCH","eager")
+            if dispatch is None else str(dispatch)).strip().lower()
+    if choice not in ("eager","graph"):
+        raise ValueError(f"Unsupported APL_HTRC_FLAT_DISPATCH={choice!r}")
+    if choice == "graph":
+        from . import htrc_flat_directflow_live as flow
+        return flow.graph_attention_bthd(
+            q,k,v,heads=heads,mode=mode,tiles=tiles,
+            budget_mib=budget_mib,reserve_mib=reserve_mib,
+            workspace=workspace,observer=observer,
+        )
     cap=shared.capture_from_bhsd(q,k,v,int(heads))
     s=int(cap["q_qhd"].shape[0])
     count=int(heads)
