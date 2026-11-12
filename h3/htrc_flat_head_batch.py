@@ -340,9 +340,9 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         raise ValueError("quant_backend must be torch or triton")
     if input_cast not in ("gpu", "cpu"):
         raise ValueError("input_cast must be gpu or cpu")
-    if query_staging not in ("gather", "view_copy", "native_direct"):
-        raise ValueError("query_staging must be gather, view_copy or native_direct")
-    if query_staging in ("view_copy","native_direct") and input_cast != "gpu":
+    if query_staging not in ("gather", "view_copy", "native_direct", "native_torch_mu"):
+        raise ValueError("query_staging must be gather, view_copy, native_direct or native_torch_mu")
+    if query_staging in ("view_copy","native_direct","native_torch_mu") and input_cast != "gpu":
         raise ValueError("Direct query staging needs GPU-resident Q input")
     if query_workspace is not None and (
         not isinstance(query_workspace, dict) or kv_cache is None
@@ -443,31 +443,44 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         native_hsd=native.permute(1,0,2)
         Q=torch.empty((h,tile_count,tile,dim),device=q_cap.device,dtype=torch.float32)
         Q.view(h,n_query,dim).copy_(native_hsd)
-    elif query_staging == "native_direct":
+    elif query_staging in ("native_direct","native_torch_mu"):
         if (q_cap.device.type!="cuda" or
             positions != list(range(positions[0],positions[0]+h))):
-            raise ValueError("native_direct requires consecutive unique CUDA heads")
+            raise ValueError("Native Q requires consecutive unique CUDA heads")
         native=q_cap[:n_query,positions[0]:positions[0]+h,:]
         Q=native.permute(1,0,2).view(h,tile_count,tile,dim)
         if Q.dtype not in (torch.bfloat16,torch.float16,torch.float32):
             raise TypeError("Unsupported native Q dtype")
-        MU=torch.empty((h,centers,dim),device=dev,dtype=torch.float32)
-        triton_module._direct_q_mu_kernel[(h,centers)](
-            Q,MU,centers,group,tile,dim,
-            int(Q.stride(0)),int(Q.stride(1)),int(Q.stride(2)),int(Q.stride(3)),
-            int(valid_query_rows if valid_query_rows is not None else n_query),
-            num_warps=4
-        )
+        if query_staging=="native_direct":
+            # Existing independent Triton MU reference.
+            MU=torch.empty((h,centers,dim),device=dev,dtype=torch.float32)
+            triton_module._direct_q_mu_kernel[(h,centers)](
+                Q,MU,centers,group,tile,dim,
+                int(Q.stride(0)),int(Q.stride(1)),int(Q.stride(2)),int(Q.stride(3)),
+                int(valid_query_rows if valid_query_rows is not None else n_query),
+                num_warps=4
+            )
+        else:
+            # Experimental ATen reduction directly from native Q strides;
+            # accumulates FP32 without materializing all Q rows in FP32.
+            # This does not change downstream leaf geometry or selection.
+            grouped_q=Q.view(h,centers,group*tile,dim)
+            MU=grouped_q.mean(dim=2,dtype=torch.float32).contiguous()
+            if valid_query_rows is not None and valid_query_rows % (group*tile):
+                final_center=(valid_query_rows-1)//(group*tile)
+                real_rows=valid_query_rows-final_center*group*tile
+                MU[:,final_center,:]=grouped_q[
+                    :,final_center,:real_rows,:].mean(dim=1,dtype=torch.float32)
     else:
         # Pinned A/B control; exactly the same sequence as before.
         Q=gather("q_qhd",n_query).to(dev).float().view(h,tile_count,tile,dim).contiguous()
-    if query_staging != "native_direct" and group==1:
+    if query_staging not in ("native_direct","native_torch_mu") and group==1:
         MU=Q.mean(dim=2).contiguous()
         if valid_query_rows is not None and valid_query_rows % tile:
             final_tile=(valid_query_rows-1)//tile
             real_rows=valid_query_rows-final_tile*tile
             MU[:,final_tile,:]=Q[:,final_tile,:real_rows,:].mean(dim=1)
-    elif query_staging != "native_direct":
+    elif query_staging not in ("native_direct","native_torch_mu"):
         grouped_q=Q.view(h,centers,group*tile,dim)
         MU=grouped_q.mean(dim=2).contiguous()
         if valid_query_rows is not None and valid_query_rows % (group*tile):
@@ -583,7 +596,7 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     gf=G.view(h*centers,nb,dim)
     lzf=LZ.view(h*centers,nb)
     sgf=SG.view(h*centers,nb)
-    if query_staging == "native_direct":
+    if query_staging in ("native_direct","native_torch_mu"):
         sel=state_buffer("sel",(h*centers,nb),torch.float32)
         lps=triton_module._split(nb,int(config["splits"]),32)
         triton_module._rowmax_kernel[
@@ -621,7 +634,7 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         "G":G,"VB":VB,"LZ":LZ,"SG":SG,
         "EXCL":excl.view(h,centers,nb),
         "IDX":idx,
-        "_direct_q":query_staging=="native_direct",
+        "_direct_q":query_staging in ("native_direct","native_torch_mu"),
         "_direct_v":direct_kv
     }
     return states,config,nkeys,nb,kx

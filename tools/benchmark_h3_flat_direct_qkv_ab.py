@@ -29,6 +29,8 @@ ARMS={
     "direct_q":("native_direct",False),
     "direct_kv":("gather",True),
     "direct_qkv":("native_direct",True),
+    "direct_q_torch_mu":("native_torch_mu",False),
+    "direct_qkv_torch_mu":("native_torch_mu",True),
 }
 STATES=("Q","MU","G","VB","LZ","SG","IDX","EXCL")
 # Explicit fixed-math numerical gates, not video-quality acceptance thresholds.
@@ -505,7 +507,7 @@ def main():
                                args.tiles,args.rounds,args.warmups))):
         parser.error("Invalid positive arguments or head-cases")
     report={
-        "experiment":"flat_direct_qkv_strided_v1",
+        "experiment":"flat_direct_qkv_strided_v2_torch_mu",
         "completed":False,"quality_coefficient_used":False,
         "fixed_math":True,"real_model":False,
         "cases":[],"errors":[],
@@ -517,12 +519,14 @@ def main():
             "Dynamic group-aligned last window; no hardcoded tail tile count.",
             "Only real rows compared with legacy full-pad Flat on each short window.",
             "Short window aliases the original per-head workspace; no extra GPU cache.",
+            "native_torch_mu avoids a materialized FP32 Q and uses ATen FP32 mean.",
+            "Both native-direct Q reductions are opt-in; main default gather unchanged.",
             "Graph and persistent Direct-Flow DISPATCH are UNRUN."
         ]
     }
     try:
         if args.diagnose_only:
-            report["experiment"]="flat_direct_qkv_stage_diagnostic_v1"
+            report["experiment"]="flat_direct_qkv_stage_diagnostic_v2_torch_mu"
             diagnose_stages(args,report)
         else:
             run(args,report)

@@ -63,9 +63,20 @@ class DirectQKVContractTest(unittest.TestCase):
         self.assertIn('"numerical_parity":"NOT_REPEATED_IN_STAGE_DIAGNOSTIC"',bench)
         self.assertIn('GPU-stage-intervals=',bench)
 
+    def test_torch_mu_uses_native_view_without_staged_q(self):
+        src=PREP.read_text(encoding="utf-8")
+        live=LIVE.read_text(encoding="utf-8")
+        self.assertIn('"native_torch_mu"',src)
+        self.assertIn('grouped_q.mean(dim=2,dtype=torch.float32)',src)
+        self.assertIn('mean(dim=1,dtype=torch.float32)',src)
+        self.assertIn('query_staging in ("native_direct","native_torch_mu")',src)
+        self.assertIn('"native_torch_mu"',live)
+        self.assertIn('"_direct_q":query_staging in ("native_direct","native_torch_mu")',src)
+
     def test_benchmark_four_arms_and_one_json(self):
         s=BENCH.read_text(encoding="utf-8")
-        for name in ("baseline","direct_q","direct_kv","direct_qkv"):
+        for name in ("baseline","direct_q","direct_kv","direct_qkv",
+                     "direct_q_torch_mu","direct_qkv_torch_mu"):
             self.assertIn('"'+name+'"',s)
         self.assertIn("torch.equal(packed[\"K\"],native[\"K\"])",s)
         self.assertIn("torch.equal(packed[\"KS\"],native[\"KS\"])",s)

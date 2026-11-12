@@ -75,7 +75,7 @@ def flat_attention_bthd(
     # centre approximation in the live backend. Preserve the selected
     # fixed Flat mode geometry while optimizing its implementation.
     cfg=shared.flat_config(mode,tiles)
-    if query_staging not in ("gather", "view_copy", "native_direct"):
+    if query_staging not in ("gather", "view_copy", "native_direct", "native_torch_mu"):
         raise ValueError("Unsupported query staging")
     if kv_staging not in ("gather","native_direct"):
         raise ValueError("Unsupported KV staging")
