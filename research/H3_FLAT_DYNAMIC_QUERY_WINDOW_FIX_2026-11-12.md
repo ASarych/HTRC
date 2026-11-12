@@ -34,3 +34,28 @@ Isolated local CPU unit tests of the pure window planner and workspace alias (to
 Single expected report: \`D:\ComfyOutput\H3\math_probe\flat_direct_qkv_ab.json\`. Must show all 4-head and 56-head cases \`completed=true\`, 0 errors, \`legacy_tail_output_checks>0\`, and final-window state/output parity before speed is considered.
 
 No new quality coefficient and no production/default change.
+
+
+## Local RTX run: environment blocked, no kernels executed (2026-11-12)
+
+The uploaded \`flat_direct_qkv_ab(1).json\` is archived under
+[\`evidence/flat_direct_qkv_ab_missing_triton_20261112.json\`](evidence/flat_direct_qkv_ab_missing_triton_20261112.json).
+
+- \`completed=false\`, \`cases=[]\`, \`errors[0].type=ModuleNotFoundError\`, \`errors[0].message="No module named 'triton'"\`.
+- RTX 5070 Ti was recognized by PyTorch, but the Python environment failed at \`import triton\` in \`h3/htrc_flat_triton.py\`, before kernel compilation or parity tests.
+- Status: **ENV_BLOCKED**. Numeric result, last-window correction and performance remain **UNRUN**, not FAIL and not PASS.
+- Previous instructions used unqualified \`python\`. Always select a real ComfyUI CUDA runtime interpreter and preflight it.
+
+PowerShell preflight (edit path if ComfyUI is installed elsewhere):
+
+\`\`\`powershell
+$py = 'C:\Users\Misya\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $py)) { throw "ComfyUI Python not found at $py" }
+& $py -c "import sys, torch, triton; print('PYTHON',sys.executable); print('TORCH',torch.__version__); print('TRITON',triton.__version__); print('CUDA',torch.cuda.get_device_name(0))"
+if ($LASTEXITCODE -ne 0) { throw "Wrong environment: select one with CUDA Torch + Triton; do not run benchmark" }
+& $py -m unittest discover -s tools -p test_h3_flat_tail_geometry.py
+if ($LASTEXITCODE -ne 0) { throw "Tail geometry contract failed" }
+& $py -B tools\benchmark_h3_flat_direct_qkv_ab.py --head-cases 4,56 --rounds 2 --warmups 1
+\`\`\`
+
+Do not install or upgrade Triton in ComfyUI speculatively if a working interpreter already exists. One JSON report remains the output; use exact selected Python for all steps.

@@ -1,0 +1,30 @@
+{
+  "experiment": "flat_direct_qkv_strided_v1",
+  "completed": false,
+  "quality_coefficient_used": false,
+  "fixed_math": true,
+  "real_model": false,
+  "cases": [],
+  "errors": [
+    {
+      "type": "ModuleNotFoundError",
+      "message": "No module named 'triton'",
+      "traceback_tail": "Traceback (most recent call last):\n  File \"D:\\ComfyNodes-flat-split-20261111\\tools\\benchmark_h3_flat_direct_qkv_ab.py\", line 378, in main\n    run(args,report)\n  File \"D:\\ComfyNodes-flat-split-20261111\\tools\\benchmark_h3_flat_direct_qkv_ab.py\", line 129, in run\n    tr=live._triton()\n       ^^^^^^^^^^^^^^\n  File \"D:\\ComfyNodes-flat-split-20261111\\h3\\htrc_flat_live_backend.py\", line 44, in _triton\n    spec.loader.exec_module(module)\n  File \"<frozen importlib._bootstrap_external>\", line 995, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"D:\\ComfyNodes-flat-split-20261111\\h3\\htrc_flat_triton.py\", line 18, in <module>\n    import triton\nModuleNotFoundError: No module named 'triton'\n"
+    }
+  ],
+  "notes": [
+    "All four arms use the same BF16 synthetic native QKV.",
+    "Timing: GPU event medians per group, not whole-video wall.",
+    "JIT cold cache-build cost reported separately.",
+    "No model-resident or production acceptance implied.",
+    "Dynamic group-aligned last window; no hardcoded tail tile count.",
+    "Only real rows compared with legacy full-pad Flat on each short window.",
+    "Short window aliases the original per-head workspace; no extra GPU cache.",
+    "Graph and persistent Direct-Flow DISPATCH are UNRUN."
+  ],
+  "gpu": {
+    "device": "NVIDIA GeForce RTX 5070 Ti",
+    "free_before_gib": 14.687,
+    "total_gib": 15.894
+  }
+}
