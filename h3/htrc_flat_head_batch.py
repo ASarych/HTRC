@@ -304,7 +304,7 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
                                 *, tile_count: int, quant_backend="torch",
                                 input_cast="gpu", stage_timings_ms=None,
                                 kv_cache=None, query_workspace=None,
-                                valid_query_rows=None):
+                                valid_query_rows=None, query_staging="gather"):
     """One head-group preparation: one stats launch, one rowmax, one topk.
 
     Reads trusted native same-block captured Q/K/V; repeated raw head
@@ -318,6 +318,10 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         raise ValueError("quant_backend must be torch or triton")
     if input_cast not in ("gpu", "cpu"):
         raise ValueError("input_cast must be gpu or cpu")
+    if query_staging not in ("gather", "view_copy"):
+        raise ValueError("query_staging must be gather or view_copy")
+    if query_staging == "view_copy" and input_cast != "gpu":
+        raise ValueError("view_copy needs GPU-resident Q input")
     if query_workspace is not None and (
         not isinstance(query_workspace, dict) or kv_cache is None
         or quant_backend != "triton" or input_cast != "gpu"
@@ -393,7 +397,20 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     def gather(key, rows):
         raw=capture[key][:rows]
         return raw.index_select(1,pos).permute(1,0,2).contiguous()
-    Q=gather("q_qhd",n_query).to(dev).float().view(h,tile_count,tile,dim).contiguous()
+    if query_staging == "view_copy":
+        # Research-only alternate Q packing: one BF16/F16->FP32 copy.
+        # Only valid for consecutive *source positions* in native
+        # post-RoPE QKV. Do not use for proxy repeated heads.
+        if (q_cap.device.type != "cuda" or
+            positions != list(range(positions[0],positions[0]+h))):
+            raise ValueError("view_copy requires consecutive unique CUDA native head positions")
+        native=q_cap[:n_query,positions[0]:positions[0]+h,:]
+        native_hsd=native.permute(1,0,2)
+        Q=torch.empty((h,tile_count,tile,dim),device=q_cap.device,dtype=torch.float32)
+        Q.view(h,n_query,dim).copy_(native_hsd)
+    else:
+        # Pinned A/B control; exactly the same sequence as before.
+        Q=gather("q_qhd",n_query).to(dev).float().view(h,tile_count,tile,dim).contiguous()
     if group==1:
         MU=Q.mean(dim=2).contiguous()
         if valid_query_rows is not None and valid_query_rows % tile:
