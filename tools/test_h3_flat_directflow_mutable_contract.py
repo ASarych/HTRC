@@ -51,6 +51,14 @@ class MutableGraphContract(unittest.TestCase):
         self.assertIn('snapshot_state(st)',src)
         self.assertIn('K8/KS refreshed once per attention call',src)
 
+    def test_eager_workspace_needs_complete_qkv_capture(self):
+        src=BENCH.read_text(encoding="utf-8")
+        self.assertIn('eager_source_capture=shared.capture_from_bhsd(',src)
+        self.assertIn('*sources[0],args.group_heads',src)
+        self.assertIn('eager_ws=shared.alloc_workspace(',src)
+        self.assertIn('eager_source_capture,args.group_heads,args.tiles,cfg',src)
+        self.assertNotIn('stage["capture"],args.group_heads,args.tiles,cfg',src)
+
     def test_memory_and_production_boundaries(self):
         src=BENCH.read_text(encoding="utf-8")
         live=LIVE.read_text(encoding="utf-8")

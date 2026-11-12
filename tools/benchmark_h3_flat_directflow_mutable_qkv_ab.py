@@ -311,8 +311,14 @@ def main_run(args,report):
     capture_ms=capture_graphs(
         args,sources[0],geoms,stage,cfg,tr,report
     )
+    # The eager workspace planner needs a complete Q/K/V capture.
+    # stage["capture"] intentionally contains K/V only; using it here
+    # would raise KeyError("q_qhd") before parity checks.
+    eager_source_capture=shared.capture_from_bhsd(
+        *sources[0],args.group_heads
+    )
     eager_ws=shared.alloc_workspace(
-        stage["capture"],args.group_heads,args.tiles,cfg
+        eager_source_capture,args.group_heads,args.tiles,cfg
     )
     eager_out=torch.empty((args.tokens,args.group_heads,128),
                           device="cuda",dtype=torch.float32)
