@@ -1,0 +1,538 @@
+{
+  "experiment": "flat_direct_qkv_strided_v2_torch_mu",
+  "completed": true,
+  "quality_coefficient_used": false,
+  "fixed_math": true,
+  "real_model": false,
+  "cases": [
+    {
+      "head_count": 4,
+      "unique_synthetic_heads": true,
+      "completed": true,
+      "group_reports": [
+        {
+          "heads": [
+            0,
+            4
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 860.0514999998268,
+            "native": 8.549700000003213
+          },
+          "kv_cache_bytes": {
+            "packed": 48222720,
+            "native": 9884160
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.0564799904823303,
+            "direct_q": 1.0013760328292847,
+            "direct_kv": 1.021456003189087,
+            "direct_qkv": 0.9941439926624298,
+            "direct_q_torch_mu": 0.9788959920406342,
+            "direct_qkv_torch_mu": 0.970192015171051
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.2624499995581573,
+            "direct_q": 1.134250000177417,
+            "direct_kv": 1.15054999878339,
+            "direct_qkv": 1.1239500008741743,
+            "direct_q_torch_mu": 1.1072000006606686,
+            "direct_qkv_torch_mu": 1.0990000000674627
+          }
+        }
+      ],
+      "state_checks": 760,
+      "output_checks": 15,
+      "legacy_tail_output_checks": 1,
+      "errors": [],
+      "max_stage_error": {
+        "direct_q:Q": 0.0,
+        "direct_q:MU": 1.4901161193847656e-08,
+        "direct_q:G": 0.0,
+        "direct_q:VB": 0.0,
+        "direct_q:LZ": 0.0,
+        "direct_q:SG": 0.0,
+        "direct_q:IDX": 0.0,
+        "direct_q:EXCL": 0.0,
+        "direct_kv:Q": 0.0,
+        "direct_kv:MU": 0.0,
+        "direct_kv:G": 0.0,
+        "direct_kv:VB": 0.0,
+        "direct_kv:LZ": 0.0,
+        "direct_kv:SG": 0.0,
+        "direct_kv:IDX": 0.0,
+        "direct_kv:EXCL": 0.0,
+        "direct_qkv:Q": 0.0,
+        "direct_qkv:MU": 1.4901161193847656e-08,
+        "direct_qkv:G": 0.0,
+        "direct_qkv:VB": 0.0,
+        "direct_qkv:LZ": 0.0,
+        "direct_qkv:SG": 0.0,
+        "direct_qkv:IDX": 0.0,
+        "direct_qkv:EXCL": 0.0,
+        "direct_q_torch_mu:Q": 0.0,
+        "direct_q_torch_mu:MU": 0.0,
+        "direct_q_torch_mu:G": 0.0,
+        "direct_q_torch_mu:VB": 0.0,
+        "direct_q_torch_mu:LZ": 0.0,
+        "direct_q_torch_mu:SG": 0.0,
+        "direct_q_torch_mu:IDX": 0.0,
+        "direct_q_torch_mu:EXCL": 0.0,
+        "direct_qkv_torch_mu:Q": 0.0,
+        "direct_qkv_torch_mu:MU": 0.0,
+        "direct_qkv_torch_mu:G": 0.0,
+        "direct_qkv_torch_mu:VB": 0.0,
+        "direct_qkv_torch_mu:LZ": 0.0,
+        "direct_qkv_torch_mu:SG": 0.0,
+        "direct_qkv_torch_mu:IDX": 0.0,
+        "direct_qkv_torch_mu:EXCL": 0.0
+      },
+      "max_output_error": {
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "sum_group_gpu_event_medians_ms": {
+        "baseline": 1.0564799904823303,
+        "direct_q": 1.0013760328292847,
+        "direct_kv": 1.021456003189087,
+        "direct_qkv": 0.9941439926624298,
+        "direct_q_torch_mu": 0.9788959920406342,
+        "direct_qkv_torch_mu": 0.970192015171051
+      },
+      "speedup_vs_baseline": {
+        "baseline": 1.0,
+        "direct_q": 1.0550282369924064,
+        "direct_kv": 1.0342882974733079,
+        "direct_qkv": 1.0627031881497948,
+        "direct_q_torch_mu": 1.0792566310134362,
+        "direct_qkv_torch_mu": 1.088939069753183
+      }
+    },
+    {
+      "head_count": 56,
+      "unique_synthetic_heads": true,
+      "completed": true,
+      "group_reports": [
+        {
+          "heads": [
+            0,
+            11
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 7.331500000873348,
+            "native": 4.733699999633245
+          },
+          "kv_cache_bytes": {
+            "packed": 132612480,
+            "native": 27181440
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.295360028743744,
+            "direct_q": 1.4696159958839417,
+            "direct_kv": 1.3017919659614563,
+            "direct_qkv": 1.4699040055274963,
+            "direct_q_torch_mu": 1.4585919976234436,
+            "direct_qkv_torch_mu": 1.4419040083885193
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.7917499990289798,
+            "direct_q": 1.5999000006559072,
+            "direct_kv": 1.433049999832292,
+            "direct_qkv": 1.5974999996615225,
+            "direct_q_torch_mu": 1.589050000802672,
+            "direct_qkv_torch_mu": 1.5715999998064945
+          }
+        },
+        {
+          "heads": [
+            11,
+            22
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 1.187400001072092,
+            "native": 0.4155999995418824
+          },
+          "kv_cache_bytes": {
+            "packed": 132612480,
+            "native": 27181440
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.2925759553909302,
+            "direct_q": 1.4698399901390076,
+            "direct_kv": 1.293503999710083,
+            "direct_qkv": 1.4556639790534973,
+            "direct_q_torch_mu": 1.4393120408058167,
+            "direct_qkv_torch_mu": 1.4304320216178894
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.5602999992552213,
+            "direct_q": 1.5988500008461415,
+            "direct_kv": 1.4191000000209897,
+            "direct_qkv": 1.5833999996175407,
+            "direct_q_torch_mu": 1.5661999996154918,
+            "direct_qkv_torch_mu": 1.5589499998895917
+          }
+        },
+        {
+          "heads": [
+            22,
+            33
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 1.1795999998867046,
+            "native": 0.39540000034321565
+          },
+          "kv_cache_bytes": {
+            "packed": 132612480,
+            "native": 27181440
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.2879040241241455,
+            "direct_q": 1.4655680060386658,
+            "direct_kv": 1.2859839797019958,
+            "direct_qkv": 1.454591989517212,
+            "direct_q_torch_mu": 1.4372480511665344,
+            "direct_qkv_torch_mu": 1.426863968372345
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.5282000003935536,
+            "direct_q": 1.5925999996397877,
+            "direct_kv": 1.4149500002531568,
+            "direct_qkv": 1.5818499996385071,
+            "direct_q_torch_mu": 1.5637999995306018,
+            "direct_qkv_torch_mu": 1.552349999656144
+          }
+        },
+        {
+          "heads": [
+            33,
+            44
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 1.405200000590412,
+            "native": 0.41849999979604036
+          },
+          "kv_cache_bytes": {
+            "packed": 132612480,
+            "native": 27181440
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.369920015335083,
+            "direct_q": 1.5364800095558167,
+            "direct_kv": 1.379535973072052,
+            "direct_qkv": 1.5435519814491272,
+            "direct_q_torch_mu": 1.5267040133476257,
+            "direct_qkv_torch_mu": 1.5093279480934143
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.6808500004117377,
+            "direct_q": 1.6838500005178503,
+            "direct_kv": 1.520150000033027,
+            "direct_qkv": 1.6887499996300903,
+            "direct_q_torch_mu": 1.6714500006855815,
+            "direct_qkv_torch_mu": 1.649599999836937
+          }
+        },
+        {
+          "heads": [
+            44,
+            55
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 1.2097000017092796,
+            "native": 0.4045999994559679
+          },
+          "kv_cache_bytes": {
+            "packed": 132612480,
+            "native": 27181440
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 1.2950400114059448,
+            "direct_q": 1.4660800099372864,
+            "direct_kv": 1.2952799797058105,
+            "direct_qkv": 1.4576160311698914,
+            "direct_q_torch_mu": 1.4396960139274597,
+            "direct_qkv_torch_mu": 1.433023989200592
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.7508999999336083,
+            "direct_q": 1.6033000001698383,
+            "direct_kv": 1.423149999936868,
+            "direct_qkv": 1.5869999997448758,
+            "direct_q_torch_mu": 1.5677000001232955,
+            "direct_qkv_torch_mu": 1.5610500004186179
+          }
+        },
+        {
+          "heads": [
+            55,
+            56
+          ],
+          "windows": 19,
+          "short_window_reuses_full_workspace": true,
+          "k8_bytes_and_scales_equal": true,
+          "kv_cache_build_ms_including_cold_start": {
+            "packed": 5.022299999836832,
+            "native": 4.6012999991944525
+          },
+          "kv_cache_bytes": {
+            "packed": 12055680,
+            "native": 2471040
+          },
+          "full_call_gpu_event_median_ms": {
+            "baseline": 0.8754560053348541,
+            "direct_q": 0.8388159871101379,
+            "direct_kv": 0.8918880224227905,
+            "direct_qkv": 0.8730399906635284,
+            "direct_q_torch_mu": 0.8177439868450165,
+            "direct_qkv_torch_mu": 0.807455986738205
+          },
+          "full_call_cpu_wall_median_ms": {
+            "baseline": 1.0243500000797212,
+            "direct_q": 0.9645000000091386,
+            "direct_kv": 1.0195000004387111,
+            "direct_qkv": 1.0106999998242827,
+            "direct_q_torch_mu": 0.9427499999219435,
+            "direct_qkv_torch_mu": 0.9313500004282105
+          }
+        }
+      ],
+      "state_checks": 4560,
+      "output_checks": 90,
+      "legacy_tail_output_checks": 6,
+      "errors": [],
+      "max_stage_error": {
+        "direct_q:Q": 0.0,
+        "direct_q:MU": 2.9802322387695312e-08,
+        "direct_q:G": 1.0,
+        "direct_q:VB": 0.001953125,
+        "direct_q:LZ": 7.152557373046875e-07,
+        "direct_q:SG": 6.33008312433958e-08,
+        "direct_q:IDX": 0.0,
+        "direct_q:EXCL": 0.0,
+        "direct_kv:Q": 0.0,
+        "direct_kv:MU": 0.0,
+        "direct_kv:G": 0.0,
+        "direct_kv:VB": 0.0,
+        "direct_kv:LZ": 0.0,
+        "direct_kv:SG": 0.0,
+        "direct_kv:IDX": 0.0,
+        "direct_kv:EXCL": 0.0,
+        "direct_qkv:Q": 0.0,
+        "direct_qkv:MU": 2.9802322387695312e-08,
+        "direct_qkv:G": 1.0,
+        "direct_qkv:VB": 0.001953125,
+        "direct_qkv:LZ": 7.152557373046875e-07,
+        "direct_qkv:SG": 6.33008312433958e-08,
+        "direct_qkv:IDX": 0.0,
+        "direct_qkv:EXCL": 0.0,
+        "direct_q_torch_mu:Q": 0.0,
+        "direct_q_torch_mu:MU": 0.0,
+        "direct_q_torch_mu:G": 0.0,
+        "direct_q_torch_mu:VB": 0.0,
+        "direct_q_torch_mu:LZ": 0.0,
+        "direct_q_torch_mu:SG": 0.0,
+        "direct_q_torch_mu:IDX": 0.0,
+        "direct_q_torch_mu:EXCL": 0.0,
+        "direct_qkv_torch_mu:Q": 0.0,
+        "direct_qkv_torch_mu:MU": 0.0,
+        "direct_qkv_torch_mu:G": 0.0,
+        "direct_qkv_torch_mu:VB": 0.0,
+        "direct_qkv_torch_mu:LZ": 0.0,
+        "direct_qkv_torch_mu:SG": 0.0,
+        "direct_qkv_torch_mu:IDX": 0.0,
+        "direct_qkv_torch_mu:EXCL": 0.0
+      },
+      "max_output_error": {
+        "max_abs": 3.725290298461914e-09,
+        "relative_l2": 3.545681526162525e-09
+      },
+      "sum_group_gpu_event_medians_ms": {
+        "baseline": 7.4162560403347015,
+        "direct_q": 8.246399998664856,
+        "direct_kv": 7.447983920574188,
+        "direct_qkv": 8.254367977380753,
+        "direct_q_torch_mu": 8.119296103715897,
+        "direct_qkv_torch_mu": 8.049007922410965
+      },
+      "speedup_vs_baseline": {
+        "baseline": 1.0,
+        "direct_q": 0.899332562273894,
+        "direct_kv": 0.9957400713296598,
+        "direct_qkv": 0.8984644324868107,
+        "direct_q_torch_mu": 0.9134112053064009,
+        "direct_qkv_torch_mu": 0.9213875935797649
+      }
+    }
+  ],
+  "errors": [],
+  "notes": [
+    "All 6 arms use the same BF16 synthetic native QKV.",
+    "Timing: GPU event medians per group, not whole-video wall.",
+    "JIT cold cache-build cost reported separately.",
+    "No model-resident or production acceptance implied.",
+    "Dynamic group-aligned last window; no hardcoded tail tile count.",
+    "Only real rows compared with legacy full-pad Flat on each short window.",
+    "Short window aliases the original per-head workspace; no extra GPU cache.",
+    "native_torch_mu avoids a materialized FP32 Q and uses ATen FP32 mean.",
+    "Both native-direct Q reductions are opt-in; main default gather unchanged.",
+    "Graph and persistent Direct-Flow DISPATCH are UNRUN."
+  ],
+  "gpu": {
+    "device": "NVIDIA GeForce RTX 5070 Ti",
+    "free_before_gib": 14.687,
+    "total_gib": 15.894
+  },
+  "config": {
+    "mode": "fast",
+    "exact_leaves": 256,
+    "center_group": 1,
+    "tokens": 18723,
+    "heads": 56,
+    "tiles": 16,
+    "query_windows": 19,
+    "window_geometry": [
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 1024,
+        "active_tiles": 16,
+        "padded_rows": 1024
+      },
+      {
+        "valid_rows": 291,
+        "active_tiles": 5,
+        "padded_rows": 320
+      }
+    ],
+    "group_cap": 11,
+    "qkv_dtype": "bfloat16",
+    "rounds": 2,
+    "warmups": 1,
+    "q_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "k_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "v_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "output_atol": 0.0002,
+    "output_rtol": 0.0002,
+    "stage_max_abs": {
+      "MU": 2e-05,
+      "G": 1.0,
+      "VB": 0.01,
+      "LZ": 3e-05,
+      "SG": 3e-05
+    }
+  }
+}
