@@ -1,7 +1,7 @@
 # Direct-Flow with mutable Q/K/V: graph reuse across full 19-window call
 
-Date: 2026-11-12. New branch: \`experiment/flat-directflow-mutable-qkv-20261112\`.
-Base: \`e25868966c16dfa58dc9bc1581decaa18c9c993e\` — archived static-input graph GPU parity PASS.
+Date: 2026-11-12. New branch: `experiment/flat-directflow-mutable-qkv-20261112`.
+Base: `e25868966c16dfa58dc9bc1581decaa18c9c993e` — archived static-input graph GPU parity PASS.
 This slice adds only a research benchmark + CPU static contracts. Default/live production unchanged.
 
 ## Question
@@ -55,16 +55,21 @@ requantization, tail refresh and output copy costs**?
 
 ## Windows PowerShell
 
-Use the same proven \`$py\` CUDA+Triton interpreter.
+Use the same proven `$py` CUDA+Triton interpreter.
 
-\`\`\`powershell
+```powershell
 cd D:\ComfyNodes-flat-split-20261111
 git fetch htrc
 git switch --detach htrc/experiment/flat-directflow-mutable-qkv-20261112
 & $py -m unittest discover -s tools -p test_h3_flat_directflow_mutable_contract.py
 if ($LASTEXITCODE -ne 0) { throw "Mutable-input static contract FAILED" }
 & $py -B tools\benchmark_h3_flat_directflow_mutable_qkv_ab.py --group-heads 11 --rounds 12 --warmups 4
-\`\`\`
+```
 
-ONE result: \`D:\ComfyOutput\H3\math_probe\flat_directflow_mutable_qkv_ab.json\`.
+ONE result: `D:\ComfyOutput\H3\math_probe\flat_directflow_mutable_qkv_ab.json`.
 GPU parity + real copying/eager/replay timings **UNRUN**.
+
+
+## Added executable CPU dataflow gates
+
+In addition to AST checks, the CPU-only suite executes the benchmark's actual `copy_query_window` and `update_kv_stage` functions (extracted from the source via AST). The query test covers varied sequence lengths, head counts and tile capacities, including last-row repetition. A fake deterministic quantizer verifies changed K propagates into K8/KS and changed K/V into the exact tail. These tests do **not** execute Triton or prove CUDA Graph correctness. First-run Python unittest on the user's matching environment and GPU A/B remain **UNRUN**.
