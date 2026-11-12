@@ -433,9 +433,14 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     pos=None
     def gather(key, rows):
         nonlocal pos
+        raw=capture[key][:rows]
+        if positions==list(range(positions[0],positions[0]+len(positions))):
+            # Consecutive native heads: a slice, no index tensor. torch.tensor(...,
+            # device=cuda) is a pageable H2D copy that waits for the whole GPU
+            # queue; it ran once per query window and stalled the host each time.
+            return raw[:,positions[0]:positions[0]+len(positions)].permute(1,0,2).contiguous()
         if pos is None:
             pos=torch.tensor(positions,dtype=torch.long,device=q_cap.device)
-        raw=capture[key][:rows]
         return raw.index_select(1,pos).permute(1,0,2).contiguous()
     if query_staging == "view_copy":
         # Research-only alternate Q packing: one BF16/F16->FP32 copy.
