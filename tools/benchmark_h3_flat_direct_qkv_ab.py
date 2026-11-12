@@ -22,6 +22,7 @@ import torch
 from h3 import htrc_flat_head_batch as batch
 from h3 import htrc_flat_live_backend as live
 from h3 import htrc_flat_model_shadow as shared
+from h3 import htrc_flat_windows as windows
 
 ARMS={
     "baseline":("gather",False),
@@ -132,11 +133,20 @@ def run(args,report):
         int(cfg["kern"].get("group",1))!=1):
         raise ValueError("Fixed fast math must retain exact_leaves=256, group=1")
     nrows=args.tiles*64
-    windows=math.ceil(args.tokens/nrows)
+    query_windows=list(windows.iter_query_windows(
+        args.tokens,args.tiles,tile_rows=int(cfg["tile"]),
+        center_group=int(cfg["kern"].get("group",1))
+    ))
+    window_count=len(query_windows)
     report["config"]={
         "mode":"fast","exact_leaves":256,"center_group":1,
         "tokens":args.tokens,"heads":args.heads,
-        "tiles":args.tiles,"query_windows":windows,
+        "tiles":args.tiles,"query_windows":window_count,
+        "window_geometry":[
+            {"valid_rows":w.valid_rows,"active_tiles":w.tile_count,
+             "padded_rows":w.padded_rows}
+            for w in query_windows
+        ],
         "group_cap":args.group_cap,
         "qkv_dtype":"bfloat16","rounds":args.rounds,"warmups":args.warmups,
         "q_stride":list(cap["q_qhd"].stride()),
@@ -145,12 +155,13 @@ def run(args,report):
         "output_atol":OUTPUT_ATOL,"output_rtol":OUTPUT_RTOL,
         "stage_max_abs":MAX_ABS,
     }
-    full_checks={0,windows//2,windows-1}
+    full_checks={0,window_count//2,window_count-1}
     for count in args.head_cases:
         case={
             "head_count":count,"unique_synthetic_heads":True,
             "completed":False,"group_reports":[],
             "state_checks":0,"output_checks":0,
+            "legacy_tail_output_checks":0,
             "errors":[],"max_stage_error":{},
             "max_output_error":{"max_abs":0.0,"relative_l2":0.0},
         }
@@ -183,15 +194,52 @@ def run(args,report):
             tail=shared._tail(cap,ids)
             samples={arm:[] for arm in ARMS}
             cpus={arm:[] for arm in ARMS}
-            for wi in range(windows):
-                low=wi*nrows
-                high=min(args.tokens,low+nrows)
-                window,valid=capture_window(cap,low,high,nrows)
+            for wi,geometry in enumerate(query_windows):
+                low,high=geometry.start,geometry.end
+                valid=geometry.valid_rows
+                active_tiles=geometry.tile_count
+                window,valid=capture_window(
+                    cap,low,high,geometry.padded_rows
+                )
+                active_ws={
+                    arm:windows.compact_workspace_view(
+                        ws[arm],len(ids),active_tiles,cfg
+                    ) for arm in ARMS
+                }
+                # Compare compact output with original fully padded query
+                # window. Only REAL rows must match bit-for-bit.
+                legacy=None
+                if active_tiles<args.tiles:
+                    old_window,_=capture_window(cap,low,high,nrows)
+                    old_states=prepare(
+                        old_window,ids,cfg,tr,packed,ws["baseline"],
+                        args.tiles,valid,"gather"
+                    )
+                    legacy=output(
+                        old_states,cfg,tr,ws["baseline"],tail
+                    ).reshape(len(ids),nrows,128)[:,:valid].clone()
+                    del old_window,old_states
                 states={
-                    arm:prepare(window,ids,cfg,tr,kv[arm],ws[arm],
-                                args.tiles,valid,mode[0])
+                    arm:prepare(window,ids,cfg,tr,kv[arm],active_ws[arm],
+                                active_tiles,valid,mode[0])
                     for arm,mode in ARMS.items()
                 }
+                if legacy is not None:
+                    compact=output(
+                        states["baseline"],cfg,tr,active_ws["baseline"],tail
+                    ).reshape(len(ids),geometry.padded_rows,128)[:,:valid]
+                    case["legacy_tail_output_checks"]+=1
+                    if not torch.equal(legacy,compact):
+                        case["errors"].append({
+                            "window":wi,"heads":[begin,end],
+                            "arm":"baseline","stage":"compact_vs_legacy",
+                            "max_abs":float(
+                                (legacy-compact).abs().amax().item()
+                            )
+                        })
+                    del legacy,compact
+                    if case["errors"]:
+                        return
                 for arm in ARMS:
                     if arm=="baseline":
                         continue
@@ -210,11 +258,13 @@ def run(args,report):
                 if case["errors"]:
                     return
                 if wi in full_checks:
-                    old=output(states["baseline"],cfg,tr,ws["baseline"],tail).clone()
+                    old=output(
+                        states["baseline"],cfg,tr,active_ws["baseline"],tail
+                    ).clone()
                     for arm in ARMS:
                         if arm=="baseline":
                             continue
-                        other=output(states[arm],cfg,tr,ws[arm],tail)
+                        other=output(states[arm],cfg,tr,active_ws[arm],tail)
                         ok,metrics=gated_output(old,other)
                         case["output_checks"]+=1
                         for field in ("max_abs","relative_l2"):
@@ -232,9 +282,9 @@ def run(args,report):
                 del states
                 for _ in range(args.warmups):
                     for arm,(qmode,_) in ARMS.items():
-                        a=prepare(window,ids,cfg,tr,kv[arm],ws[arm],
-                                  args.tiles,valid,qmode)
-                        output(a,cfg,tr,ws[arm],tail)
+                        a=prepare(window,ids,cfg,tr,kv[arm],active_ws[arm],
+                                  active_tiles,valid,qmode)
+                        output(a,cfg,tr,active_ws[arm],tail)
                         del a
                 for _ in range(args.rounds):
                     # Reverse sequence across adjacent rounds to reduce order bias.
@@ -242,16 +292,18 @@ def run(args,report):
                     for arm in order:
                         qmode,_direct_kv=ARMS[arm]
                         gpu_ms,cpu_ms=gpu_timed_full(
-                            window,ids,cfg,tr,kv[arm],ws[arm],
-                            args.tiles,valid,qmode,tail
+                            window,ids,cfg,tr,kv[arm],active_ws[arm],
+                            active_tiles,valid,qmode,tail
                         )
                         samples[arm].append(gpu_ms)
                         cpus[arm].append(cpu_ms)
                 print(f"DIRECT_QKV case={count} group={begin}:{end} "
-                      f"window={wi+1}/{windows}",flush=True)
-                del window
+                      f"window={wi+1}/{window_count} active_tiles={active_tiles} "
+                      f"valid={valid}",flush=True)
+                del window,active_ws
             gr={
-                "heads":[begin,end],"windows":windows,
+                "heads":[begin,end],"windows":window_count,
+                "short_window_reuses_full_workspace":True,
                 "k8_bytes_and_scales_equal":True,
                 "kv_cache_build_ms_including_cold_start":{
                     "packed":tpacked,"native":tnative},
@@ -316,6 +368,9 @@ def main():
             "Timing: GPU event medians per group, not whole-video wall.",
             "JIT cold cache-build cost reported separately.",
             "No model-resident or production acceptance implied.",
+            "Dynamic group-aligned last window; no hardcoded tail tile count.",
+            "Only real rows compared with legacy full-pad Flat on each short window.",
+            "Short window aliases the original per-head workspace; no extra GPU cache.",
             "Graph and persistent Direct-Flow DISPATCH are UNRUN."
         ]
     }

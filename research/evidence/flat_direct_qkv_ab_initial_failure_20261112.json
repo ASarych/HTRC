@@ -1,0 +1,239 @@
+{
+  "experiment": "flat_direct_qkv_strided_v1",
+  "completed": false,
+  "quality_coefficient_used": false,
+  "fixed_math": true,
+  "real_model": false,
+  "cases": [
+    {
+      "head_count": 4,
+      "unique_synthetic_heads": true,
+      "completed": false,
+      "group_reports": [],
+      "state_checks": 456,
+      "output_checks": 6,
+      "errors": [
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_q",
+          "stage": "MU",
+          "max_abs": 4.34375
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_q",
+          "stage": "G",
+          "max_abs": 231.0
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_q",
+          "stage": "VB",
+          "max_abs": 2.69091796875
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_q",
+          "stage": "LZ",
+          "max_abs": 1.9512176513671875
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_q",
+          "stage": "SG",
+          "max_abs": 0.0015514228725805879
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_q",
+          "stage": "IDX",
+          "max_abs": 836.0
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_q",
+          "stage": "EXCL",
+          "max_abs": 1.0
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_qkv",
+          "stage": "MU",
+          "max_abs": 4.34375
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_qkv",
+          "stage": "G",
+          "max_abs": 231.0
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_qkv",
+          "stage": "VB",
+          "max_abs": 2.69091796875
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_qkv",
+          "stage": "LZ",
+          "max_abs": 1.9512176513671875
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_qkv",
+          "stage": "SG",
+          "max_abs": 0.0015514228725805879
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_qkv",
+          "stage": "IDX",
+          "max_abs": 836.0
+        },
+        {
+          "window": 18,
+          "heads": [
+            0,
+            4
+          ],
+          "arm": "direct_qkv",
+          "stage": "EXCL",
+          "max_abs": 1.0
+        }
+      ],
+      "max_stage_error": {
+        "direct_q:Q": 0.0,
+        "direct_q:MU": 4.34375,
+        "direct_q:G": 231.0,
+        "direct_q:VB": 2.69091796875,
+        "direct_q:LZ": 1.9512176513671875,
+        "direct_q:SG": 0.0015514228725805879,
+        "direct_q:IDX": 836.0,
+        "direct_q:EXCL": 1.0,
+        "direct_kv:Q": 0.0,
+        "direct_kv:MU": 0.0,
+        "direct_kv:G": 0.0,
+        "direct_kv:VB": 0.0,
+        "direct_kv:LZ": 0.0,
+        "direct_kv:SG": 0.0,
+        "direct_kv:IDX": 0.0,
+        "direct_kv:EXCL": 0.0,
+        "direct_qkv:Q": 0.0,
+        "direct_qkv:MU": 4.34375,
+        "direct_qkv:G": 231.0,
+        "direct_qkv:VB": 2.69091796875,
+        "direct_qkv:LZ": 1.9512176513671875,
+        "direct_qkv:SG": 0.0015514228725805879,
+        "direct_qkv:IDX": 836.0,
+        "direct_qkv:EXCL": 1.0
+      },
+      "max_output_error": {
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      }
+    }
+  ],
+  "errors": [],
+  "notes": [
+    "All four arms use the same BF16 synthetic native QKV.",
+    "Timing: GPU event medians per group, not whole-video wall.",
+    "JIT cold cache-build cost reported separately.",
+    "No model-resident or production acceptance implied.",
+    "Graph and persistent Direct-Flow DISPATCH are UNRUN."
+  ],
+  "gpu": {
+    "device": "NVIDIA GeForce RTX 5070 Ti",
+    "free_before_gib": 14.687,
+    "total_gib": 15.894
+  },
+  "config": {
+    "mode": "fast",
+    "exact_leaves": 256,
+    "center_group": 1,
+    "tokens": 18723,
+    "heads": 56,
+    "tiles": 16,
+    "query_windows": 19,
+    "group_cap": 11,
+    "qkv_dtype": "bfloat16",
+    "rounds": 2,
+    "warmups": 1,
+    "q_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "k_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "v_stride": [
+      128,
+      2396544,
+      1
+    ],
+    "output_atol": 0.0002,
+    "output_rtol": 0.0002,
+    "stage_max_abs": {
+      "MU": 2e-05,
+      "G": 1.0,
+      "VB": 0.01,
+      "LZ": 3e-05,
+      "SG": 3e-05
+    }
+  }
+}
