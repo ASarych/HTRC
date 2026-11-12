@@ -96,6 +96,13 @@ class LiveDirectFlowContract(unittest.TestCase):
         self.assertIn('fixed_exact_leaves":256',graph)
         self.assertIn('status":"FAIL_CLOSED"',graph)
 
+    def test_cross_stream_staging_dependency(self):
+        graph=GRAPH.read_text(encoding="utf-8")
+        self.assertIn('torch.cuda.current_stream(dev).wait_event(previous)',graph)
+        self.assertIn('completed.record(torch.cuda.current_stream(dev))',graph)
+        self.assertIn('pending.synchronize()',graph)
+        self.assertIn('torch.cuda.synchronize(dev)',graph)
+
     def test_single_report_no_tensor_dumps_or_workflow_mutation(self):
         graph=GRAPH.read_text(encoding="utf-8")
         self.assertIn("flat_directflow_real_h3_ab.json",graph)

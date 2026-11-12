@@ -24,7 +24,7 @@ from . import htrc_flat_windows as windows
 
 _LOCK = threading.RLock()
 _SESSIONS = {}
-_STATE = {"geometry": None, "verified": False, "reports": [], "first_source": None}
+_STATE = {"geometry": None, "verified": False, "reports": [], "last_event": None}
 _MIB = 1 << 20
 
 
@@ -185,8 +185,13 @@ def _write_report(payload):
 def clear_session_cache():
     """Explicit best-effort release when model/geometry is retired."""
     with _LOCK:
+        # Graph pools must never be freed while GPU replay is still running
+        # on a previously used CUDA stream.
+        pending = _STATE.get("last_event")
+        if pending is not None:
+            pending.synchronize()
         _SESSIONS.clear()
-        _STATE.update(geometry=None, verified=False, reports=[], first_source=None)
+        _STATE.update(geometry=None, verified=False, reports=[], last_event=None)
 
 
 def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
@@ -235,6 +240,11 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         if _STATE["geometry"] != geom:
             clear_session_cache()
             _STATE["geometry"] = geom
+        previous = _STATE.get("last_event")
+        if previous is not None:
+            # No CPU sync in steady-state: GPU waits for the last writer
+            # before a different stream can overwrite graph-owned staging.
+            torch.cuda.current_stream(dev).wait_event(previous)
         baseline_reserved = int(torch.cuda.memory_reserved(dev))
         verify = not bool(_STATE["verified"])
         rows = []
@@ -344,6 +354,9 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "free_bytes":torch.cuda.mem_get_info(dev)[0],
                     "ts_perf":time.perf_counter(),
                 })
+            completed = torch.cuda.Event()
+            completed.record(torch.cuda.current_stream(dev))
+            _STATE["last_event"] = completed
             return output.unsqueeze(0)
         except BaseException as exc:
             # One JSON even on a failed gate; keep the original exception.
@@ -361,7 +374,9 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                 })
             except Exception:
                 pass
-            # Never silently substitute dense/Sol or default Flat output.
+            # Failed or partly launched graph kernels must finish before
+            # freeing persistent staging. Never silently fall back.
+            torch.cuda.synchronize(dev)
             clear_session_cache()
             del output
             raise

@@ -29,6 +29,9 @@ APL_HTRC_FLAT_DISPATCH=graph is set before ComfyUI starts.
 - The model's real post-RoPE Q/K/V are native BHSD GPU sources; each graph
   uses its own **stable staging** K/V and Q-window tensors. No graph owns
   model weights, raw model QKV pointers, or a cross-step computed K8.
+- CUDA event dependency orders replay across different caller streams; a
+  geometry change waits for the previous GPU writer before releasing the
+  graph pool, with no new steady-state CPU synchronization.
 - Graph sessions keyed by sequence geometry and head-group size persist
   for reuse across sequential blocks/timesteps; one bounded cache is
   cleared on geometry change or failure. Device-wide RLock avoids concurrent
