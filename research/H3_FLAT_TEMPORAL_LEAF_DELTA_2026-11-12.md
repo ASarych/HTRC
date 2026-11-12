@@ -83,3 +83,48 @@ try {
 - **Live H3/production:** unchanged; no integration, no quality coefficient, no global BEST promotion.
 
 **Decision gate:** a `completed=true` synthetic feasibility JSON is **not** a performance or quality PASS. Report any `strict_bitwise_identity_pass=false` as a numerical discrepancy; decide next step only from observed output errors, IDX stability, update overhead and especially **real consecutive step** behavior.
+
+
+## RTX 5070 Ti GPU result — 2026-11-12 (recorded, experiment NO-GO)
+
+One uploaded combined report was completed with `errors=[]` and real
+captured H3 QKV for **state A**, while **state B is synthetic** in each
+scenario. No new H3 weights were loaded and no actual consecutive
+denoising-step comparison or future prediction was run.
+Evidence: [single combined JSON](evidence/flat_temporal_leaf_delta_ab_20261112.json).
+
+| Synthetic B scenario | Fresh GPU ms | Observed mean-delta GPU ms | Delta slowdown | Exact reusable centre-leaf pairs | Selected-ID memberships replaced | Ordered IDX positions changed | Final rel-L2 / max-abs |
+|---|---:|---:|---:|---:|---:|---:|---|
+| dense_drift | 0.704640 | 11.275104 | 16.00x | 0.00% | 1.5137% | 48.9624% | 0.001941 / 0.52035 |
+| sparse_drift | 0.423136 | 5.718400 | 13.51x | 89.04% | 0.1648% | 9.0576% | 0.000472 / 0.12281 |
+| uniform_leaf_drift | 0.425440 | 4.877824 | 11.47x | 0.00% | 1.6235% | 50.1892% | 0.001493 / 0.20760 |
+
+All three: `strict_bitwise_identity_pass=false`,
+`eligible_for_quality_preserving_integration=false`, `all_cases_bit_exact=false`.
+Timing covers post-MU/post-K8 stats+selection+Tile+Merge, NOT
+projections, K8 preparation, model residency or full H3. Observed
+mean-delta is an unoptimized approximate probe (not a Triton sparse
+update), so this is a **NO-GO for this specific method**, not a
+disproof of every temporal structure-prediction approach.
+
+**Promising measured structure signal only:** sparse_drift had
+45/64 centres with identical selected-leaf membership, with only 27
+removal + 27 addition memberships (oracle membership patch 216 bytes
+versus full 65,536-byte IDX for this small window). But the exact
+ordered IDX position patch required 11,872 bytes (9.06% positions);
+dense/uniform ordered patches replaced nearly half the positions.
+Patch computation itself requires a fresh IDX in the present probe;
+there is no selection-computation saving or online predictor.
+
+For 56 heads and all query windows in ONE H3 block, persistent
+G/VB/LZ/SG would cost an estimated **2.369 GiB**, whereas IDX alone
+is ~**2.488 MiB** (excluding further cache/memory). Persisting full
+summary state across 49 blocks or steps is not a 16 GiB solution.
+
+**Owner research direction preserved:** test temporal leaf-set stability
+on TWO ACTUAL consecutive post-RoPE H3 QKV captures of the SAME block
+and prompt (same geometry), before proposing an online sparse-update
+kernel or future-state predictor. The measured old-state/synthetic-B
+oracle is not such a test. Do not rerun the rejected observed
+mean-leaf-delta candidate without a new exactness mechanism.
+No production integration, no quality coefficient, no BEST promotion.
