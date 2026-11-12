@@ -1,0 +1,123 @@
+{
+  "experiment": "flat_directflow_mutable_qkv_full_group_v1",
+  "completed": true,
+  "cases": [
+    {
+      "head_count": 11,
+      "window_count": 19,
+      "graph_count": 2,
+      "different_qkv_banks": 2,
+      "eager_vs_replay_bit_exact": true,
+      "distinct_bank_outputs": true,
+      "status": "PASS_NUMERIC"
+    }
+  ],
+  "errors": [],
+  "fixed_math": true,
+  "exact_leaves": 256,
+  "quality_coefficient_used": false,
+  "real_model": false,
+  "distinct_synthetic_input_banks": 2,
+  "notes": [
+    "ALL Q/K/V change between source banks A and B; output must change.",
+    "Graph addresses are fixed STAGING buffers, NOT fixed source addresses.",
+    "K8/KS refreshed once per attention call; tail K/V updated too.",
+    "One full-window graph + optional short-window graph are reused across every query window.",
+    "Timing covers 19 windows per 11-head group, K/V copy, Q copies, K8 quant, output copies; graph capture excluded and reported separately.",
+    "Fresh eager consumes native input directly and rebuilds its K8/KS each call; both arms use identical Flat math.",
+    "Eager-to-graph equality is bit exact for full output, K8, KS and selected MU/IDX/EXCL.",
+    "CUDA Graph private-pool and model-resident headroom still require real H3 evaluation.",
+    "This report is NOT a model/video benchmark or production acceptance."
+  ],
+  "gpu": {
+    "device": "NVIDIA GeForce RTX 5070 Ti",
+    "free_before_gib": 14.6865234375,
+    "total_gib": 15.894287109375
+  },
+  "graph_memory": {
+    "before_reserved_mib": 444.0,
+    "after_reserved_mib": 608.0,
+    "signed_reserved_delta_mib": 164.0,
+    "peak_reserved_mib": 608.0,
+    "peak_above_precapture_reserved_mib": 164.0,
+    "before_free_mib": 14539.0,
+    "after_free_mib": 14363.0,
+    "live_stage_q_bytes": 3784704,
+    "live_stage_kv_bytes": 105447936,
+    "live_graph_count": 2,
+    "captures_wall_ms": 3.467399999863119
+  },
+  "config": {
+    "tokens": 18723,
+    "heads_per_group": 11,
+    "window_tiles": 16,
+    "tile_rows": 64,
+    "query_windows": 19,
+    "graph_geometries": [
+      {
+        "active_tiles": 16,
+        "valid_rows": 1024
+      },
+      {
+        "active_tiles": 5,
+        "valid_rows": 291
+      }
+    ],
+    "q_mode": "native_torch_mu",
+    "kv_mode": "native_direct",
+    "quant_key_refresh_each_call": true,
+    "tail_refresh_each_call": true,
+    "q_window_refresh_each_replay": true,
+    "native_qkv_banks": 2,
+    "source_bank_total_bytes": 316343808,
+    "exact_leaves": 256,
+    "center_group": 1,
+    "rounds": 12,
+    "warmups": 4,
+    "source_geometry": "synthetic_11_or_custom_distinct_bf16_heads"
+  },
+  "capture_wall_ms": 3.467399999863119,
+  "parity_checks": {
+    "0": {
+      "K8": true,
+      "KS": true,
+      "0:MU": true,
+      "0:IDX": true,
+      "0:EXCL": true,
+      "18:MU": true,
+      "18:IDX": true,
+      "18:EXCL": true,
+      "OUTPUT_FULL": true
+    },
+    "1": {
+      "K8": true,
+      "KS": true,
+      "0:MU": true,
+      "0:IDX": true,
+      "0:EXCL": true,
+      "18:MU": true,
+      "18:IDX": true,
+      "18:EXCL": true,
+      "OUTPUT_FULL": true
+    }
+  },
+  "different_banks_produce_different_outputs": true,
+  "full_attention_call_group_median_ms": {
+    "fresh_native_eager": {
+      "gpu_event_ms": 15.406544208526611,
+      "cpu_submit_ms": 14.191549999850395,
+      "cpu_sync_wall_ms": 15.614199999617995
+    },
+    "mutable_staged_graph": {
+      "gpu_event_ms": 14.00318431854248,
+      "cpu_submit_ms": 1.9124500004181755,
+      "cpu_sync_wall_ms": 14.376999999512918
+    }
+  },
+  "speedups": {
+    "gpu_event": 1.1002171976073938,
+    "cpu_sync_wall": 1.086054114220421,
+    "cpu_submit": 7.420612301888822
+  },
+  "capture_break_even_full_attention_calls_by_sync_wall": 3
+}

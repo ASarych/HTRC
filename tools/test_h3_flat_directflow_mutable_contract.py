@@ -122,8 +122,15 @@ class MutableGraphContract(unittest.TestCase):
             def __getitem__(self,grid):
                 def run(kbf,k8,ks,n,d,h,br,sh,ss,sd,*,num_warps):
                     src=kbf.float().reshape(h,n,d)
-                    k8.copy_(torch.where(src>=0,1,-1).to(torch.int8))
-                    ks.copy_(src.abs().mean(dim=2))
+                    # The real native quantizer receives flattened OUTPUT
+                    # pointers: [H*N,D] K8 and [H*N] KS. The fake must
+                    # preserve that ABI, not copy unflattened [H,N,D].
+                    if tuple(k8.shape)!=(h*n,d) or tuple(ks.shape)!=(h*n,):
+                        raise AssertionError("Unexpected K8/KS kernel pointer layout")
+                    k8.copy_(torch.where(
+                        src>=0,1,-1
+                    ).to(torch.int8).reshape(h*n,d))
+                    ks.copy_(src.abs().mean(dim=2).reshape(h*n))
                 return run
         tri=SimpleNamespace(
             _quant_key_int8_native=FakeQuant(),
