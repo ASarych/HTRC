@@ -1,0 +1,71 @@
+{
+  "kind": "shape_matched_synthetic_qkv_microprofile",
+  "shape": {
+    "tokens": 18723,
+    "heads": 56,
+    "dim": 128,
+    "dtype": "bf16",
+    "tiles": 16,
+    "tile_rows": 64,
+    "group_cap": 11
+  },
+  "config": {
+    "mode": "fast",
+    "exact_leaves": 256,
+    "center_group": 1,
+    "triton_cache": "D:\\ComfyCache\\triton"
+  },
+  "attention_prep_calls": 114,
+  "groups": 6,
+  "windows": 19,
+  "total_profile_wall_ms": 1419.801,
+  "kv_cache_build_per_group": {
+    "total_ms": 1026.761,
+    "mean_ms": 171.127,
+    "p50_ms": 0.406,
+    "p95_ms": 1020.667
+  },
+  "workspace_alloc_per_group": {
+    "total_ms": 2.463,
+    "mean_ms": 0.411,
+    "p50_ms": 0.088,
+    "p95_ms": 2.008
+  },
+  "prepare_total_per_window_group": {
+    "total_ms": 366.0,
+    "mean_ms": 3.211,
+    "p50_ms": 1.158,
+    "p95_ms": 1.922
+  },
+  "prepare_stages_per_window_group": {
+    "query_gather_gpu_mu": {
+      "total_ms": 98.231,
+      "mean_ms": 0.862,
+      "p50_ms": 0.338,
+      "p95_ms": 1.103
+    },
+    "kv_cache_hit": {
+      "total_ms": 3.536,
+      "mean_ms": 0.031,
+      "p50_ms": 0.03,
+      "p95_ms": 0.037
+    },
+    "leaf_stats": {
+      "total_ms": 60.362,
+      "mean_ms": 0.529,
+      "p50_ms": 0.396,
+      "p95_ms": 0.421
+    },
+    "rowmax_topk_exclusion": {
+      "total_ms": 200.462,
+      "mean_ms": 1.758,
+      "p50_ms": 0.368,
+      "p95_ms": 0.431
+    }
+  },
+  "stage_sum_ms_instrumented": 362.591,
+  "gpu_free_before_gib": 14.687,
+  "gpu_free_after_gib": 13.612,
+  "gpu_total_gib": 15.894,
+  "caveat": "Synthetic zero values; shape/path are representative, but cache state, allocator pressure, real data and whole-model overlap differ. Per-stage timers synchronize CUDA and add diagnostic overhead."
+}

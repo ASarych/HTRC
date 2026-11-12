@@ -1,0 +1,221 @@
+[INFO] setup plugin alembic.autogenerate.schemas
+[INFO] setup plugin alembic.autogenerate.tables
+[INFO] setup plugin alembic.autogenerate.types
+[INFO] setup plugin alembic.autogenerate.constraints
+[INFO] setup plugin alembic.autogenerate.defaults
+[INFO] setup plugin alembic.autogenerate.comments
+[WARNING] On windows we are currently forcing single GPU mode in ComfyUI due to a Nvidia related issue, if you want to disable this use: --cuda-device all
+[INFO] Adding extra search path text_encoders <MODEL_STORE>\text_encoders
+[INFO] Adding extra search path text_encoders <MODEL_STORE>\text_encoders\split_files\text_encoders
+[INFO] Adding extra search path diffusion_models <MODEL_STORE>\diffusion_models
+[INFO] Adding extra search path diffusion_models <MODEL_STORE>\relayvsr\RelayVSR_X2
+[INFO] Adding extra search path vae <MODEL_STORE>\vae
+[INFO] Adding extra search path vae <MODEL_STORE>\split_files\vae
+[INFO] Adding extra search path vae <MODEL_STORE>\relayvsr\RelayVSR_X2
+[INFO] Adding extra search path model_patches <MODEL_STORE>\model_patches
+[INFO] Adding extra search path loras <MODEL_STORE>\loras
+[INFO] Adding extra search path clip_projections <MODEL_STORE>\clip_projections
+[INFO] Setting output directory to: <COMFY_OUTPUT>\H3\backend
+[INFO] Found comfy_kitchen backend ascend: {'available': False, 'disabled': False, 'unavailable_reason': "torch-npu is not installed: No module named 'torch_npu'", 'capabilities': []}
+[INFO] Found comfy_kitchen backend triton: {'available': True, 'disabled': True, 'unavailable_reason': None, 'capabilities': ['adaln', 'apply_rope', 'apply_rope1', 'apply_rope1_', 'apply_rope_', 'apply_rope_split_half', 'apply_rope_split_half1', 'apply_rope_split_half1_', 'apply_rope_split_half_', 'dequantize_nvfp4', 'dequantize_per_tensor_fp8', 'int8_linear', 'na3d', 'quantize_and_rotate_rowwise', 'quantize_int8_rowwise', 'quantize_mxfp8', 'quantize_nvfp4', 'quantize_per_tensor_fp8', 'rms_adaln', 'rms_rope', 'rms_rope1', 'rms_rope1_', 'rms_rope_', 'rms_rope_split_half', 'rms_rope_split_half1', 'rms_rope_split_half1_', 'rms_rope_split_half_', 'w4a8_int8_linear']}
+[INFO] Found comfy_kitchen backend cuda: {'available': True, 'disabled': False, 'unavailable_reason': None, 'capabilities': ['adaln', 'apply_rope', 'apply_rope1', 'apply_rope1_', 'apply_rope_', 'apply_rope_split_half', 'apply_rope_split_half1', 'apply_rope_split_half1_', 'apply_rope_split_half_', 'closest_hit_on_mesh', 'closest_point_on_mesh', 'connected_components', 'convrot_w4a4_linear', 'delaunay3d', 'dequantize_convrot_w4a4_weight', 'dequantize_int8_convrot_weight', 'dequantize_int8_convrot_weight_dtype', 'dequantize_int8_simple', 'dequantize_int8_simple_dtype', 'dequantize_nvfp4', 'dequantize_per_tensor_fp8', 'dequantize_w4a8_int8_weight', 'edge_collapse_checks', 'fp16_conv3d', 'fp16_conv3d_out', 'fp16_linear', 'gemv_awq_w4a16', 'group_norm_silu_pad3d', 'group_norm_silu_pad3d_out', 'group_norm_stats3d', 'int8_linear', 'mesh_bvh', 'min_cut', 'na3d', 'prepare_int4_weight_for_int8_linear', 'quantize_and_rotate_rowwise', 'quantize_convrot_w4a4_weight', 'quantize_int8_convrot_weight', 'quantize_int8_rowwise', 'quantize_int8_tensorwise', 'quantize_mxfp8', 'quantize_nvfp4', 'quantize_per_tensor_fp8', 'quantize_svdquant_w4a4', 'quantize_w4a8_int8_weight', 'rms_adaln', 'rms_rope', 'rms_rope1', 'rms_rope1_', 'rms_rope_', 'rms_rope_split_half', 'rms_rope_split_half1', 'rms_rope_split_half1_', 'rms_rope_split_half_', 'rotate_int8_convrot_weight', 'scaled_mm_nvfp4', 'scaled_mm_svdquant_w4a4', 'sol_attn', 'stochastic_rounding_fp8', 'w4a8_int8_linear', 'w4a8_packed_linear', 'window_attention']}
+[INFO] Found comfy_kitchen backend eager: {'available': True, 'disabled': False, 'unavailable_reason': None, 'capabilities': ['adaln', 'apply_rope', 'apply_rope1', 'apply_rope1_', 'apply_rope_', 'apply_rope_split_half', 'apply_rope_split_half1', 'apply_rope_split_half1_', 'apply_rope_split_half_', 'convrot_w4a4_linear', 'dequantize_convrot_w4a4_weight', 'dequantize_int8_convrot_weight', 'dequantize_int8_convrot_weight_dtype', 'dequantize_int8_embedding', 'dequantize_int8_simple', 'dequantize_int8_simple_dtype', 'dequantize_mxfp8', 'dequantize_nvfp4', 'dequantize_per_tensor_fp8', 'dequantize_w4a8_int8_weight', 'fp16_conv3d', 'fp16_conv3d_out', 'fp16_linear', 'gemv_awq_w4a16', 'group_norm_silu_pad3d', 'group_norm_silu_pad3d_out', 'group_norm_stats3d', 'int8_linear', 'int8_linear_modulated', 'int8_linear_rms_modulated', 'na3d', 'prepare_int4_weight_for_int8_linear', 'quantize_and_rotate_rowwise', 'quantize_convrot_w4a4_weight', 'quantize_int8_convrot_weight', 'quantize_int8_rowwise', 'quantize_int8_tensorwise', 'quantize_mxfp8', 'quantize_nvfp4', 'quantize_per_tensor_fp8', 'quantize_svdquant_w4a4', 'quantize_w4a8_int8_weight', 'rms_adaln', 'rms_gated_residual', 'rms_rope', 'rms_rope1', 'rms_rope1_', 'rms_rope_', 'rms_rope_split_half', 'rms_rope_split_half1', 'rms_rope_split_half1_', 'rms_rope_split_half_', 'rotate_int8_convrot_weight', 'scaled_mm_mxfp8', 'scaled_mm_nvfp4', 'scaled_mm_svdquant_w4a4', 'sol_attn', 'stochastic_rounding_fp8', 'w4a8_int8_linear', 'w4a8_packed_linear', 'window_attention']}
+[INFO] Found comfy_kitchen backend hip: {'available': False, 'disabled': False, 'unavailable_reason': 'PyTorch ROCm/HIP runtime not available', 'capabilities': []}
+[INFO] Checkpoint files will always be loaded safely.
+[INFO] Total VRAM 16276 MB, total RAM 32691 MB
+[INFO] pytorch version: 2.12.1+cu130
+[INFO] Set vram state to: NORMAL_VRAM
+[INFO] Disabling smart memory management
+[INFO] Device: cuda:0 NVIDIA GeForce RTX 5070 Ti : cudaMallocAsync
+[INFO] Using async weight offloading with 2 streams
+[INFO] Using pytorch attention
+[INFO] Python version: 3.13.12 (main, Feb 12 2026, 00:38:53) [MSC v.1944 64 bit (AMD64)]
+[INFO] ComfyUI version: 0.45.0
+[INFO] comfy-aimdo version: 0.6.0
+[INFO] comfy-kitchen version: 0.2.41
+[WARNING] Dynamic vram disabled with argument. If you have any issues with dynamic vram enabled please give us a detailed reports as this argument will be removed soon. If you use gguf we recommend keeping dynamic vram enabled and using native ComfyUI model formats instead. ComfyUI native formats like fp8, int8 and w4a8 will be faster even if they are larger than your memory.
+[INFO] Setting temp directory to: <COMFY_OUTPUT>\H3\temp\temp
+[INFO] comfyui-frontend-package version: 1.58.5
+[INFO] comfyui-workflow-templates version: 0.11.106
+[INFO] comfyui-embedded-docs version: 0.5.16
+[INFO] comfy-aimdo version: 0.6.0
+[INFO] comfy-kitchen version: 0.2.41
+[INFO] [Prompt Server] web root: <USER_HOME>\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\.venv\Lib\site-packages\comfyui_frontend_package\static
+[INFO] Asset seeder disabled
+[INFO] No OpenGL_accelerate module loaded: No module named 'OpenGL_accelerate'
+[INFO] Skipping ComfyNodes-HTRC-RT-20261024-133648 due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyNodes-HTRC-RT-fullq-20261024-141038 due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3BlockCanary due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3BlockTimer due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3DirectLoader due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3HybridLoader due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3InterModelHandoff due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3Krea2MmapLoader due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3OverlapPrepare due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3Profiler due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3ReferenceMemoryProfiler due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3ReferenceRelease due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3StageProfiler due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3StageReadAhead due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-H3VideoVAEHandoff due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-KleinExperiments due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-KleinOptimizer due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-AnimeProductionLine-MemoryBudgetObserver due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-ClipProj due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-GGUF due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-MiniMax-H3-SPEED due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-MiniMaxH3TextEncoders due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-ppm due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-SolAttn due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping ComfyUI-UnloadModels due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping comfyui_controlnet_aux due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping FastWanQADComfy due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping LLaDa-Image-ComfyUI-private due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO] Skipping websocket_image_save.py due to disable_all_custom_nodes and whitelist_custom_nodes
+[INFO]
+Import times for custom nodes:
+[INFO]    0.0 seconds: <USER_HOME>\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\custom_nodes\ComfyUI-HyperFlow-Flash
+[INFO]    0.0 seconds: <USER_HOME>\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\custom_nodes\ComfyNodes
+[INFO]
+[INFO] Disabling intermediate node cache.
+[INFO] ComfyUI is developed by Comfy Org. We also offer commercial products to deploy ComfyUI as scalable cloud endpoints. Visit platform.comfy.org/ascii for more information.
+[INFO] Starting server
+
+[INFO] To see the GUI go to: http://127.0.0.1:8188
+[INFO] got prompt
+[WARNING] APL H3 VideoVAE Windows safe loader: copied 118 encoder tensors out of safetensors file-backed storage
+<USER_HOME>\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\custom_nodes\ComfyNodes\tools\apl_h3_mmap.py:329: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\torch\csrc\utils\tensor_new.cpp:1582.)
+  tensor = torch.frombuffer(view, dtype=dtype).reshape(info["shape"])
+[INFO] Found quantization metadata version 1
+[INFO] Using MixedPrecisionOps for text encoder
+[INFO] Model storage policy: fast_disk=False paths=[]
+[INFO] CLIP/text encoder model load device: cuda:0, offload device: cpu, current: meta, dtype: torch.float16
+[INFO] Requested to load MiniMaxH3TEModel_
+[INFO] loaded completely;  3409.53 MB loaded, full load: True
+[WARNING] APL reference encoder pinned: device=cuda:0 resident=3.12 GiB; Comfy unload disabled until ReferenceRelease
+[WARNING] APL P-H3 4B encoder: read-only mmap, full resident pin, encode load re-entry bypassed
+[INFO] Requested to load Module
+[INFO] loaded completely;  343.97 MB loaded, full load: True
+[WARNING] APL Reference release Windows direct-drop: removed 0 managed patcher entries without quantized tensor migration
+[WARNING] APL Reference release complete: managed Krea2/ClipProj refs severed; underlying_models=1 release_calls=1 elapsed=0.285s
+[INFO] [H3] startup prepare started: minimax_h3_ref2va_hyperflow_flash_14b-nvfp4_from_int8.safetensors
+[WARNING] APL H3 MiniMax compatibility: status=not-needed applied=False affected=False
+[INFO] [H3] startup file-cache prefetch: ok=True bytes=2.11 GiB elapsed=1.62s
+[INFO] [H3] startup prepare ready: 1.62s host_storage=mmap host_bytes=10.59 GiB
+[WARNING] APL H3 prepared overlap ready: checkpoint=minimax_h3_ref2va_hyperflow_flash_14b-nvfp4_from_int8.safetensors elapsed=1.623s index=0.008s cache_hit=True mmap_views=0.022s physical=10.59 GiB startup_prefetch_blocks=2 startup_bytes=2.11 GiB native_prefetch=True prefetch_api=1.075s rolling_lookahead=3 ram_guard=2.50 GiB sidecar=<COMFY_OUTPUT>\cache\apl_h3\minimax_h3_ref2va_hyperflow_flash_14b-nvfp4_from_int8.safetensors.d44b1fa542c2693bb80d7302.json
+[WARNING] APL H3 prepared loader consuming overlap cache: checkpoint=minimax_h3_ref2va_hyperflow_flash_14b-nvfp4_from_int8.safetensors prep=1.621s wait=1.621s indexed_physical=10.59 GiB model_accounting=authoritative
+[INFO] [H3] H3 model construction started: minimax_h3_ref2va_hyperflow_flash_14b-nvfp4_from_int8.safetensors
+[WARNING] APL H3 Hybrid Loader: mmap opened minimax_h3_ref2va_hyperflow_flash_14b-nvfp4_from_int8.safetensors; tensors=1043 live_mmaps=2
+[WARNING] APL H3 HyperFlow detected: variant=ref2va weights=int8_convrot blocks=49 dropped=[9] factorized_blocks=19
+[INFO] Found quantization metadata version 1
+[INFO] Detected mixed precision quantization
+[INFO] Using mixed precision operations
+[INFO] Native ops: nvfp4, convrot_w4a4, float8_e5m2, w6a8_int8, asym_w4a8_int8, float8_e4m3fn, mxfp8, int8_tensorwise
+[INFO] model weight dtype torch.bfloat16, manual cast: torch.bfloat16
+[INFO] model_type FLOW_AV
+[INFO] Model storage policy: fast_disk=False paths=[]
+[WARNING] APL H3 HyperFlow installed: {'variant': 'ref2va', 'weights': 'int8_convrot', 'blocks': 49, 'factorized_blocks': 19, 'lowrank_chunk_rows': 0, 'fp32_restored': 16, 'int8_row_chunked': 0, 'steps': 6}
+[WARNING] APL H3 Hybrid footprint logical: total=10.59 GiB blocks=24.56 GiB non-block=0.00 GiB median_block=738.2 MiB; physical NVFP4: total=10.59 GiB blocks=9.08 GiB non-block=1.50 GiB median_block=209.9 MiB reserve=3072 MiB
+[WARNING] APL H3 Hybrid Loader ready: mmap backing + native-NVFP4 direct compact transfer + physical residency accounting + guarded circular CUDA lookahead; reserve=3072 MiB prefetch=True max_window=4 wrap_start=30 live_mmaps=2 reusable_slots=False; sibling models preserved=True; premerged LoRA optional, not required
+[INFO] [H3] H3 model construction ready: 0.68s nonblock=1.50 GiB block0=209.9 MiB
+[WARNING] APL H3 dynamic memory budget installed: clone-safe shared arbiter; fixed resident target OFF; adaptive RAM+VRAM byte target ON; residency_policy=adaptive-strided; structural ceiling=3; transfer+compute settlement=nonblocking; mmap host backing trim=ON
+[WARNING] APL H3 attention runtime v1 installed: backend=htrc_flat_gpu exact_kv=False
+[WARNING] APL H3 MLP runtime installed: blocks=30 fused=auto chunked_fallback=on rollback=APL_H3_FUSED_MLP=0/APL_H3_CHUNKED_MLP=0
+[WARNING] APL H3 fused modulation installed: blocks=49 exact_bf16_rounding=true rollback=APL_H3_FUSED_MODULATION=0
+[WARNING] APL H3 final layer chunking installed: fp32_hidden_cap=256 MiB PDD-compatible=true rollback=APL_H3_CHUNKED_FINAL_LAYER=0
+[WARNING] APL H3 block residency armed: elapsed=0.900s resident_nonblock=1.50 GiB streamed_blocks=9.08 GiB circular_window<=4 prefetch=True wrap_start=30 guard=512 MiB resident_modules=28 resident_params=38 direct_quant_hits=0 direct_storage=0.00 GiB direct_fallbacks=0 native_convert_bypass_hits=0 unknown_convert_fallbacks=0 Comfy request ignored (requested_usable=0.00 GiB full_load=False)
+[WARNING] APL H3 mmap working-set trim active: first_block=0 trimmed=186.68 MiB; mapping remains valid and will fault pages back on later cycles
+[WARNING] APL H3 startup VRAM preload ready: elapsed=0.633s initial=[] added=[0, 1, 2] resident=[0, 1, 2] resident_bytes=0.81 GiB target=0.81 GiB free=12.26 GiB ram_state=hold
+[INFO] [H3] startup VRAM preload: 0.63s added=3 resident=3
+[WARNING] APL H3 post-reference foreground arm ready: elapsed=1.535s prefetched=[] startup_added=[0, 1, 2] resident=[0, 1, 2] free_after=12.26 GiB managed=1.91 GiB loaded_nonblock=1.50 GiB required_block=0.40 GiB
+[INFO] [H3] post-reference H3 arm: prefetched=[] startup_added=[0, 1, 2]
+[WARNING] APL H3 cycle-aware prefetch policy installed: total_cycles=6 submit_limit=4 requested=4 final_cycle_wrap=OFF cycle_timing=<COMFY_OUTPUT>\H3\logs\HyperFlow_20261112-002611-059.jsonl file_prefetch=rolling file_lookahead=3 ram_guard_gib=2.50 vae_prefetch_trigger_cycle=3
+[INFO] [H3] denoise runtime ready: cycles=6 submit_limit=4
+[WARNING] APL H3 production runtime applied: attention=apl_attention_runtime_v1:htrc_flat_gpu dense_fallback=attention_comfy_kitchen_int8 cycles=6 initial_blocks=0 submit_limit=4
+[INFO] [H3] runtime ready: attention=apl_attention_runtime_v1:htrc_flat_gpu cycles=6 reserve policy active
+[INFO] Requested to load MiniMaxH3
+
+  0%|          | 0/6 [00:00<?, ?it/s][INFO] [H3] first-cycle file-cache snapshot: completed=3/3 touched=0.53 GiB running=True
+[WARNING] APL H3 block reserve/mode: source=tools/h3_memory_math.py backend=htrc_flat_gpu tokens=18723 htrc_exact_rows=n/a htrc_exact_authority=n/a attention=2.12 GiB fc1_chunk/full=0.50/1.00 GiB mlp_out=0.19 GiB fused_in_chunk/full=0.07/0.14 GiB reserve_chunk/full=2.31/2.31 GiB preflight_initial=11.61 GiB preflight_after=11.61 GiB chosen=fused_chunked
+[WARNING] APL H3 circular streamer entered cycle: block=0 prepare=0.017s allocated=2.62 GiB reserved=3.00 GiB prefetch=True max_window=4 wrap_start=30
+[WARNING] APL attention plan: backend=htrc_flat_gpu total=15.89 GiB free=10.89 GiB required=2.37 GiB pressure=low speculation=True
+[INFO] [H3] htrc_flat_gpu memory plan: required=2.37 GiB pressure=low
+[INFO] [H3] htrc_flat_gpu call=1 phase=htrc_flat_gpu_dispatch dt=0.0000s free=0.00 GiB
+[WARNING] APL attention profile reclaim probe: backend=htrc_flat_gpu call=1 driver_free_before=10.45 GiB driver_free_after=10.64 GiB reclaimed=0.19 GiB allocator_stats=OFF
+[WARNING] APL attention learned reserve: backend=htrc_flat_gpu call=1 peak_drop=0.25 GiB retained_at_return=0.25 GiB next_required=1.24 GiB
+[INFO] [H3] htrc_flat_gpu call=1 phases=1 peak_drop=0.25 GiB retained_at_return=0.25 GiB
+[WARNING] APL attention driver memory: backend=htrc_flat_gpu free_before=10.89 GiB min_free=10.64 GiB free_after=10.64 GiB peak_drop=0.25 GiB retained_at_return=0.25 GiB allocator_stats=OFF
+[INFO] [H3] htrc_flat_gpu driver memory: peak_drop=0.25 GiB retained_at_return=0.25 GiB
+[WARNING] APL attention ACTIVE: backend=htrc_flat_gpu tau=0.00 tokens=18723 heads=56
+[INFO] [H3] htrc_flat_gpu active: tau=0.00 tokens=18723
+[WARNING] APL H3 MLP runtime active: block=0 mode=fused_chunked_gate_add chunks=2 fused_chunks=2 chunk_rows=9362 peak_fc1=0.50 GiB fused_error=
+[INFO] [H3] htrc_flat_gpu call=2 phase=htrc_flat_gpu_dispatch dt=0.0000s free=0.00 GiB
+[WARNING] APL attention learned reserve: backend=htrc_flat_gpu call=2 peak_drop=0.00 GiB retained_at_return=0.00 GiB next_required=1.24 GiB
+[INFO] [H3] htrc_flat_gpu call=2 phases=1 peak_drop=0.00 GiB retained_at_return=0.00 GiB
+
+ 17%|#6        | 1/6 [00:54<04:32, 54.48s/it][WARNING] APL H3 adaptive strided residency: target=4.25 GiB retained=19/49 blocks=[1, 4, 6, 9, 12, 14, 17, 19, 22, 25, 27, 30, 32, 35, 37, 40, 43, 45, 48]
+[WARNING] APL H3 circular streamer entered cycle: block=0 prepare=0.100s allocated=2.67 GiB reserved=5.50 GiB prefetch=True max_window=4 wrap_start=30
+
+ 33%|###3      | 2/6 [01:06<01:57, 29.47s/it][WARNING] APL H3 adaptive strided residency: target=7.15 GiB retained=34/49 blocks=[1, 2, 4, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18, 19, 21, 22, 24, 25, 27, 28, 30, 31, 32, 34, 35, 37, 38, 40, 41, 43, 44, 45, 47, 48]
+[WARNING] APL H3 circular streamer entered cycle: block=0 prepare=0.047s allocated=5.45 GiB reserved=6.75 GiB prefetch=True max_window=4 wrap_start=30
+
+ 50%|#####     | 3/6 [01:17<01:03, 21.17s/it][WARNING] APL H3 adaptive strided residency: target=7.80 GiB retained=37/49 blocks=[1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 21, 22, 23, 25, 26, 27, 28, 30, 31, 32, 34, 35, 36, 38, 39, 40, 42, 43, 44, 46, 47, 48]
+[WARNING] APL H3 circular streamer entered cycle: block=0 prepare=0.041s allocated=8.19 GiB reserved=9.53 GiB prefetch=True max_window=4 wrap_start=30
+[WARNING] APL H3 adaptive residency contraction: current=16 removed=1 resident=35 target=6.55 GiB vram_free=5.54 GiB vram_headroom=2.17 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=17 removed=1 resident=33 target=6.05 GiB vram_free=6.10 GiB vram_headroom=2.73 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=18 removed=1 resident=32 target=5.85 GiB vram_free=6.24 GiB vram_headroom=2.88 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=19 removed=1 resident=31 target=5.64 GiB vram_free=6.45 GiB vram_headroom=3.08 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=20 removed=1 resident=31 target=5.63 GiB vram_free=6.46 GiB vram_headroom=3.09 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=21 removed=1 resident=29 target=5.25 GiB vram_free=6.84 GiB vram_headroom=3.47 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=22 removed=2 resident=27 target=4.96 GiB vram_free=6.97 GiB vram_headroom=3.60 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=23 removed=2 resident=26 target=4.97 GiB vram_free=7.02 GiB vram_headroom=3.65 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=24 removed=1 resident=26 target=5.03 GiB vram_free=7.04 GiB vram_headroom=3.67 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=25 removed=2 resident=23 target=4.63 GiB vram_free=7.42 GiB vram_headroom=4.05 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=26 removed=1 resident=23 target=4.63 GiB vram_free=7.43 GiB vram_headroom=4.06 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=27 removed=1 resident=22 target=4.43 GiB vram_free=7.64 GiB vram_headroom=4.27 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=28 removed=1 resident=21 target=4.22 GiB vram_free=7.90 GiB vram_headroom=4.53 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=29 removed=1 resident=21 target=4.22 GiB vram_free=7.82 GiB vram_headroom=4.45 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=30 removed=2 resident=18 target=3.81 GiB vram_free=8.25 GiB vram_headroom=4.88 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=31 removed=1 resident=17 target=3.62 GiB vram_free=8.45 GiB vram_headroom=5.08 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=32 removed=1 resident=16 target=3.42 GiB vram_free=8.71 GiB vram_headroom=5.34 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=33 removed=1 resident=16 target=3.42 GiB vram_free=8.66 GiB vram_headroom=5.29 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=34 removed=2 resident=13 target=3.01 GiB vram_free=9.06 GiB vram_headroom=5.69 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=35 removed=1 resident=12 target=2.69 GiB vram_free=9.37 GiB vram_headroom=6.00 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=36 removed=2 resident=11 target=2.62 GiB vram_free=9.37 GiB vram_headroom=6.00 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=37 removed=2 resident=10 target=2.43 GiB vram_free=9.58 GiB vram_headroom=6.21 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=38 removed=2 resident=7 target=1.84 GiB vram_free=10.16 GiB vram_headroom=6.79 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=39 removed=1 resident=7 target=1.70 GiB vram_free=10.36 GiB vram_headroom=6.99 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=40 removed=1 resident=6 target=1.49 GiB vram_free=10.57 GiB vram_headroom=7.20 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=41 removed=1 resident=6 target=1.49 GiB vram_free=10.58 GiB vram_headroom=7.21 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=42 removed=1 resident=5 target=1.29 GiB vram_free=10.75 GiB vram_headroom=7.38 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=43 removed=1 resident=4 target=0.88 GiB vram_free=11.17 GiB vram_headroom=7.80 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=44 removed=1 resident=3 target=0.68 GiB vram_free=11.39 GiB vram_headroom=8.02 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=45 removed=1 resident=3 target=0.68 GiB vram_free=11.38 GiB vram_headroom=8.01 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=46 removed=1 resident=2 target=0.47 GiB vram_free=11.58 GiB vram_headroom=8.22 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=47 removed=1 resident=1 target=0.27 GiB vram_free=11.79 GiB vram_headroom=8.42 GiB ram_state=safe
+[WARNING] APL H3 adaptive residency contraction: current=48 removed=1 resident=1 target=0.27 GiB vram_free=11.79 GiB vram_headroom=8.42 GiB ram_state=safe
+
+ 67%|######6   | 4/6 [01:28<00:34, 17.14s/it][WARNING] APL H3 adaptive strided residency: target=0.27 GiB retained=0/49 blocks=[]
+[WARNING] APL H3 adaptive residency contraction: current=0 removed=1 resident=1 target=0.27 GiB vram_free=11.79 GiB vram_headroom=8.42 GiB ram_state=safe
+[WARNING] APL H3 circular streamer entered cycle: block=0 prepare=0.044s allocated=2.06 GiB reserved=11.12 GiB prefetch=True max_window=4 wrap_start=30
+
+ 83%|########3 | 5/6 [01:40<00:15, 15.30s/it][WARNING] APL H3 circular streamer entered cycle: block=0 prepare=0.044s allocated=2.06 GiB reserved=11.12 GiB prefetch=True max_window=4 wrap_start=30
+
+100%|##########| 6/6 [01:52<00:00, 14.20s/it]
+100%|##########| 6/6 [01:52<00:00, 18.80s/it]
+[INFO] Model storage policy: fast_disk=False paths=['D:\\ComfyModels\\vae\\minimax_h3_audio_vae_fp32.safetensors']
+[INFO] VAE load device: cuda:0, offload device: cpu, dtype: torch.float16
+[INFO] Requested to load MiniMaxH3AudioVAE
+[WARNING] APL H3 reusable slot final: enabled=False allocations=0 reuses=0 trims=0 trimmed=0.00 GiB fallback_blocks=0
+[WARNING] APL H3 hybrid detached without bulk model.to(cpu)
+[WARNING] APL H3 dynamic budget final: grants=55 denials=0 contractions=34 materializations=246 settled=55 pending=0.00 MiB active_leases=0 owner_active=0 owner_settled=True tracked_cleanup=True transfer_events=0 release_events=0 untracked_transfer=0 untracked_release=0 host_trim_calls=3 host_trim=0.77 GiB ram_state=safe adaptive_target_min=0.00 GiB adaptive_target_max=7.81 GiB transfer_reconciled=0 failed_blocks=0 ledger_errors=0 foreign_lease_ops=0 transfer_conflicts=0
+[INFO] loaded completely; 13371.55 MB usable, 288.54 MB loaded, full load: True
+[INFO] [MM] H3 post-detach backing reclaim for causal_vae_decode: trimmed~=1.50 GiB
+[INFO] Requested to load CausalViTDecoder
+[INFO] loaded completely;  3097.82 MB loaded, full load: True
+[WARNING] APL causal VAE streaming: chunk=1 cache=4 weights=3.03 GiB KV=2.70 GiB canvas=0.59 GiB
+[WARNING] APL causal VAE decoded 56 frames in 30.276s
+[INFO] Prompt executed in 163.33 seconds
+[WARNING] APL H3 reusable slot final: enabled=False allocations=0 reuses=0 trims=0 trimmed=0.00 GiB fallback_blocks=0
+[WARNING] APL H3 hybrid detached without bulk model.to(cpu)
+[WARNING] APL H3 dynamic budget final: grants=55 denials=0 contractions=34 materializations=246 settled=55 pending=0.00 MiB active_leases=0 owner_active=0 owner_settled=True tracked_cleanup=True transfer_events=0 release_events=0 untracked_transfer=0 untracked_release=0 host_trim_calls=3 host_trim=0.77 GiB ram_state=safe adaptive_target_min=0.00 GiB adaptive_target_max=7.81 GiB transfer_reconciled=0 failed_blocks=0 ledger_errors=0 foreign_lease_ops=0 transfer_conflicts=0

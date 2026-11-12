@@ -1,0 +1,423 @@
+{
+  "recovery": null,
+  "final_latent": "<COMFY_OUTPUT>\\H3\\latents\\Priestess_HD_730251_FlatGPU_Q03_KVWorkspace_20261112-004734-479.safetensors",
+  "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30",
+  "elapsed_seconds": 228.41473029999906,
+  "model": "minimax_h3_ref2va_hyperflow_flash_14b-nvfp4_from_int8.safetensors",
+  "encoder": "p-h3-image_text_encoder_w4a8.safetensors",
+  "video_vae": "minimax_h3_video_vae_fp16.safetensors",
+  "audio_vae": "minimax_h3_audio_vae_fp32.safetensors",
+  "width": 1280,
+  "height": 736,
+  "output_height": 720,
+  "length": 56,
+  "seed": 730251,
+  "steps": 6,
+  "sampler": "euler",
+  "schedule": "HyperFlowSigmas",
+  "guider": "BasicGuider",
+  "attention": "htrc_flat_gpu",
+  "media_type": "video",
+  "pdd_sigmas": null,
+  "video_decoder": "causal",
+  "causal_decoder": "causal_decoder/causal_vit24_step6000_bf16.safetensors",
+  "dense_face_rect": "",
+  "causal_chunk": 1,
+  "causal_cache_latents": 4,
+  "from_latent": null,
+  "memory_before": {
+    "system": {
+      "os": "win32",
+      "ram_total": 34279219200,
+      "ram_free": 16444219392,
+      "comfyui_version": "0.45.0",
+      "required_frontend_version": "1.58.5",
+      "installed_templates_version": "0.11.106",
+      "required_templates_version": "0.11.106",
+      "comfy_package_versions": [
+        {
+          "name": "comfyui-frontend-package",
+          "installed": "1.58.5",
+          "required": "1.58.5"
+        },
+        {
+          "name": "comfyui-workflow-templates",
+          "installed": "0.11.106",
+          "required": "0.11.106"
+        },
+        {
+          "name": "comfyui-embedded-docs",
+          "installed": "0.5.16",
+          "required": "0.5.16"
+        },
+        {
+          "name": "comfy-aimdo",
+          "installed": "0.6.0",
+          "required": "0.6.0"
+        },
+        {
+          "name": "comfy-kitchen",
+          "installed": "0.2.41",
+          "required": "0.2.41"
+        }
+      ],
+      "python_version": "3.13.12 (main, Feb 12 2026, 00:38:53) [MSC v.1944 64 bit (AMD64)]",
+      "pytorch_version": "2.12.1+cu130",
+      "embedded_python": false,
+      "deploy_environment": "local-desktop2-standalone",
+      "argv": [
+        "<USER_HOME>\\AppData\\Local\\Comfy-Desktop\\ComfyUI-Installs\\Misyau\\ComfyUI\\main.py",
+        "--disable-all-custom-nodes",
+        "--whitelist-custom-nodes",
+        "ComfyNodes",
+        "ComfyUI-HyperFlow-Flash",
+        "--listen",
+        "127.0.0.1",
+        "--port",
+        "8188",
+        "--disable-auto-launch",
+        "--cache-none",
+        "--cuda-malloc",
+        "--disable-pinned-memory",
+        "--preview-method",
+        "none",
+        "--output-directory",
+        "<COMFY_OUTPUT>\\H3\\backend",
+        "--temp-directory",
+        "<COMFY_OUTPUT>\\H3\\temp",
+        "--fp16-vae",
+        "--disable-smart-memory",
+        "--disable-dynamic-vram",
+        "--disable-comfy-compiler"
+      ]
+    },
+    "devices": [
+      {
+        "name": "cuda:0 NVIDIA GeForce RTX 5070 Ti : cudaMallocAsync",
+        "type": "cuda",
+        "index": 0,
+        "vram_total": 17066360832,
+        "vram_free": 15769534464,
+        "torch_vram_total": 0,
+        "torch_vram_free": 0
+      }
+    ]
+  },
+  "memory_after": {
+    "system": {
+      "os": "win32",
+      "ram_total": 34279219200,
+      "ram_free": 14433464320,
+      "comfyui_version": "0.45.0",
+      "required_frontend_version": "1.58.5",
+      "installed_templates_version": "0.11.106",
+      "required_templates_version": "0.11.106",
+      "comfy_package_versions": [
+        {
+          "name": "comfyui-frontend-package",
+          "installed": "1.58.5",
+          "required": "1.58.5"
+        },
+        {
+          "name": "comfyui-workflow-templates",
+          "installed": "0.11.106",
+          "required": "0.11.106"
+        },
+        {
+          "name": "comfyui-embedded-docs",
+          "installed": "0.5.16",
+          "required": "0.5.16"
+        },
+        {
+          "name": "comfy-aimdo",
+          "installed": "0.6.0",
+          "required": "0.6.0"
+        },
+        {
+          "name": "comfy-kitchen",
+          "installed": "0.2.41",
+          "required": "0.2.41"
+        }
+      ],
+      "python_version": "3.13.12 (main, Feb 12 2026, 00:38:53) [MSC v.1944 64 bit (AMD64)]",
+      "pytorch_version": "2.12.1+cu130",
+      "embedded_python": false,
+      "deploy_environment": "local-desktop2-standalone",
+      "argv": [
+        "<USER_HOME>\\AppData\\Local\\Comfy-Desktop\\ComfyUI-Installs\\Misyau\\ComfyUI\\main.py",
+        "--disable-all-custom-nodes",
+        "--whitelist-custom-nodes",
+        "ComfyNodes",
+        "ComfyUI-HyperFlow-Flash",
+        "--listen",
+        "127.0.0.1",
+        "--port",
+        "8188",
+        "--disable-auto-launch",
+        "--cache-none",
+        "--cuda-malloc",
+        "--disable-pinned-memory",
+        "--preview-method",
+        "none",
+        "--output-directory",
+        "<COMFY_OUTPUT>\\H3\\backend",
+        "--temp-directory",
+        "<COMFY_OUTPUT>\\H3\\temp",
+        "--fp16-vae",
+        "--disable-smart-memory",
+        "--disable-dynamic-vram",
+        "--disable-comfy-compiler"
+      ]
+    },
+    "devices": [
+      {
+        "name": "cuda:0 NVIDIA GeForce RTX 5070 Ti : cudaMallocAsync",
+        "type": "cuda",
+        "index": 0,
+        "vram_total": 17066360832,
+        "vram_free": 15609888768,
+        "torch_vram_total": 167772160,
+        "torch_vram_free": 100401152
+      }
+    ]
+  },
+  "outputs": {
+    "save": {
+      "images": [
+        {
+          "filename": "Priestess_HD_730251_FlatGPU_Q03_KVWorkspace_00001_.mp4",
+          "subfolder": "",
+          "type": "output",
+          "metadata": {
+            "kind": "video",
+            "width": 1280,
+            "height": 720,
+            "duration": 2.3333333333333335,
+            "fps": 24.0,
+            "frame_count": 56
+          }
+        }
+      ],
+      "animated": [
+        true
+      ]
+    }
+  },
+  "execution_messages": [
+    [
+      "execution_start",
+      {
+        "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30",
+        "timestamp": 1794437305030
+      }
+    ],
+    [
+      "execution_cached",
+      {
+        "nodes": [],
+        "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30",
+        "timestamp": 1794437305031
+      }
+    ],
+    [
+      "execution_success",
+      {
+        "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30",
+        "timestamp": 1794437532274
+      }
+    ]
+  ],
+  "node_events": [
+    {
+      "elapsed": 0.6676740999973845,
+      "type": "execution_start",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 0.6739016999999876,
+      "type": "executing",
+      "node": "sampler",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 0.6746581999977934,
+      "type": "executing",
+      "node": "noise",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 0.7679270000007818,
+      "type": "executing",
+      "node": "refimage",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 0.8659419999967213,
+      "type": "executing",
+      "node": "video_vae",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 4.007836899996619,
+      "type": "executing",
+      "node": "encoder",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 33.71881909999502,
+      "type": "executing",
+      "node": "text",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 39.1562586,
+      "type": "executing",
+      "node": "release",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 39.47980480000115,
+      "type": "executing",
+      "node": "prepare",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 39.48527729999478,
+      "type": "executing",
+      "node": "loader",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 60.680442899996706,
+      "type": "executing",
+      "node": "runtime",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 63.8425203999941,
+      "type": "executing",
+      "node": "sigmas",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 63.84427309999592,
+      "type": "executing",
+      "node": "guider",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 63.844736599996395,
+      "type": "executing",
+      "node": "sample",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 119.85653539999475,
+      "type": "progress",
+      "node": "sample",
+      "value": 1,
+      "max": 6,
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 131.57122539999546,
+      "type": "progress",
+      "node": "sample",
+      "value": 2,
+      "max": 6,
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 144.61806129999604,
+      "type": "progress",
+      "node": "sample",
+      "value": 3,
+      "max": 6,
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 158.41000859999622,
+      "type": "progress",
+      "node": "sample",
+      "value": 4,
+      "max": 6,
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 171.60013959999924,
+      "type": "progress",
+      "node": "sample",
+      "value": 5,
+      "max": 6,
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 185.28051910000067,
+      "type": "progress",
+      "node": "sample",
+      "value": 6,
+      "max": 6,
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 185.31519029999617,
+      "type": "executing",
+      "node": "save_latent",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 185.33924889999616,
+      "type": "executing",
+      "node": "audio_vae",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 192.73081290000118,
+      "type": "executing",
+      "node": "audio_decode",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 193.9183922999946,
+      "type": "executing",
+      "node": "video_decode",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 224.59872539999924,
+      "type": "executing",
+      "node": "crop",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 224.5995780999947,
+      "type": "executing",
+      "node": "video",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 224.60013069999695,
+      "type": "executing",
+      "node": "save",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 227.84265059999598,
+      "type": "executed",
+      "node": "save",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 227.9118268999955,
+      "type": "execution_success",
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    },
+    {
+      "elapsed": 227.9125795,
+      "type": "executing",
+      "node": null,
+      "prompt_id": "11784baf-94bd-46c9-b58e-ee01a79dac30"
+    }
+  ],
+  "node_trace_error": null
+}

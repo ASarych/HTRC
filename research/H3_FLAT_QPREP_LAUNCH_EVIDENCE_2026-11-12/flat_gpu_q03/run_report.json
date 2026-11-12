@@ -1,0 +1,172 @@
+{
+  "status": "completed",
+  "video": "<COMFY_OUTPUT>\\H3\\backend\\Priestess_HD_730251_FlatGPU_Q03_KVWorkspace_00001_.mp4",
+  "previous_video": "<COMFY_OUTPUT>\\H3\\backend\\Priestess_HD_730251_FlatGPU_Fast_KVWorkspace_00001_.mp4",
+  "latent": "<COMFY_OUTPUT>\\H3\\latents\\Priestess_HD_730251_FlatGPU_Q03_KVWorkspace_20261112-004734-479.safetensors",
+  "current": {
+    "elapsed_seconds": 228.41473029999906,
+    "node_wall_seconds": {
+      "sampler": 0.000756499997805804,
+      "noise": 0.09326880000298843,
+      "refimage": 0.09801499999593943,
+      "video_vae": 3.1418948999998975,
+      "encoder": 29.710982199998398,
+      "text": 5.437439500004984,
+      "release": 0.32354620000114664,
+      "prepare": 0.005472499993629754,
+      "loader": 21.19516560000193,
+      "runtime": 3.1620774999973946,
+      "sigmas": 0.0017527000018162653,
+      "guider": 0.00046350000047823414,
+      "sample": 121.47045369999978,
+      "save_latent": 0.024058599999989383,
+      "audio_vae": 7.391564000005019,
+      "audio_decode": 1.1875793999934103,
+      "video_decode": 30.680333100004646,
+      "crop": 0.0008526999954483472,
+      "video": 0.0005526000022655353
+    },
+    "step_wall_seconds": [
+      56.01179879999836,
+      11.7146900000007,
+      13.046835900000588,
+      13.791947300000174,
+      13.19013100000302,
+      13.680379500001436
+    ]
+  },
+  "previous": {
+    "elapsed_seconds": 164.90953340000124,
+    "node_wall_seconds": {
+      "sampler": 0.0006453000023611821,
+      "noise": 0.09484599999996135,
+      "refimage": 0.09741139999823645,
+      "video_vae": 0.7262132999967434,
+      "encoder": 4.319114900004934,
+      "text": 4.5729601999992155,
+      "release": 0.2913247999968007,
+      "prepare": 0.00427260000287788,
+      "loader": 2.3346764000016265,
+      "runtime": 1.577539699996123,
+      "sigmas": 0.0015056999982334673,
+      "guider": 0.0005106000025989488,
+      "sample": 113.84502780000184,
+      "save_latent": 0.008205199999792967,
+      "audio_vae": 0.6191026999949827,
+      "audio_decode": 1.3775490000043646,
+      "video_decode": 30.381883199996082,
+      "crop": 0.001604000004590489,
+      "video": 0.000516699998115655
+    },
+    "step_wall_seconds": [
+      55.503465299996606,
+      11.958376800001133,
+      11.303678200005379,
+      10.946871799998917,
+      12.044245799996133,
+      12.057033100005356
+    ]
+  },
+  "memory": {
+    "min_ram_gib": 3.270000457763672,
+    "min_commit_gib": 2.493915557861328,
+    "peak_whole_gpu_gib": 9.300895690917969,
+    "peak_backend_private_gib": 13.073688507080078,
+    "peak_backend_ws_gib": 18.41379165649414,
+    "guard_abort": false
+  },
+  "same_model_seed_size_frames_prompt": true,
+  "note": "Same canonical GPU path, preset fast versus new grouped Q0.3. RAM/commit headroom and cache state differed; not a controlled speed A/B.",
+  "inference_kv_fix": "D:/ComfyNodes-flat-split-20261111/h3/htrc_flat_head_batch.py",
+  "runtime_script": "<COMFY_OUTPUT>\\H3\\math_probe\\priestess_flat_gpu\\run.ps1",
+  "user_quality_verdict": "Q0.3 rejected: poor quality. Previous old Flat Q0.1 is the accepted reference; new GPU Q0.1 has not been rendered.",
+  "warm_attention_profile": {
+    "ts_unix": 1794437383.5688279,
+    "component": "H3",
+    "event": "attention_phase",
+    "message": "htrc_flat_gpu call=2 phase=htrc_flat_gpu_dispatch dt=0.0000s free=10.39 GiB",
+    "attention_backend": "htrc_flat_gpu",
+    "call_index": 2,
+    "backend": "htrc_flat_gpu",
+    "heads": 56,
+    "distinct_native_head_ids": true,
+    "tokens": 18723,
+    "mode": "fast",
+    "tiles": 16,
+    "quality": 0.3,
+    "center_group": 4,
+    "exact_leaves": 88,
+    "query_windows": 19,
+    "group_capacity": 13,
+    "number_of_groups": 5,
+    "budget_mib": 1024,
+    "reserve_mib": 256,
+    "output_mib": 255.978515625,
+    "free_at_plan_mib": 10637.0,
+    "kv_cache_scope": "one_attention_call",
+    "workspace_reused": true,
+    "profile_cpu_enqueue_ms": {
+      "kv_workspace_setup": 34.90510000119684,
+      "query_stats_selection": 85.33870002429467,
+      "tile": 17.51890003652079,
+      "merge_tail": 10.594800005492289,
+      "output_copy": 10.193400019488763
+    },
+    "profile_gpu_stream_elapsed_ms": {
+      "kv_workspace_setup": 9.336351990699768,
+      "query_stats_selection": 112.16848027706146,
+      "tile": 17.21465579420328,
+      "merge_tail": 2.9532159860245883,
+      "output_copy": 1.2340479977428913
+    },
+    "profile_call_wall_ms": 169.07749999518273,
+    "profile_note": "GPU event intervals include stream gaps; CPU and GPU times overlap, do not add them",
+    "ts_perf": 45057.6575635,
+    "free_bytes": 11153702912,
+    "elapsed_from_previous_seconds": 0.0
+  },
+  "best_kernel_audit": {
+    "candidate_commit": "a0234bca6fbf99f6af0058cea9c9cefa3903528d",
+    "runtime_upstream_commit": "1743dd8e442d9caf8753eb1be3fd83ab46a0b50f",
+    "triton_blob_both": "c88c18feccc88afc0bb5b8eecf587cb38dd17f23",
+    "same_triton_source": true,
+    "r32_tail_merge": true,
+    "fused_k8": true
+  },
+  "slowdown_findings": {
+    "different_operator_settings": {
+      "old_flat_q01": {
+        "exact_leaves": 98,
+        "center_group": 2
+      },
+      "gpu_fast": {
+        "exact_leaves": 256,
+        "center_group": 1
+      },
+      "gpu_q03": {
+        "exact_leaves": 88,
+        "center_group": 4
+      }
+    },
+    "gpu_q03_dispatches_per_block": 95,
+    "profile_call_wall_ms": 169.07749999518273,
+    "profile_note": "Event intervals include stream gaps; CPU/GPU stages overlap. Profile is two initial block calls, not all blocks.",
+    "host_trim_comparison": {
+      "gpu_fast": {
+        "calls": 3,
+        "cumulative_gib": 0.77
+      },
+      "gpu_q03": {
+        "calls": 266,
+        "cumulative_gib": 46.05
+      }
+    },
+    "loading_seconds": {
+      "gpu_fast_encoder": 4.3191,
+      "gpu_q03_encoder": 29.711,
+      "gpu_fast_loader": 2.3347,
+      "gpu_q03_loader": 21.1952
+    },
+    "conclusion": "The measured bottleneck is repeated Q/statistics/selection preparation and launch overhead; Tile/Merge are a small fraction of a profiled call. Additional total slowdown coincides with colder loading and much heavier host-memory reclaim. Exact causal attribution requires matched configuration and memory conditions."
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "vram_scope": "whole GPU, includes other processes",
+  "samples": 1199,
+  "min_ram_gib": 5.198055267333984,
+  "min_commit_gib": 3.098590850830078,
+  "peak_total_vram_gib": 13.785770416259766,
+  "peak_backend_ws_gib": 23.37530517578125,
+  "peak_backend_private_gib": 17.48949432373047,
+  "abort": null,
+  "observed_seconds": 1248.2988084000026
+}

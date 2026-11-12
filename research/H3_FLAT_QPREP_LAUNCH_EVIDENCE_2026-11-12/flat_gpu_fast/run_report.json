@@ -1,0 +1,82 @@
+{
+  "status": "completed",
+  "video": "<COMFY_OUTPUT>\\H3\\backend\\Priestess_HD_730251_FlatGPU_Fast_KVWorkspace_00001_.mp4",
+  "previous_video": "<COMFY_OUTPUT>\\H3\\backend\\Priestess_HD_730251_Flat_Q01_profile_00001_.mp4",
+  "latent": "<COMFY_OUTPUT>\\H3\\latents\\Priestess_HD_730251_FlatGPU_Fast_KVWorkspace_20261112-002611-059.safetensors",
+  "current": {
+    "elapsed_seconds": 164.90953340000124,
+    "node_wall_seconds": {
+      "sampler": 0.0006453000023611821,
+      "noise": 0.09484599999996135,
+      "refimage": 0.09741139999823645,
+      "video_vae": 0.7262132999967434,
+      "encoder": 4.319114900004934,
+      "text": 4.5729601999992155,
+      "release": 0.2913247999968007,
+      "prepare": 0.00427260000287788,
+      "loader": 2.3346764000016265,
+      "runtime": 1.577539699996123,
+      "sigmas": 0.0015056999982334673,
+      "guider": 0.0005106000025989488,
+      "sample": 113.84502780000184,
+      "save_latent": 0.008205199999792967,
+      "audio_vae": 0.6191026999949827,
+      "audio_decode": 1.3775490000043646,
+      "video_decode": 30.381883199996082,
+      "crop": 0.001604000004590489,
+      "video": 0.000516699998115655
+    },
+    "step_wall_seconds": [
+      55.503465299996606,
+      11.958376800001133,
+      11.303678200005379,
+      10.946871799998917,
+      12.044245799996133,
+      12.057033100005356
+    ]
+  },
+  "previous": {
+    "elapsed_seconds": 150.8411089000001,
+    "node_wall_seconds": {
+      "sampler": 0.0011037000003852881,
+      "noise": 0.002422199999273289,
+      "audio_vae": 7.625154800000018,
+      "refimage": 0.0989783000004536,
+      "video_vae": 2.9227321999997002,
+      "encoder": 26.77012620000005,
+      "text": 5.932531600000402,
+      "release": 0.2961117999993803,
+      "prepare": 0.004842199999984587,
+      "loader": 12.160942200000136,
+      "runtime": 1.8949337000003652,
+      "sigmas": 0.0006959000002098037,
+      "guider": 0.0006088999998610234,
+      "sample": 56.976222100000086,
+      "save_latent": 0.007530199999564502,
+      "audio_decode": 1.1068610000002082,
+      "video_decode": 30.22185089999948,
+      "crop": 0.0014469000007011346,
+      "video": 0.0006293999995250488
+    },
+    "step_wall_seconds": [
+      16.960257299999284,
+      8.273108300000786,
+      7.998100599999816,
+      7.895269800000278,
+      7.963119599999118,
+      7.852125000000342
+    ]
+  },
+  "memory": {
+    "min_ram_gib": 5.198055267333984,
+    "min_commit_gib": 3.098590850830078,
+    "peak_whole_gpu_gib": 13.785770416259766,
+    "peak_backend_private_gib": 17.48949432373047,
+    "peak_backend_ws_gib": 23.37530517578125,
+    "guard_abort": false
+  },
+  "same_model_seed_size_frames_prompt": true,
+  "note": "Different attention implementations and quality settings: previous local Flat Q0.1 versus canonical FlatGPU fast. Not an isolated kernel-only A/B.",
+  "inference_kv_fix": "D:/ComfyNodes-flat-split-20261111/h3/htrc_flat_head_batch.py",
+  "runtime_script": "<COMFY_OUTPUT>\\H3\\math_probe\\priestess_flat_gpu\\run.ps1"
+}
