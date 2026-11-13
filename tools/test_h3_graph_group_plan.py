@@ -194,8 +194,33 @@ class TestGraphMemoryToSpeed(unittest.TestCase):
         self.assertIn('failure["memory_at_failure"]',src)
         self.assertIn('result["memory_trace"]',src)
         self.assertIn("reserved_minus_allocated_mib",src)
+        self.assertIn('"after_group_graph_replay"',src)
         self.assertIn("if (compare_only and verify) else None",src)
         self.assertIn("extra_reserved > max_extra*_MIB",src)
+
+    def test_research_compare_only_skips_eager_but_production_keeps_parity(self):
+        """AST contract: research must not perturb allocator with eager Flat."""
+        src=FLOW.read_text(encoding="utf8")
+        tree=ast.parse(src,filename=str(FLOW))
+        run=next(n for n in tree.body
+                 if isinstance(n,ast.FunctionDef)
+                 and n.name=="graph_attention_bthd")
+        branches=[
+            n for n in ast.walk(run)
+            if isinstance(n,ast.If)
+            and isinstance(n.test,ast.Name) and n.test.id=="compare_only"
+        ]
+        self.assertEqual(len(branches),1)
+        compare=branches[0]
+        research="\n".join(ast.unparse(n) for n in compare.body)
+        production="\n".join(ast.unparse(n) for n in compare.orelse)
+        self.assertIn("SKIPPED_COMPARE_ONLY",research)
+        self.assertNotIn("flat_attention_bthd",research)
+        self.assertIn("live.flat_attention_bthd",production)
+        self.assertIn("torch.equal(group_out, eager_out[0])",production)
+        self.assertIn("AssertionError",production)
+        self.assertIn("None if compare_only else",src)
+        self.assertIn('memory_trace.append({',src)
 
     def test_gpu_sweep_keeps_one_report_and_only_cpu_samples(self):
         src=RUNNER.read_text(encoding="utf8")
@@ -211,6 +236,8 @@ class TestGraphMemoryToSpeed(unittest.TestCase):
         self.assertIn("max-extra-mib",src)
         self.assertIn("flat_graph_group_balanced_ab.json",src)
         self.assertNotIn('saved[policy]=got.detach().clone()',src)
+        self.assertIn('row["pairwise_reference_arm"]=baseline_arm',src)
+        self.assertIn('next((arm for arm in POLICIES if arm in saved),None)',src)
         self.assertNotIn('args.max_group',src)
         compile(src,str(RUNNER),"exec")
 
