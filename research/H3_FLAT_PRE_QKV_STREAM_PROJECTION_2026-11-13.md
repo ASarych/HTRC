@@ -122,3 +122,87 @@ The newly committed repository unittest suite is **UNRUN**
 on the exact checkout; CUDA Graph numerical and end-to-end
 timing A/B are **UNRUN** pending user's RTX 5070 Ti.
 One JSON is the required output. No promotion to production.
+
+## RTX 5070 Ti first pre-QKV A/B: measured, memory-positive, GPU-slower
+
+The user supplied `flat_pre_qkv_stream_ab.json` from the initial
+synthetic BF16 dense projection slice. It reports `MEASURED` on
+15,275 and 18,723 tokens for both `full_qkv` and
+`streamed_kv_lazy_q`, with 56 distinct heads, 8-head Graph
+groups, 4096 input rows per projection chunk, 1024-wide
+synthetic hidden state, balanced 512 exact leaves, 16 query
+tiles and unchanged 768 MiB Graph-extra limit.
+
+| Tokens | Full QKV GPU median | Streamed GPU median | Delta | Full absolute peak allocated | Stream absolute peak allocated |
+|---|---:|---:|---:|---:|---:|
+| 15,275 | 71.961 ms | 75.228 ms | +4.54% | 1,150.002 MiB | 618.811 MiB |
+| 18,723 | 97.261 ms | 101.566 ms | +4.43% | 1,331.595 MiB | 679.066 MiB |
+
+Peak allocated VRAM falls by 531.191 / 652.529 MiB
+(46.19% / 49.00%). Warm absolute reserved peaks were
+1178 -> 644 MiB and 1352 -> 714 MiB. These are PyTorch
+allocator measures within the model-free synthetic runner,
+not complete card usage with actual H3 weights. The cold
+wall values should not be used for a speed conclusion because
+the first arm includes one-time CUDA/JIT/capture effects.
+Three warmed timing rounds on the same inputs provide only
+a preliminary latency comparison.
+
+The two arms are **bitwise equal on 64 sampled output query
+positions** for both token lengths (max_abs=0, relative_L2=0).
+This establishes identical sampled Flat math in the synthetic
+BF16 projection experiment, not full output parity and NOT
+real H3 quality/video parity. The real-model blockers remain
+RMSNorm, RoPE, NVFP4 projection packing, model patch hooks,
+model-resident VRAM and end-to-end video.
+
+## Follow-up slice: eliminate group K/V copy; avoid repeated tiny Q GEMMs
+
+The first streamed version projected a temporary 8-head K/V
+and copied it to separate Graph-owned BF16 stages, then ran
+one Q GEMM for each Graph query window. These are the two
+remaining avoidable dataflow costs:
+
+- `kv_mode=graph_owned` accepts a compare-only callback
+  filling the **stable Graph-owned K/V** buffers directly with
+  4096-row projected chunks. Stage K8/KS and exact tail are
+  regenerated from these exact destination tensors on every
+  call, not reused from the previous denoising step. A
+  one-element expanded BF16 tensor provides only shape/device
+  metadata to the runtime: both producers must overwrite the
+  Graph stages before warmup/capture/replay. Production cannot
+  pass this callback.
+- `q_mode=group` projects all Q for only **one 8-head group**
+  once and copies windows from that group buffer into the
+  stable Graph Q stage. This adds one group-Q live tensor but
+  removes the many small `F.linear` calls per window. It does
+  NOT materialize 56-head full Q and does not change Flat math.
+
+The expanded one-JSON A/B now measures four arms for the
+same X/weights/heads: `full_qkv`,
+`streamed_kv_lazy_q` (the original memory-positive but slower
+control), `direct_kv_lazy_q` (isolate K/V copy elimination),
+and `direct_kv_group_q` (test one Q GEMM per head group).
+Each case records cold and warmed absolute/relative peak
+memory, GPU event and synchronized wall medians, plus sampled
+bitwise/relative-L2 comparison. Every arm is separately
+fail-closed, with an independent Graph session reset.
+`APL_HTRC_DIRECTFLOW_MAX_EXTRA_MIB=768` remains unchanged.
+
+This is still **synthetic BF16 only**. It neither patches the
+actual H3 model nor interprets a new QKV rounding difference
+as proof of accepted video quality.
+
+### Next single local run
+
+From the exact updated research checkout, reuse the same
+ComfyUI CUDA/Triton Python environment:
+
+    & $py -B -m unittest discover -s tools -p test_h3_pre_qkv_stream.py -v
+    & $py -B tools\benchmark_h3_pre_qkv_stream_ab.py --execute --tokens 15275,18723 --heads 56 --group-heads 8 --hidden-width 1024 --chunk-rows 4096 --mode balanced --tiles 16 --budget-mib 1024 --reserve-mib 256 --max-extra-mib 768 --rounds 3
+
+Exactly ONE persistent JSON:
+`D:\ComfyOutput\H3\math_probe\flat_pre_qkv_stream_ab.json`.
+
+New CPU repository suite and all four GPU arms: **UNRUN**
+in this new commit. No backend promotion.
