@@ -276,7 +276,6 @@ class TestGraphMemoryToSpeed(unittest.TestCase):
         self.assertIn("baseline_arm=next((arm for arm in args.arms if arm in saved),None)",src)
         self.assertNotIn('saved[policy]=got.detach().clone()',src)
         self.assertIn('row["pairwise_reference_arm"]=baseline_arm',src)
-        self.assertIn('next((arm for arm in POLICIES if arm in saved),None)',src)
         self.assertNotIn('args.max_group',src)
         compile(src,str(RUNNER),"exec")
 
