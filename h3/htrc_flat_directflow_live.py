@@ -190,11 +190,15 @@ def _refresh_kv(stage, bank, tr):
         tv.copy_(stage["v"][0, :, -count:, :])
 
 
-def _replay(stage, bank, geometries, tr, output):
+def _replay(stage, bank, geometries, tr, output, query_provider=None):
     _refresh_kv(stage, bank, tr)
     for geom in geometries:
         item = stage["graphs"][_geometry_key(geom)]
-        _copy_q(bank[0], geom, item["q"])
+        if query_provider is None:
+            _copy_q(bank[0], geom, item["q"])
+        else:
+            # Research-only producer fills every Q row before Graph replay.
+            query_provider(geom.start, geom.end, item["q"])
         item["graph"].replay()
         merged = item["output"]
         nhead = int(output.shape[1])
@@ -246,12 +250,17 @@ def clear_session_cache():
 
 def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                          budget_mib, reserve_mib, workspace, observer=None,
-                         compare_only=False):
+                         compare_only=False, query_provider=None):
     """Actual opt-in Flat output [1,S,H,128]. Fail closed on parity/VRAM."""
     if torch.is_grad_enabled():
         raise RuntimeError("H3 Direct-Flow is inference-only")
     if type(compare_only) is not bool:
         raise TypeError("compare_only must be a bool (research API, off by default)")
+    if query_provider is not None and (
+        not compare_only or not callable(query_provider)
+    ):
+        raise ValueError(
+            "Pre-QKV query provider requires compare_only=True and a callable")
     if (mode not in ("fast", "balanced") or not workspace
         or not isinstance(tiles, int) or tiles not in (16, 32, 64)
         or any(x.dtype != torch.bfloat16 for x in (q,k,v))):
@@ -329,7 +338,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         # and free-VRAM gates below still fail closed.
         group_cap=forced
     geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode,
-            compare_only, policy)
+            compare_only, policy, query_provider is not None)
     geometries = list(windows.iter_query_windows(
         s, tiles, tile_rows=int(cfg["tile"]), center_group=1
     ))
@@ -388,7 +397,8 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     )
                 group_out = output[:,begin:end,:]
                 def replay():
-                    _replay(stage, bank, geometries, tr, group_out)
+                    _replay(stage, bank, geometries, tr, group_out,
+                            query_provider=query_provider)
                 # Actual real H3 QKV, after construction warmup; the GPU
                 # timing excludes first capture but includes fresh staging,
                 # K8, all windows, merge and output writes.
@@ -474,11 +484,16 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "group_plan":plan,
                     "capture_and_parity_first_call_wall_ms":(time.perf_counter()-call_wall_started)*1000,
                     "real_model_qkv":not compare_only,
-                    "qkv_source":("caller_supplied_may_be_synthetic" if compare_only
+                    "qkv_source":("pre_qkv_window_producer_synthetic"
+                                  if query_provider is not None else
+                                  "caller_supplied_may_be_synthetic" if compare_only
                                   else "real_model_caller_contract"),
+                    "query_provider_research_only":query_provider is not None,
                     "full_model_denoise_or_video_complete":False,
                     "completed":True,
-                    "source":"actual H3 post-RoPE BHSD QKV before out_proj",
+                    "source":("synthetic pre-QKV dense BF16 projection, no RoPE"
+                              if query_provider is not None else
+                              "actual H3 post-RoPE BHSD QKV before out_proj"),
                     "gpu":torch.cuda.get_device_name(dev),
                     "heads":total_heads, "tokens":s, "head_groups":rows,
                     "window_tiles":tiles,
