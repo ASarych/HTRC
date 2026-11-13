@@ -113,7 +113,7 @@ def projected_graph_attention(x, weight, *, heads=56, group_heads=8,
     if (type(group_heads) is not int or group_heads < 1
         or heads % group_heads != 0):
         raise ValueError("Research Graph requires equal head groups")
-    if chunk_rows < 1 or type(chunk_rows) is not int:
+    if type(chunk_rows) is not int or chunk_rows < 1:
         raise ValueError("Invalid projection chunk_rows")
     from . import htrc_flat_directflow_live as flow
 
