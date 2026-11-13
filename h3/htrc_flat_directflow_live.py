@@ -344,48 +344,54 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         raise ValueError(
             "APL_HTRC_DIRECTFLOW_VB_MODE must be materialized, split_stream or fused_vb"
         )
-    if policy=="reuse_aware":
-        actual_free,_ = torch.cuda.mem_get_info(dev)
-        plan=group_plan.choose_group(
-            tokens=s,heads=total_heads,tiles=tiles,mode=mode,vb_mode=vb_mode,
-            max_group=head_limit,budget_mib=int(budget_mib),
-            reserve_mib=int(reserve_mib),max_extra_mib=max_extra,
-            free_mib=actual_free/_MIB,min_free_mib=min_free
-        )
-        group_cap=int(plan["group_size"])
-    else:
-        legacy_cap,plan=shared._head_plan(
-            cap, total_heads, tiles, cfg, budget_mib=int(budget_mib),
-            reserve_mib=int(reserve_mib), workspace=True,
-        )
-        group_cap=min(legacy_cap,head_limit)
-    forced=group_plan.research_forced_group_size(
-        os.environ.get("APL_HTRC_DIRECTFLOW_RESEARCH_FORCE_GROUP"),
-        compare_only=compare_only,policy=policy,
-        max_group=head_limit,heads=total_heads,
-    )
-    if forced is not None:
-        plan=dict(plan)
-        plan["research_forced_group_size"]=forced
-        plan["planner_recommended_group_size"]=group_cap
-        plan["research_force_bypasses_capacity_estimate"]=True
-        plan["research_force_runtime_guard"]="UNCHANGED"
-        # This research-only override can exceed the conservative
-        # 1.5x staged model, but the *actual* post-capture hard memory
-        # and free-VRAM gates below still fail closed.
-        group_cap=forced
     if research_group_size is not None:
-        # Only compare_only providers can bypass the *planner estimate*.
-        # The real post-capture memory and free-VRAM gates remain intact.
+        # A separate research-only provider is filling Q/K/V itself:
+        # skip conservative caller-owned-QKV planning altogether, as its
+        # input tensors are shape-only placeholders. Real allocator/free
+        # gates below still fail closed after Graph session creation.
         if research_group_size != total_heads:
             raise ValueError(
                 "Native Graph projection requires exactly one head group per call"
             )
-        plan=dict(plan)
-        plan["research_native_head_group_override"]=research_group_size
-        plan["planner_recommended_group_size"]=group_cap
-        plan["research_force_runtime_guard"]="UNCHANGED"
-        group_cap=research_group_size
+        group_cap = research_group_size
+        plan = {
+            "policy": "native_pre_qkv_explicit_research",
+            "group_size": group_cap,
+            "planner_estimate": "SKIPPED_FOR_SHAPE_ONLY_QKV",
+            "research_force_runtime_guard": "UNCHANGED",
+            "hard_extra_cap_mib": max_extra,
+            "minimum_free_mib": min_free,
+        }
+    else:
+        if policy=="reuse_aware":
+            actual_free,_ = torch.cuda.mem_get_info(dev)
+            plan=group_plan.choose_group(
+                tokens=s,heads=total_heads,tiles=tiles,mode=mode,vb_mode=vb_mode,
+                max_group=head_limit,budget_mib=int(budget_mib),
+                reserve_mib=int(reserve_mib),max_extra_mib=max_extra,
+                free_mib=actual_free/_MIB,min_free_mib=min_free
+            )
+            group_cap=int(plan["group_size"])
+        else:
+            legacy_cap,plan=shared._head_plan(
+                cap, total_heads, tiles, cfg, budget_mib=int(budget_mib),
+                reserve_mib=int(reserve_mib), workspace=True,
+            )
+            group_cap=min(legacy_cap,head_limit)
+        forced=group_plan.research_forced_group_size(
+            os.environ.get("APL_HTRC_DIRECTFLOW_RESEARCH_FORCE_GROUP"),
+            compare_only=compare_only,policy=policy,
+            max_group=head_limit,heads=total_heads,
+        )
+        if forced is not None:
+            plan=dict(plan)
+            plan["research_forced_group_size"]=forced
+            plan["planner_recommended_group_size"]=group_cap
+            plan["research_force_bypasses_capacity_estimate"]=True
+            plan["research_force_runtime_guard"]="UNCHANGED"
+            # Only the conservative estimate is bypassed, never actual
+            # post-capture reserved/free guards.
+            group_cap=forced
     if kv_provider is not None and group_cap != total_heads:
         raise ValueError(
             "Graph-owned K/V producer requires one complete equal-head "
