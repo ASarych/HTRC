@@ -53,6 +53,37 @@ def validate(attn, x, rope_freqs, begin, end, q_out, k_out, v_out, *,
     return heads
 
 
+def normalized_native_group_chunk(attn, fused, rope_chunk, *,
+                                  begin, end, qw=None, kw=None,
+                                  rms_rope_inplace=None):
+    """H3's exact projection split, native Q/K normalization and head selection.
+
+    This CPU-testable primitive receives the unmodified module's fused
+    projection result. It performs no quantized-weight operations itself.
+    Returned Q/K/V are views unless a norm module returns new tensors;
+    consumers MUST copy them before the next projection chunk.
+    """
+    rows = int(fused.shape[0])
+    heads = int(attn.heads)
+    q, k, v = fused.split(heads*DIM, dim=-1)
+    if rope_chunk is not None:
+        if rms_rope_inplace is None or qw is None or kw is None:
+            raise ValueError("Native split-half RoPE requires fused kernel and norm weights")
+        q4 = q.view(1, rows, heads, DIM)
+        k4 = k.view(1, rows, heads, DIM)
+        rms_rope_inplace(
+            q4, k4, rope_chunk, qw, kw,
+            epsilon=attn.q_norm.eps,
+            rot_dim=rope_chunk.shape[-3]*2,
+        )
+        q, k = q4[0], k4[0]
+    else:
+        q = attn.q_norm(q.view(rows, heads, DIM))
+        k = attn.k_norm(k.view(rows, heads, DIM))
+    v = v.view(rows, heads, DIM)
+    return q[:, begin:end, :], k[:, begin:end, :], v[:, begin:end, :]
+
+
 def project_group_native(attn, x, rope_freqs, *, begin, end,
                          q_out, k_out, v_out, chunk_rows=4096,
                          resolve_norms=None, rms_rope_inplace=None):
@@ -95,24 +126,15 @@ def project_group_native(attn, x, rope_freqs, *, begin, end,
             tuple(fused.shape) != (rows, 3*heads*DIM) or
             fused.dtype != x.dtype or fused.device != x.device):
             raise ValueError("Native qkv_proj output shape/dtype/device changed")
-        q, k, v = fused.split(heads*DIM, dim=-1)
-        if rope_freqs is not None:
-            q4 = q.view(1, rows, heads, DIM)
-            k4 = k.view(1, rows, heads, DIM)
-            rms_rope_inplace(
-                q4, k4, rope_freqs[:, start:stop], qw, kw,
-                epsilon=attn.q_norm.eps,
-                rot_dim=rope_freqs.shape[-3]*2,
-            )
-            q, k = q4[0], k4[0]
-        else:
-            q = attn.q_norm(q.view(rows, heads, DIM))
-            k = attn.k_norm(k.view(rows, heads, DIM))
-        v = v.view(rows, heads, DIM)
+        q, k, v = normalized_native_group_chunk(
+            attn, fused,
+            rope_freqs[:, start:stop] if rope_freqs is not None else None,
+            begin=begin, end=end, qw=qw, kw=kw,
+            rms_rope_inplace=rms_rope_inplace)
         sl = slice(start, stop)
-        q_out[0, :, sl, :].copy_(q[:, begin:end, :].permute(1, 0, 2))
-        k_out[0, :, sl, :].copy_(k[:, begin:end, :].permute(1, 0, 2))
-        v_out[0, :, sl, :].copy_(v[:, begin:end, :].permute(1, 0, 2))
+        q_out[0, :, sl, :].copy_(q.permute(1, 0, 2))
+        k_out[0, :, sl, :].copy_(k.permute(1, 0, 2))
+        v_out[0, :, sl, :].copy_(v.permute(1, 0, 2))
         calls += 1
         del fused, q, k, v
     return {"projection_chunks": calls, "projection_rows": int(x.shape[0]),
