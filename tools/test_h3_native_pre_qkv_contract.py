@@ -148,6 +148,8 @@ class NativeQKVContractTests(unittest.TestCase):
         self.assertNotIn(".dequantize(",source)
         self.assertIn('research_source_kind="native_h3"',source)
         self.assertIn('if kv_provider is not None and group_cap != total_heads:',flow)
+        self.assertIn('if research_group_size is not None:',flow)
+        self.assertIn('SKIPPED_FOR_SHAPE_ONLY_QKV',flow)
         self.assertIn('research_source_kind == "native_h3"',flow)
         self.assertIn("extra_reserved > max_extra*_MIB",flow)
         self.assertIn("if not exact and not compare_only:",flow)
