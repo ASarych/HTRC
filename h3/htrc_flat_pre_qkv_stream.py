@@ -98,8 +98,10 @@ def precomputed_query_provider(q):
     def fill(start, end, stage):
         real = end-start
         if (not 0 <= start < end <= q.shape[2] or
-            stage.shape != (q.shape[1], stage.shape[1], DIM) or
-            stage.shape[1] < real or stage.device != q.device or stage.dtype != q.dtype):
+            not isinstance(stage, torch.Tensor) or stage.ndim != 3 or
+            stage.shape[0] != q.shape[1] or stage.shape[2] != DIM or
+            stage.shape[1] < real or stage.device != q.device or
+            stage.dtype != q.dtype):
             raise ValueError("Invalid precomputed-Q Graph stage")
         src = q[0, :, start:end, :]
         stage[:, :real, :].copy_(src)
