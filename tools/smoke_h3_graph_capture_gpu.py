@@ -28,7 +28,10 @@ def main():
         raise RuntimeError("Graph smoke refuses legacy capture-allocated MU")
     torch.cuda.set_device(0)
     dev = torch.device("cuda:0")
-    heads, tokens, dim = 8, 1024, 128
+    # Balanced mode requires 512 complete 16-token leaves for its
+    # production geometry. 8192 tokens is still tiny versus the 40,759
+    # token HyperFlow workload, with no weights or text/VAEs loaded.
+    heads, tokens, dim = 8, 8192, 128
     torch.manual_seed(424242)
     try:
         with torch.inference_mode():
