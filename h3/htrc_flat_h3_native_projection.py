@@ -189,10 +189,9 @@ def graph_attention_native_h3(attn, x, rope_freqs, *, group_heads=8,
                               budget_mib=1024, reserve_mib=256):
     """One native model attention, preserving original quantized qkv_proj.
 
-    REQUIRE preselected isolated research Graph geometry with one Graph head
-    group per call (e.g. APL_HTRC_DIRECTFLOW_GROUP_POLICY=reuse_aware,
-    APL_HTRC_DIRECTFLOW_GROUP=8,
-    APL_HTRC_DIRECTFLOW_RESEARCH_FORCE_GROUP=8).
+    Requests one 8-head research session per call with a per-call override.
+    It bypasses the conservative head-group ESTIMATE only, not actual
+    Graph extra reservation or free-VRAM fail-closed gates.
     Returns same [N, hidden] shape after original out_proj as stock Attention.
     """
     from . import htrc_flat_directflow_live as flow
@@ -217,7 +216,8 @@ def graph_attention_native_h3(attn, x, rope_freqs, *, group_heads=8,
             budget_mib=budget_mib, reserve_mib=reserve_mib,
             workspace=True, compare_only=True,
             query_provider=producer.fill_q, kv_provider=producer.fill_kv,
-            research_source_kind="native_h3")
+            research_source_kind="native_h3",
+            research_group_size=group_heads)
         output[:, :, begin:end, :].copy_(result)
         summary.append(producer.stats)
         del result, producer
