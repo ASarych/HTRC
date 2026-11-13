@@ -100,7 +100,7 @@ class TestGraphMemoryToSpeed(unittest.TestCase):
              dict(heads=0))
         for changes in bad:
             with self.subTest(changes=changes),self.assertRaises(ValueError):
-                plan(15275,**changes)
+                plan(**{"tokens":15275,**changes})
 
     def test_legacy_group_is_default_even_after_optin(self):
         text=FLOW.read_text(encoding="utf8")
@@ -129,7 +129,8 @@ class TestGraphMemoryToSpeed(unittest.TestCase):
     def test_quality_ab_is_nonfatal(self):
         src=RUNNER.read_text(encoding="utf8")
         self.assertIn("quality_against_exact(",src)
-        self.assertIn("relative_l2_percent",src)
+        quality=(ROOT/"tools"/"h3_flat_quality_reference.py").read_text(encoding="utf8")
+        self.assertIn('"relative_l2_percent"',quality)
         self.assertIn("graph_attention_bthd(",src)
         self.assertIn("compare_only=True",src)
         self.assertIn("materialized",src)
