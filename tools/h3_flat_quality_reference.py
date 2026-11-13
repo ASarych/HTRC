@@ -51,18 +51,25 @@ def exact_dense_sampled_queries(q, k, v, positions, *, query_batch: int = 8):
         raise ValueError("Duplicate query positions")
     out=torch.empty((len(positions),h,128),dtype=torch.float32,device=q.device)
     scaling=1.0/math.sqrt(128.0)
-    with torch.inference_mode():
-        for head in range(h):
-            # One head at a time avoids an N x N matrix and bounds
-            # temporary logits to [query_batch, N].
-            kh=k[0,head].float().contiguous()
-            vh=v[0,head].float().contiguous()
-            for start in range(0,len(positions),query_batch):
-                ix=positions[start:start+query_batch]
-                qh=q[0,head,list(ix),:].float().contiguous()
-                logits=(qh@kh.transpose(0,1))*scaling
-                probabilities=torch.softmax(logits,dim=-1)
-                out[start:start+len(ix),head,:]=probabilities@vh
+    # FP32 baseline must not accidentally use NVIDIA TF32/precision
+    # shortcuts inherited from ComfyUI's global matmul settings.
+    prior_tf32=torch.backends.cuda.matmul.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32=False
+        with torch.inference_mode():
+            for head in range(h):
+                # One head at a time avoids an N x N matrix and bounds
+                # temporary logits to [query_batch, N].
+                kh=k[0,head].float().contiguous()
+                vh=v[0,head].float().contiguous()
+                for start in range(0,len(positions),query_batch):
+                    ix=positions[start:start+query_batch]
+                    qh=q[0,head,list(ix),:].float().contiguous()
+                    logits=(qh@kh.transpose(0,1))*scaling
+                    probabilities=torch.softmax(logits,dim=-1)
+                    out[start:start+len(ix),head,:]=probabilities@vh
+    finally:
+        torch.backends.cuda.matmul.allow_tf32=prior_tf32
     return out
 
 

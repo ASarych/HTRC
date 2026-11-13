@@ -160,6 +160,8 @@ class ScaleProtocolContracts(unittest.TestCase):
             encoding="utf-8")
         self.assertIn("logits=(qh@kh.transpose(0,1))*scaling",src)
         self.assertIn("probabilities=torch.softmax(logits,dim=-1)",src)
+        self.assertIn("torch.backends.cuda.matmul.allow_tf32=False",src)
+        self.assertIn("torch.backends.cuda.matmul.allow_tf32=prior_tf32",src)
         self.assertIn("out[start:start+len(ix),head,:]=probabilities@vh",src)
         self.assertIn("FP32_softmax_all_KV_for_sampled_query_positions",src)
         self.assertNotIn("torch.topk",src)

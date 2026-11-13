@@ -42,6 +42,8 @@ Quality examples:
 The quality oracle uses FP32 scaled dot-product attention with
 softmax over **every key/value token**, noncausal self-attention,
 scale 1/sqrt(128), no near-leaf selection or Flat approximation.
+TF32 matmul shortcuts are explicitly disabled for reference computation
+and the prior PyTorch setting is restored afterward.
 It evaluates evenly spaced query indices (default 64), including
 the first and final query, per head and over TWO different QKV banks.
 Q batches of 8 avoid allocating an N x N score matrix.
