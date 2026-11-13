@@ -1,0 +1,137 @@
+{
+  "schema": "h3-flat-graph-ab-real-run-v1",
+  "date": "2026-11-13",
+  "gpu": "NVIDIA GeForce RTX 5070 Ti 16 GiB",
+  "model": "minimax_h3_ref2va_hyperflow_flash_14b-nvfp4_from_int8.safetensors",
+  "checkpoint_hyperflow_steps": 6,
+  "conditions": {
+    "prompt_file": "bear_fight_reference.txt",
+    "reference_file": "APL_klein_quality_anime_safe20_seed20260911_00001_.png",
+    "reference_sha256": "c9dc0978c5543078496b078c976cc7fb6d60bc359f1af41de6229170b98a6ccd",
+    "seed": 424242,
+    "frames": 39,
+    "width": 1344,
+    "height": 768,
+    "fps": 24,
+    "sampler": "Euler + Simple",
+    "denoise": 1,
+    "guider": "BasicGuider",
+    "attention": "htrc_flat_gpu",
+    "mode": "fast",
+    "tiles": 16,
+    "workspace": true,
+    "group_cap": 11,
+    "tau": 0,
+    "quality_coefficient": 0,
+    "reusable_slots": false,
+    "profile_attention": true
+  },
+  "source": {
+    "htrc_root": "D:\\HTRC-directflow-real-20261112",
+    "htrc_head": "c8b2257085975d158dae02c086ecec26ec0001f1",
+    "htrc_preexisting_modified_files": [
+      "h3/htrc_flat_head_batch.py",
+      "h3/htrc_flat_live_backend.py",
+      "h3/htrc_flat_model_shadow.py",
+      "h3/htrc_flat_windows.py"
+    ],
+    "comfy_nodes_head": "7e2559212c59f79cffe5740e0fa35d82afacf6c3"
+  },
+  "runs": [
+    {
+      "dispatch": "eager",
+      "repeat": 1,
+      "denoise_progress_seconds": 75,
+      "mean_step_seconds": 12.5,
+      "prompt_elapsed_seconds": 227.6118169,
+      "slots_allocations": 0,
+      "slots_reuses": 0,
+      "slots_trims": 0,
+      "dynamic_grants": 282,
+      "dynamic_denials": 0,
+      "attention_peak_drop_gib": 0.44,
+      "attention_retained_gib": 0.19
+    },
+    {
+      "dispatch": "eager",
+      "repeat": 2,
+      "warm_backend": true,
+      "denoise_progress_seconds": 64,
+      "mean_step_seconds": 10.6667,
+      "prompt_elapsed_seconds": 165.7801755,
+      "slots_allocations": 0,
+      "slots_reuses": 0,
+      "slots_trims": 0,
+      "dynamic_grants": 276,
+      "dynamic_denials": 0,
+      "attention_peak_drop_gib": 0.28,
+      "attention_retained_gib": 0.06
+    },
+    {
+      "dispatch": "graph",
+      "repeat": 1,
+      "denoise_progress_seconds": 53,
+      "mean_step_seconds": 8.8333,
+      "prompt_elapsed_seconds": 188.8217844,
+      "slots_allocations": 0,
+      "slots_reuses": 0,
+      "slots_trims": 0,
+      "dynamic_grants": 298,
+      "dynamic_denials": 0,
+      "attention_peak_drop_gib": 0.41,
+      "attention_retained_gib": 0.41
+    },
+    {
+      "dispatch": "graph",
+      "repeat": 2,
+      "warm_backend": true,
+      "denoise_progress_seconds": 48,
+      "mean_step_seconds": 8,
+      "prompt_elapsed_seconds": 142.1204369,
+      "slots_allocations": 0,
+      "slots_reuses": 0,
+      "slots_trims": 0,
+      "dynamic_grants": 263,
+      "dynamic_denials": 0,
+      "attention_peak_drop_gib": 0.19,
+      "attention_retained_gib": 0.06
+    }
+  ],
+  "attention_gate": {
+    "status": "PASS_FIRST_REAL_CALL",
+    "all_groups_bitwise_equal": true,
+    "heads": 56,
+    "tokens": 15275,
+    "groups": 6,
+    "graph_gpu_event_sum_ms": 88.455,
+    "eager_gpu_event_sum_ms": 397.686,
+    "capture_plus_parity_wall_ms": 1214.3475,
+    "extra_reserved_mib": 192,
+    "free_after_mib": 5227,
+    "caveat": "Per-group synchronized event sums are diagnostic, not whole-model speedup."
+  },
+  "accuracy": {
+    "final_av_latents_bitwise_equal": true,
+    "all_six_off_vs_on_step_checkpoints_bitwise_equal": true,
+    "repeats_within_each_dispatch_bitwise_equal": true,
+    "max_abs_error": 0,
+    "rmse": 0
+  },
+  "memory": {
+    "htrc_attention_admission_gib": 2.32,
+    "lowest_spot_sample_free_mib": 1005,
+    "spot_sample_continuous": false,
+    "any_oom": false,
+    "any_admission_denial": false,
+    "ledger_errors": 0
+  },
+  "artifacts_local": {
+    "off_r1_video": "D:\\ComfyOutput\\H3\\htrc_flat_gpu\\H3_htrc_flat_gpu_graph_off_r1_00001_.mp4",
+    "off_r2_video": "D:\\ComfyOutput\\H3\\htrc_flat_gpu\\H3_htrc_flat_gpu_graph_off_r2_00001_.mp4",
+    "on_r1_video": "D:\\ComfyOutput\\H3\\htrc_flat_gpu\\H3_htrc_flat_gpu_graph_on_r1_00001_.mp4",
+    "on_r2_video": "D:\\ComfyOutput\\H3\\htrc_flat_gpu\\H3_htrc_flat_gpu_graph_on_r2_00001_.mp4",
+    "off_r1_latent": "D:\\ComfyOutput\\H3\\math_probe\\h3_graph_off_r1_latent.safetensors",
+    "on_r1_latent": "D:\\ComfyOutput\\H3\\math_probe\\h3_graph_on_r1_latent.safetensors"
+  },
+  "interpretation_limit": "Current profiler times only the first two attention calls per run, not total steady-state attention over every transformer block."
+}
