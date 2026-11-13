@@ -79,7 +79,9 @@ default branches, scratch and producer/consumer ordering (10 tests).
 tools/benchmark_h3_flat_streamed_vb_ab.py: synthetic two different
 nonzero BF16 Q/K/V banks of native H3 shape, compares the two Graph
 variants each to the eager oracle (all groups), compares outputs between
-Graph variants bit-for-bit for both banks, checks that changing all Q/K/V
+Graph variants bit-for-bit for both banks; independently compares the
+second bank of each Graph variant against the native eager Flat, and
+checks that changing all Q/K/V
 changes the output, measures warmed repeated Graph replay with all
 K8/QKV and window costs included. Output is ONE JSON.
 This is not model-resident H3, Sol, or video.

@@ -106,6 +106,8 @@ class StreamVBContracts(unittest.TestCase):
         self.assertIn('"completed":False',src)
         self.assertIn('"real_video":"UNRUN"',src)
         self.assertIn("torch.equal(",src)
+        self.assertIn('dispatch="eager"',src)
+        self.assertIn('"bank_b_eager_bit_exact"',src)
         self.assertIn("write_text(json.dumps(result,indent=2)",src)
 
     def test_split_vb_upper_bound(self):

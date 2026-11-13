@@ -21,6 +21,7 @@ import torch
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from h3 import htrc_flat_directflow_live as flow
+from h3 import htrc_flat_live_backend as live
 
 
 def _timed(call, rounds):
@@ -87,6 +88,19 @@ def run_ab(tokens, heads, mode, tiles, rounds, budget_mib, reserve_mib, output):
                 second=calculate(banks[1])
                 torch.cuda.synchronize()
                 saved[(variant,1)]=second.clone()
+                # Mutable source bank B is independently compared with
+                # the proven native eager path, not merely the other Graph.
+                eager_b=live.flat_attention_bthd(
+                    *banks[1],heads=heads,mode=mode,tiles=tiles,
+                    budget_mib=budget_mib,reserve_mib=reserve_mib,
+                    workspace=True,query_staging="native_torch_mu",
+                    kv_staging="native_direct",dispatch="eager",
+                )
+                gates[variant]["bank_b_eager_bit_exact"]=bool(
+                    torch.equal(second,eager_b))
+                if not gates[variant]["bank_b_eager_bit_exact"]:
+                    raise AssertionError(f"Bank B eager parity FAILED: {variant}")
+                del eager_b
                 if torch.equal(first,second):
                     raise AssertionError("Bank A/B outputs should differ")
                 # Exclude first-call capture and eager parity from timing.
