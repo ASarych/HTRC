@@ -632,7 +632,22 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
             raise TypeError("Unsupported native Q dtype")
         if query_staging=="native_direct":
             # Existing independent Triton MU reference.
-            MU=torch.empty((h,centers,dim),device=dev,dtype=torch.float32)
+            # During CUDA Graph capture, a new MU allocation inside
+            # perform() may have a capture-private pointer that Triton's
+            # launcher cannot dereference. Prefer a persistent CUDA
+            # workspace tensor allocated BEFORE graph capture.
+            MU=(query_workspace.get("MU") if query_workspace is not None
+                else None)
+            if MU is None:
+                if os.environ.get("APL_HTRC_GRAPH_CAPTURE_SAFE_MU") == "1":
+                    raise RuntimeError(
+                        "Capture-safe native MU requires a preallocated GPU buffer")
+                MU=torch.empty((h,centers,dim),device=dev,dtype=torch.float32)
+            elif (not isinstance(MU,torch.Tensor)
+                  or tuple(MU.shape)!=(h,centers,dim)
+                  or MU.dtype!=torch.float32 or MU.device!=q_cap.device
+                  or not MU.is_contiguous()):
+                raise ValueError("Invalid capture-safe preallocated MU buffer")
             triton_module._direct_q_mu_kernel[(h,centers)](
                 Q,MU,centers,group,tile,dim,
                 int(Q.stride(0)),int(Q.stride(1)),int(Q.stride(2)),int(Q.stride(3)),
@@ -800,13 +815,34 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
             splits=int(config["splits"]),stride=1,dot=1,
             ws=query_workspace,sg=sgf
         )
-    ids=torch.topk(sel,kx,dim=-1,sorted=False).indices
+    if (query_workspace is not None
+        and "_TOPK_VALUES" in query_workspace
+        and "_TOPK_IDS" in query_workspace):
+        # Keep top-k GPU outputs stable through Graph capture/replay.
+        # The old eager/benchmark path remains unchanged by default.
+        topv=query_workspace["_TOPK_VALUES"]
+        ids=query_workspace["_TOPK_IDS"]
+        if (not all(isinstance(t,torch.Tensor) for t in (topv,ids))
+            or tuple(topv.shape)!=(h*centers,kx)
+            or tuple(ids.shape)!=(h*centers,kx)
+            or topv.dtype!=sel.dtype or ids.dtype!=torch.int64
+            or topv.device!=q_cap.device or ids.device!=q_cap.device
+            or not topv.is_contiguous() or not ids.is_contiguous()):
+            raise ValueError("Invalid capture-safe topk output buffers")
+        torch.topk(sel,kx,dim=-1,sorted=False,out=(topv,ids))
+    else:
+        if os.environ.get("APL_HTRC_GRAPH_CAPTURE_SAFE_MU") == "1":
+            raise RuntimeError(
+                "Capture-safe Graph requires preallocated topk buffers")
+        ids=torch.topk(sel,kx,dim=-1,sorted=False).indices
     if query_workspace is None:
         idx=ids.to(torch.int32).view(h,centers,kx).contiguous()
         excl=torch.zeros((h*centers,nb),device=dev,dtype=torch.int8)
     else:
         idx=state_buffer("IDX",(h,centers,kx),torch.int32)
-        idx.copy_(ids.to(torch.int32).view(h,centers,kx))
+        # copy_ casts the persistent INT64 indices to INT32 into the
+        # existing output buffer, avoiding a short-lived CUDA allocation.
+        idx.copy_(ids.view(h,centers,kx))
         excl=state_buffer("EXCL",(h*centers,nb),torch.int8)
         # Mandatory reset: do NOT reuse prior window's selection/EXCL contents.
         excl.zero_()
