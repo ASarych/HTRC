@@ -379,42 +379,71 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                 # K8, all windows, merge and output writes.
                 if verify:
                     graph_t = _measurement(replay, dev)
-                    eager_out = None
-                    def eager():
-                        nonlocal eager_out
-                        eager_out = live.flat_attention_bthd(
-                            *bank, heads=h, mode=mode, tiles=tiles,
-                            budget_mib=budget_mib, reserve_mib=reserve_mib,
-                            workspace=True, observer=None,
-                            query_staging="native_torch_mu",
-                            kv_staging="native_direct",
-                            dispatch="eager",
+                    if memory_trace is not None:
+                        memory_trace.append({
+                            "phase": "after_group_graph_replay",
+                            "session_heads": h, "head_range": [begin, end],
+                            **_memory_probe(dev, baseline_memory),
+                        })
+                    if compare_only:
+                        # Research already compares against sampled all-key
+                        # FP32 dense. An eager Flat call per group has a large
+                        # temporary allocator footprint, contaminating the
+                        # Graph-memory gate and other arms' measurements.
+                        # Never claim bit parity when that call was skipped.
+                        rows.append({
+                            "head_range": [begin, end],
+                            "eager_flat_diagnostic_status": "SKIPPED_COMPARE_ONLY",
+                            "exact_flat_parity": None,
+                            "relative_l2_to_eager_flat_percent": None,
+                            "max_abs_to_eager_flat": None,
+                            "graph_gpu_event_ms": graph_t["gpu_event_ms"],
+                            "eager_gpu_event_ms": None,
+                            "graph_sync_wall_ms": graph_t["sync_wall_ms"],
+                            "eager_sync_wall_ms": None,
+                            "capture_wall_ms": (
+                                stage["capture_wall_ms"] if first_group else 0.0
+                            ),
+                        })
+                    else:
+                        # Production remains fail-closed with mandatory
+                        # bit-exact native eager Flat first-call parity.
+                        eager_out = None
+                        def eager():
+                            nonlocal eager_out
+                            eager_out = live.flat_attention_bthd(
+                                *bank, heads=h, mode=mode, tiles=tiles,
+                                budget_mib=budget_mib, reserve_mib=reserve_mib,
+                                workspace=True, observer=None,
+                                query_staging="native_torch_mu",
+                                kv_staging="native_direct",
+                                dispatch="eager",
+                            )
+                        eager_t = _measurement(eager, dev)
+                        exact = bool(torch.equal(group_out, eager_out[0]))
+                        diff = group_out.float()-eager_out[0].float()
+                        maximum = float(diff.abs().amax().item())
+                        rel_l2_pct = float(
+                            diff.norm().item() /
+                            max(eager_out[0].float().norm().item(),1.0e-30)*100.0
                         )
-                    eager_t = _measurement(eager, dev)
-                    exact = bool(torch.equal(group_out, eager_out[0]))
-                    diff = group_out.float()-eager_out[0].float()
-                    maximum = float(diff.abs().amax().item())
-                    rel_l2_pct = float(
-                        diff.norm().item() /
-                        max(eager_out[0].float().norm().item(),1.0e-30)*100.0
-                    )
-                    if not exact and not compare_only:
-                        raise AssertionError(
-                            f"Direct-Flow real H3 mismatch at heads "
-                            f"[{begin},{end}): max_abs={maximum:.8g}"
-                        )
-                    rows.append({
-                        "head_range":[begin,end],
-                        "exact_flat_parity":exact,
-                        "relative_l2_to_eager_flat_percent":rel_l2_pct,
-                        "max_abs_to_eager_flat":maximum,
-                        "graph_gpu_event_ms":graph_t["gpu_event_ms"],
-                        "eager_gpu_event_ms":eager_t["gpu_event_ms"],
-                        "graph_sync_wall_ms":graph_t["sync_wall_ms"],
-                        "eager_sync_wall_ms":eager_t["sync_wall_ms"],
-                        "capture_wall_ms":stage["capture_wall_ms"] if first_group else 0.0,
-                    })
-                    del eager_out
+                        if not exact and not compare_only:
+                            raise AssertionError(
+                                f"Direct-Flow real H3 mismatch at heads "
+                                f"[{begin},{end}): max_abs={maximum:.8g}"
+                            )
+                        rows.append({
+                            "head_range":[begin,end],
+                            "exact_flat_parity":exact,
+                            "relative_l2_to_eager_flat_percent":rel_l2_pct,
+                            "max_abs_to_eager_flat":maximum,
+                            "graph_gpu_event_ms":graph_t["gpu_event_ms"],
+                            "eager_gpu_event_ms":eager_t["gpu_event_ms"],
+                            "graph_sync_wall_ms":graph_t["sync_wall_ms"],
+                            "eager_sync_wall_ms":eager_t["sync_wall_ms"],
+                            "capture_wall_ms":stage["capture_wall_ms"] if first_group else 0.0,
+                        })
+                        del eager_out
                 else:
                     replay()
             if verify:
@@ -440,8 +469,15 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "window_tiles":tiles,
                     "query_windows":len(geometries),
                     "graph_replays_per_attention":len(geometries)*math.ceil(total_heads/group_cap),
-                    "all_groups_bit_exact":all(x["exact_flat_parity"] for x in rows),
+                    "eager_first_call_diagnostic":(
+                        "SKIPPED_COMPARE_ONLY" if compare_only else "EXECUTED"
+                    ),
+                    "all_groups_bit_exact":(
+                        None if compare_only else
+                        all(x["exact_flat_parity"] for x in rows)
+                    ),
                     "speedup_eager_over_graph_gpu_by_group_sums":(
+                        None if compare_only else
                         sum(x["eager_gpu_event_ms"] for x in rows)/
                         sum(x["graph_gpu_event_ms"] for x in rows)
                     ),
@@ -454,8 +490,10 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "fixed_exact_leaves":int(cfg["exact_leaves"]),
                     "center_group":1,
                     "notes":[
-                        ("Research compare_only: eager Flat disagreement is a metric, "
-                         "not a correctness gate; exact softmax quality is external."
+                        ("Research compare_only: eager Flat diagnostic SKIPPED "
+                         "to prevent its temporary allocator reservations from "
+                         "contaminating Graph head-group A/B; sampled all-key "
+                         "FP32 dense reference is external."
                          if compare_only else
                          "First real model attention call only, group-by-group exact parity."),
                         "One or two reused graph geometries per size, no stale model QKV pointers.",
