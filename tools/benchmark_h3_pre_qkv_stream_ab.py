@@ -1,9 +1,10 @@
 """One-JSON BF16 synthetic pre-QKV projection + Flat Graph A/B.
 
 A: full fused [Q,K,V] projection, then Graph with 8-head groups.
-B: selected output-channel K/V projection per group in 4096-row chunks,
-   followed by lazy Q projection per Graph window. No full QKV is made.
-Measures projection + full Graph Flat attention, not just replay overhead.
+B: K/V per-group staging and lazy per-window Q (previous control).
+C: direct projection of K/V into stable Graph-owned stage; lazy Q.
+D: direct Graph-owned K/V and one full Q projection per 8-head group.
+All calls time projection + full Graph attention, not just replay.
 No MiniMax checkpoint, real Q/K norm/RoPE, NVFP4, or video; no promotion.
 """
 from __future__ import annotations
@@ -112,11 +113,21 @@ def run_case(tokens, args, row, write):
             reserve_mib=args.reserve_mib, workspace=True,
             compare_only=True)
 
-    def streamed_call():
+    def projected_call(kv_mode, q_mode):
         return pre.projected_graph_attention(
             x, weights, heads=args.heads, group_heads=args.group_heads,
             chunk_rows=args.chunk_rows, mode=args.mode, tiles=args.tiles,
-            budget_mib=args.budget_mib, reserve_mib=args.reserve_mib)
+            budget_mib=args.budget_mib, reserve_mib=args.reserve_mib,
+            kv_mode=kv_mode, q_mode=q_mode)
+
+    def streamed_call():
+        return projected_call("separate", "window")
+
+    def direct_kv_lazy_q_call():
+        return projected_call("graph_owned", "window")
+
+    def direct_kv_group_q_call():
+        return projected_call("graph_owned", "group")
 
     prior = {key: os.environ.get(key) for key in ENV_KEYS}
     try:
@@ -129,7 +140,9 @@ def run_case(tokens, args, row, write):
         os.environ["APL_HTRC_DIRECTFLOW_VB_MODE"] = "materialized"
         with torch.inference_mode():
             for arm, call in (("full_qkv", full_call),
-                              ("streamed_kv_lazy_q", streamed_call)):
+                              ("streamed_kv_lazy_q", streamed_call),
+                              ("direct_kv_lazy_q", direct_kv_lazy_q_call),
+                              ("direct_kv_group_q", direct_kv_group_q_call)):
                 result = {"status": "RUNNING", "model_video": "UNRUN"}
                 row["arms"][arm] = result
                 write()
@@ -228,7 +241,7 @@ def main():
         ap.error("Invalid tokens/head groups/projection/benchmark arguments")
 
     report = {
-        "experiment": "h3_pre_qkv_stream_graph_ab_v1",
+        "experiment": "h3_pre_qkv_stream_graph_ab_v2",
         "status": "PLAN_ONLY",
         "scope": "synthetic BF16 fused projection + full Flat Graph",
         "same_input_across_arms": True,
@@ -242,16 +255,20 @@ def main():
         "warnings": [
             "Full QKV baseline is separate from streamed candidate; "
             "peak stats include allocator/Graph buffers and input source.",
-            "Streamed candidate still copies one group K/V into stable Graph "
-            "staging; no Graph-owned direct projection has been proven.",
-            "Q is projected on demand for each Graph query window.",
+            "streamed_kv_lazy_q keeps separate group K/V and copies into Graph.",
+            "direct_kv_lazy_q/direct_kv_group_q project K/V directly into "
+            "the stable Graph buffers; extra K/V source copies are avoided.",
+            "Group-Q creates only one 8-head Q tensor and reuses it per window.",
+            "All Graph-owned producer modes are research-only compare_only.",
             "Different GEMM shapes may change BF16 rounding/top-k; "
             "sample quality and not an assumed bit parity is reported.",
             "No H3 real-model quality, RoPE/norm or NVFP4 support claimed.",
         ],
         "cases": [{"tokens": n, "status": "UNRUN",
                    "arms": {"full_qkv": {"status": "UNRUN"},
-                            "streamed_kv_lazy_q": {"status": "UNRUN"}}}
+                            "streamed_kv_lazy_q": {"status": "UNRUN"},
+                            "direct_kv_lazy_q": {"status": "UNRUN"},
+                            "direct_kv_group_q": {"status": "UNRUN"}}}
                   for n in lengths],
     }
     def write():
