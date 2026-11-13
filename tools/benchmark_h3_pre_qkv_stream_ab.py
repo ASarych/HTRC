@@ -167,6 +167,10 @@ def run_case(tokens, args, row, write):
                             torch.cuda.max_memory_allocated()-baseline_alloc) / 2**20
                         result["cold_peak_reserved_extra_mib"] = (
                             torch.cuda.max_memory_reserved()-baseline_reserved) / 2**20
+                        result["cold_peak_allocated_absolute_mib"] = (
+                            torch.cuda.max_memory_allocated()/2**20)
+                        result["cold_peak_reserved_absolute_mib"] = (
+                            torch.cuda.max_memory_reserved()/2**20)
                         if gate.exists():
                             detail = json.loads(gate.read_text(encoding="utf-8"))
                             result["first_graph_status"] = detail.get("status")
@@ -191,6 +195,10 @@ def run_case(tokens, args, row, write):
                             torch.cuda.max_memory_allocated()/2**20)
                         result["warm_peak_reserved_mib"] = (
                             torch.cuda.max_memory_reserved()/2**20)
+                        result["warm_peak_allocated_extra_mib"] = (
+                            torch.cuda.max_memory_allocated()-baseline_alloc)/2**20
+                        result["warm_peak_reserved_extra_mib"] = (
+                            torch.cuda.max_memory_reserved()-baseline_reserved)/2**20
                         result["status"] = "MEASURED"
                 except BaseException as exc:
                     result["status"] = "RUNTIME_FAILED"
