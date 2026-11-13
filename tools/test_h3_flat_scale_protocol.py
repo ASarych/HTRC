@@ -119,6 +119,8 @@ class ScaleProtocolContracts(unittest.TestCase):
         self.assertIn('report["gpu_execution"] = "STOPPED_AT_FAILURE"',txt)
         self.assertIn('if args.execute:',txt)
         self.assertIn('default="short"',txt)
+        self.assertIn('cap["source_model"]=estimate_case(',txt)
+        self.assertIn('tokens=cap["tokens"],heads=56',txt)
         self.assertIn('"no_fullhd_gpu_execution": True',
                       (ROOT/"tools"/"h3_flat_scale_protocol.py").read_text(
                           encoding="utf-8"))

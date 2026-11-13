@@ -21,6 +21,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from h3_flat_scale_protocol import GPU_VARIANTS, plan
+from estimate_h3_flat_long_context import estimate_case
 
 RUNNERS = {
     "split_stream": ROOT / "tools" / "benchmark_h3_flat_streamed_vb_ab.py",
@@ -182,6 +183,14 @@ def main():
             "A numerical failure aborts all later length cases; no fallback.",
         ],
     }
+    # The Full-HD row is a source-based original Flat estimate only.
+    # Never claim admission or GPU feasibility for a new fused backend.
+    for cap in report["capacity_cases"]:
+        cap["source_model_scope"]="MATERIALIZED_FLAT_FORMULA_ONLY"
+        cap["source_model"]=estimate_case(
+            tokens=cap["tokens"],heads=56,mode=args.mode,
+            budget_mib=args.budget_mib,reserve_mib=args.reserve_mib
+        )
     started=time.perf_counter()
     try:
         if args.execute:

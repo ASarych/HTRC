@@ -89,6 +89,9 @@ short numerical correctness and document short latency penalty.
   gate / bank B eager parity / output mismatch stops the matrix.
 - Output is ONE JSON, per-case PASS_NUMERIC or FAILED, and all cases
   not executed remain UNRUN. A numerical pass is NOT a speed PASS.
+  The 223605-token capacity row includes the existing conservative
+  materialized-Flat source formula, explicitly NOT a true admission
+  result or an estimate for fused_vb.
 - This tool doesn't compare Sol, doesn't load HyperFlow, and doesn't
   claim a Full HD video run.
 
