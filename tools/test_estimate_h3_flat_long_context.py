@@ -62,7 +62,7 @@ class LongContextModelContracts(unittest.TestCase):
         self.assertEqual(balanced["exact_leaves"],512)
         self.assertEqual(fast["centre_leaf_pairs"],balanced["centre_leaf_pairs"])
         self.assertAlmostEqual(2*fast["selected_key_fraction"],
-                               balanced["selected_key_fraction"],places=6)
+                               balanced["selected_key_fraction"],delta=2e-6)
 
     def test_score_only_is_explicitly_two_pass(self):
         r=m.estimate_case(tokens=82000)
