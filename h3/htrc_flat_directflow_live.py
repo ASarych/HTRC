@@ -313,6 +313,21 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
             reserve_mib=int(reserve_mib), workspace=True,
         )
         group_cap=min(legacy_cap,head_limit)
+    forced=group_plan.research_forced_group_size(
+        os.environ.get("APL_HTRC_DIRECTFLOW_RESEARCH_FORCE_GROUP"),
+        compare_only=compare_only,policy=policy,
+        max_group=head_limit,heads=total_heads,
+    )
+    if forced is not None:
+        plan=dict(plan)
+        plan["research_forced_group_size"]=forced
+        plan["planner_recommended_group_size"]=group_cap
+        plan["research_force_bypasses_capacity_estimate"]=True
+        plan["research_force_runtime_guard"]="UNCHANGED"
+        # This research-only override can exceed the conservative
+        # 1.5x staged model, but the *actual* post-capture hard memory
+        # and free-VRAM gates below still fail closed.
+        group_cap=forced
     geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode,
             compare_only, policy)
     geometries = list(windows.iter_query_windows(
