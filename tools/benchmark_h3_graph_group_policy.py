@@ -166,7 +166,9 @@ def run_case(row, args, write):
                 result["extra_reserved_mib"]=gate.get("extra_reserved_mib")
                 result["memory_trace"]=gate.get("memory_trace")
                 result["memory_trace_semantics"]=gate.get("memory_trace_semantics")
-                result["eager_flat_diagnostic"]=gate.get("head_groups")
+                result["first_call_group_diagnostic"]=gate.get("head_groups")
+                result["eager_first_call_diagnostic"]=gate.get(
+                    "eager_first_call_diagnostic")
                 result["timing"]=_timing(call,args.rounds)
                 result["peak_allocated_mib"]=float(
                     torch.cuda.max_memory_allocated()/2**20)
@@ -194,18 +196,23 @@ def run_case(row, args, write):
             os.environ[key]=value
     row["pairwise_difference_percent_to_dense_scale"]={}
     row["bit_exact_between_policies"]={}
-    if "legacy" in saved:
+    # Even if legacy is blocked by a VRAM gate, compare every successful
+    # candidate against the first successful arm, never return an empty
+    # comparison merely because legacy failed.
+    baseline_arm=next((arm for arm in POLICIES if arm in saved),None)
+    row["pairwise_reference_arm"]=baseline_arm
+    if baseline_arm is not None:
         ref_sample=exact.detach().cpu().float()
         ref_norm=float(torch.linalg.vector_norm(ref_sample).clamp_min(1.0e-30))
-        for policy in POLICIES:
-            if policy=="legacy" or policy not in saved:
+        for arm in POLICIES:
+            if arm==baseline_arm or arm not in saved:
                 continue
-            diff=saved[policy]-saved["legacy"]
-            row["pairwise_difference_percent_to_dense_scale"][policy]=(
+            diff=saved[arm]-saved[baseline_arm]
+            row["pairwise_difference_percent_to_dense_scale"][arm]=(
                 float(torch.linalg.vector_norm(diff))/ref_norm*100.0
                 if bool(torch.isfinite(diff).all()) else None)
-            row["bit_exact_between_policies"][policy]=bool(torch.equal(
-                saved[policy],saved["legacy"]))
+            row["bit_exact_between_policies"][arm]=bool(torch.equal(
+                saved[arm],saved[baseline_arm]))
     row["sampled_queries"]=len(positions)
     row["sampled_query_positions"]=list(positions)
     row["status"]=(
@@ -281,7 +288,9 @@ def main():
             "No video, checkpoint, or Sol comparison.",
             "Numerical discrepancies are percent metrics and never abort the matrix.",
             "Requested group cap is an upper bound; actual group can be smaller.",
-            "Allocator trace is not an exact measurement of CUDA Graph private pools."
+            "Allocator trace is not an exact measurement of CUDA Graph private pools.",
+            "Compare-only first call skips eager Flat; production strict parity is unchanged.",
+            "Pairwise reference is legacy if available, otherwise the first successful arm."
         ],
         "rows":rows,
     }
