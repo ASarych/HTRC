@@ -30,6 +30,27 @@ _STATE = {"geometry": None, "verified": False, "reports": [], "last_event": None
 _MIB = 1 << 20
 
 
+def _memory_probe(device, baseline=None):
+    """Research allocator snapshot; NOT an exact private Graph-pool breakdown."""
+    allocated = int(torch.cuda.memory_allocated(device))
+    reserved = int(torch.cuda.memory_reserved(device))
+    free, _ = torch.cuda.mem_get_info(device)
+    data = {
+        "allocated_bytes": allocated,
+        "reserved_bytes": reserved,
+        "allocated_mib": round(allocated/_MIB, 3),
+        "reserved_mib": round(reserved/_MIB, 3),
+        "reserved_minus_allocated_mib": round((reserved-allocated)/_MIB, 3),
+        "free_mib": round(free/_MIB, 3),
+    }
+    if baseline is not None:
+        data["allocated_delta_mib"] = round(
+            (allocated-baseline["allocated_bytes"])/_MIB, 3)
+        data["reserved_delta_mib"] = round(
+            (reserved-baseline["reserved_bytes"])/_MIB, 3)
+    return data
+
+
 def _env_int(name, default, lo, hi):
     value = int(os.environ.get(name, str(default)))
     if not lo <= value <= hi:
@@ -81,8 +102,18 @@ def _one_window(window_capture, ids, cfg, tr, cache, ws, tail, geom,
 
 
 def _new_session(bank, geometries, tiles, cfg, tr, warmups,
-                 vb_mode="materialized"):
+                 vb_mode="materialized", memory_trace=None,
+                 baseline_memory=None):
     h, seq = int(bank[0].shape[1]), int(bank[0].shape[2])
+    def note(phase, geom=None):
+        if memory_trace is None:
+            return
+        entry = {"phase": phase, "session_heads": h}
+        if geom is not None:
+            entry["geometry"] = [geom.tile_count, geom.valid_rows]
+        entry.update(_memory_probe(bank[0].device, baseline_memory))
+        memory_trace.append(entry)
+
     ids = list(range(h))
     sk = torch.empty_like(bank[1], memory_format=torch.contiguous_format)
     sv = torch.empty_like(bank[2], memory_format=torch.contiguous_format)
@@ -99,6 +130,7 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups,
         "k": sk, "v": sv, "cap": cap, "cache": cache,
         "tail": tail, "ids": ids, "graphs": {},
     }
+    note("after_stage_kv_cache")
     unique = {}
     for geom in geometries:
         unique[_geometry_key(geom)] = geom
@@ -112,6 +144,7 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups,
         win["q_qhd"] = qbuf.permute(1, 0, 2)
         ws = shared.alloc_workspace(win, h, geom.tile_count, cfg,
                                     vb_mode=vb_mode)
+        note("after_workspace_alloc", geom)
         def perform():
             return _one_window(win, ids, cfg, tr, cache, ws, tail, geom,
                                vb_mode=vb_mode)
@@ -123,10 +156,12 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups,
                 del st, merged
         current.wait_stream(side)
         torch.cuda.synchronize(bank[0].device)
+        note("after_warmup", geom)
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
             states, merged = perform()
         torch.cuda.synchronize(bank[0].device)
+        note("after_capture", geom)
         stage["graphs"][key] = {
             "graph": graph, "q": qbuf, "win": win, "ws": ws,
             "states": states, "output": merged,
@@ -297,6 +332,13 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
             torch.cuda.current_stream(dev).wait_event(previous)
         baseline_reserved = int(torch.cuda.memory_reserved(dev))
         verify = not bool(_STATE["verified"])
+        # Only the opt-in research first call takes detailed snapshots.
+        # They are absent from warmed whole-attention timings.
+        memory_trace = [] if (compare_only and verify) else None
+        baseline_memory = (_memory_probe(dev)
+                           if memory_trace is not None else None)
+        if memory_trace is not None:
+            memory_trace.append({"phase": "baseline", **baseline_memory})
         rows = []
         try:
             for begin, end in batch.iter_head_groups(total_heads, group_cap):
@@ -306,9 +348,18 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                 stage = _SESSIONS.get(key)
                 first_group = stage is None
                 if first_group:
-                    stage = _new_session(bank, geometries, tiles, cfg, tr, warmups,
-                                         vb_mode=vb_mode)
+                    stage = _new_session(
+                        bank, geometries, tiles, cfg, tr, warmups,
+                        vb_mode=vb_mode, memory_trace=memory_trace,
+                        baseline_memory=baseline_memory,
+                    )
                     _SESSIONS[key] = stage
+                if memory_trace is not None:
+                    memory_trace.append({
+                        "phase": "after_session", "session_heads": h,
+                        "new_session": first_group,
+                        **_memory_probe(dev, baseline_memory),
+                    })
                 # Absolute cache cap includes stage buffers and graph pools
                 # for all distinct head-group sizes, not a per-group limit.
                 extra_reserved = max(0,int(torch.cuda.memory_reserved(dev))
@@ -414,6 +465,13 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                         "Model/video completion not established by this one-call gate.",
                     ]
                 }
+                if memory_trace is not None:
+                    result["memory_trace"] = memory_trace
+                    result["memory_trace_semantics"] = (
+                        "Allocator allocated/reserved/free at first-call stages; "
+                        "reserved-minus-allocated is NOT a measured private "
+                        "CUDA Graph pool. No profiling on timed replays."
+                    )
                 _STATE["reports"].append(result)
                 _write_report(result)
             if observer is not None:
@@ -439,7 +497,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         except BaseException as exc:
             # One JSON even on a failed gate; keep the original exception.
             try:
-                _write_report({
+                failure = {
                     "experiment":"h3_directflow_real_model_live_first_call_v1",
                     "completed":False,"mode":mode,"dispatch":"graph",
                     "vb_mode":vb_mode,"group_policy":policy,
@@ -452,7 +510,15 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "error":f"{type(exc).__name__}: {exc}"[:1200],
                     "model_video_complete":False,
                     "quality_coefficient_used":False,
-                })
+                }
+                if memory_trace is not None:
+                    failure["memory_trace"] = memory_trace
+                    failure["memory_at_failure"] = _memory_probe(
+                        dev, baseline_memory)
+                    failure["memory_trace_semantics"] = (
+                        "Allocator snapshots, NOT isolated private Graph pools."
+                    )
+                _write_report(failure)
             except Exception:
                 pass
             # Failed or partly launched graph kernels must finish before
