@@ -266,7 +266,8 @@ def clear_session_cache():
 def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                          budget_mib, reserve_mib, workspace, observer=None,
                          compare_only=False, query_provider=None,
-                         kv_provider=None, research_source_kind="synthetic"):
+                         kv_provider=None, research_source_kind="synthetic",
+                         research_group_size=None):
     """Actual opt-in Flat output [1,S,H,128]. Fail closed on parity/VRAM."""
     if torch.is_grad_enabled():
         raise RuntimeError("H3 Direct-Flow is inference-only")
@@ -289,6 +290,14 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         not compare_only or kv_provider is None or query_provider is None
     ):
         raise ValueError("Native H3 producer is research-only and requires Q/K/V")
+    if research_group_size is not None and (
+        type(research_group_size) is not int or
+        research_group_size < 1 or research_group_size > 32 or
+        not compare_only or kv_provider is None or query_provider is None
+    ):
+        raise ValueError(
+            "Explicit native group override requires 1..32 heads and "
+            "compare_only Q/K/V providers")
     if (mode not in ("fast", "balanced") or not workspace
         or not isinstance(tiles, int) or tiles not in (16, 32, 64)
         or any(x.dtype != torch.bfloat16 for x in (q,k,v))):
@@ -365,10 +374,22 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         # 1.5x staged model, but the *actual* post-capture hard memory
         # and free-VRAM gates below still fail closed.
         group_cap=forced
+    if research_group_size is not None:
+        # Only compare_only providers can bypass the *planner estimate*.
+        # The real post-capture memory and free-VRAM gates remain intact.
+        if research_group_size != total_heads:
+            raise ValueError(
+                "Native Graph projection requires exactly one head group per call"
+            )
+        plan=dict(plan)
+        plan["research_native_head_group_override"]=research_group_size
+        plan["planner_recommended_group_size"]=group_cap
+        plan["research_force_runtime_guard"]="UNCHANGED"
+        group_cap=research_group_size
     if kv_provider is not None and group_cap != total_heads:
         raise ValueError(
             "Graph-owned K/V producer requires one complete equal-head "
-            "session; set explicit reuse_aware research group cap"
+            "session; set explicit research group cap"
         )
     geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode,
             compare_only, policy, query_provider is not None,
