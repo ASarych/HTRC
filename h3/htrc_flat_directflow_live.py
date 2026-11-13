@@ -20,6 +20,7 @@ import time
 import torch
 
 from . import htrc_flat_head_batch as batch
+from . import htrc_flat_graph_group_plan as group_plan
 from . import htrc_flat_model_shadow as shared
 from . import htrc_flat_windows as windows
 
@@ -238,13 +239,18 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
     # Reserve the actual H3 output BEFORE planning the temporary head-group
     # memory. The eager live backend uses the same accounting order.
     output = torch.empty((s, total_heads, 128), device=dev, dtype=q.dtype)
-    # This uses the SAME conservative per-group resident-VRAM planner as
-    # the live eager Flat. Cap to the proven 11-head graph geometry.
-    group_cap, plan = shared._head_plan(
-        cap, total_heads, tiles, cfg, budget_mib=int(budget_mib),
-        reserve_mib=int(reserve_mib), workspace=True,
+    # Keep the existing 11-head planner unchanged by default. The
+    # separately opted-in reuse-aware planner counts the graph-owned BF16
+    # K/V stages ONCE (native cache views alias them), includes distinct
+    # full/tail graph pools, and prefers fewer replayed head groups.
+    policy=os.environ.get(
+        "APL_HTRC_DIRECTFLOW_GROUP_POLICY","legacy"
+    ).strip().lower()
+    if policy not in ("legacy","reuse_aware"):
+        raise ValueError("APL_HTRC_DIRECTFLOW_GROUP_POLICY must be legacy or reuse_aware")
+    head_limit = _env_int(
+        "APL_HTRC_DIRECTFLOW_GROUP", 32 if policy=="reuse_aware" else 11, 1, 32
     )
-    group_cap = min(group_cap, _env_int("APL_HTRC_DIRECTFLOW_GROUP", 11, 1, 11))
     warmups = _env_int("APL_HTRC_DIRECTFLOW_WARMUPS", 4, 3, 20)
     max_extra = _env_int("APL_HTRC_DIRECTFLOW_MAX_EXTRA_MIB", 768, 32, 4096)
     min_free = _env_int(
@@ -257,7 +263,23 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         raise ValueError(
             "APL_HTRC_DIRECTFLOW_VB_MODE must be materialized, split_stream or fused_vb"
         )
-    geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode, compare_only)
+    if policy=="reuse_aware":
+        actual_free,_ = torch.cuda.mem_get_info(dev)
+        plan=group_plan.choose_group(
+            tokens=s,heads=total_heads,tiles=tiles,mode=mode,vb_mode=vb_mode,
+            max_group=head_limit,budget_mib=int(budget_mib),
+            reserve_mib=int(reserve_mib),max_extra_mib=max_extra,
+            free_mib=actual_free/_MIB,min_free_mib=min_free
+        )
+        group_cap=int(plan["group_size"])
+    else:
+        legacy_cap,plan=shared._head_plan(
+            cap, total_heads, tiles, cfg, budget_mib=int(budget_mib),
+            reserve_mib=int(reserve_mib), workspace=True,
+        )
+        group_cap=min(legacy_cap,head_limit)
+    geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode,
+            compare_only, policy)
     geometries = list(windows.iter_query_windows(
         s, tiles, tile_rows=int(cfg["tile"]), center_group=1
     ))
@@ -353,6 +375,8 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "strict_parity_required":not compare_only,
                     "reference_for_quality":"NOT_EAGER_FLAT__USE_EXACT_SOFTMAX",
                     "mode":mode,"dispatch":"graph","vb_mode":vb_mode,
+                    "group_policy":policy,"head_group_cap":group_cap,
+                    "group_plan":plan,
                     "capture_and_parity_first_call_wall_ms":(time.perf_counter()-call_wall_started)*1000,
                     "real_model_qkv":not compare_only,
                     "qkv_source":("caller_supplied_may_be_synthetic" if compare_only
@@ -395,7 +419,8 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
             if observer is not None:
                 observer("htrc_directflow_graph", {
                     "backend":"htrc_flat_gpu_directflow_graph",
-                    "vb_mode":vb_mode,
+                    "vb_mode":vb_mode,"group_policy":policy,
+                    "head_group_cap":group_cap,
                     "heads":total_heads,"tokens":s,
                     "graph_cache_group_sizes":sorted(x[0] for x in _SESSIONS),
                     "first_call_parity_verified":bool(
@@ -417,7 +442,8 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                 _write_report({
                     "experiment":"h3_directflow_real_model_live_first_call_v1",
                     "completed":False,"mode":mode,"dispatch":"graph",
-                    "vb_mode":vb_mode,
+                    "vb_mode":vb_mode,"group_policy":policy,
+                    "head_group_cap":group_cap,
                     "status":"FAIL_CLOSED",
                     "strict_parity_required":not compare_only,
                     "real_model_qkv":not compare_only,

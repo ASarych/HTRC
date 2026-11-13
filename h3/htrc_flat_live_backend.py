@@ -50,7 +50,7 @@ def _triton():
 
 
 def flat_attention_bthd(
-    q, k, v, *, heads, mode="fast", tiles=16,
+    q, k, v, *, heads, mode="balanced", tiles=16,
     budget_mib=1024, reserve_mib=256, workspace=True,
     observer=None, query_staging="gather", kv_staging="gather",
     dispatch=None,
