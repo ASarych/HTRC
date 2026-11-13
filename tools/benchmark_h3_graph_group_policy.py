@@ -179,7 +179,7 @@ def run_case(row, args, write):
         except BaseException as exc:
             result["status"]="RUNTIME_FAILED"
             result["error"]=f"{type(exc).__name__}: {exc}"[:1600]
-         finally:
+        finally:
             try:
                 flow.clear_session_cache()
                 torch.cuda.synchronize()
