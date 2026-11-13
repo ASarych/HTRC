@@ -18,7 +18,7 @@ DIM = 128
 
 def validate(attn, x, rope_freqs, begin, end, q_out, k_out, v_out, *,
              chunk_rows):
-    if torch.is_grad_enabled() or bool(getattr(attn, "training", False)):
+    if torch.is_grad_enabled():
         raise RuntimeError("H3 native streaming is strictly inference-only")
     if (not isinstance(x, torch.Tensor) or x.ndim != 2
         or x.dtype != torch.bfloat16 or x.device.type != "cuda"
@@ -198,7 +198,7 @@ def graph_attention_native_h3(attn, x, rope_freqs, *, group_heads=8,
     heads = int(getattr(attn, "heads", 0))
     if heads < 1 or type(group_heads) is not int or group_heads < 1 or heads % group_heads:
         raise ValueError("Native H3 Flat requires equal genuine head groups")
-    if torch.is_grad_enabled() or bool(getattr(attn, "training", False)):
+    if torch.is_grad_enabled():
         raise RuntimeError("Real H3 Graph research requires no-grad eval")
     s = int(x.shape[0])
     # Shape-only metadata placeholders; no real QKV values read from these.
