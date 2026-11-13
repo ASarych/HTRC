@@ -30,11 +30,12 @@ def _pack_fused_qkv(
     TOTAL_TOKENS: tl.constexpr,
     R: tl.constexpr,
     H: tl.constexpr,
+    D: tl.constexpr,
 ):
     r = tl.program_id(0) * R + tl.arange(0, R)
     h = tl.program_id(1) * H + tl.arange(0, H)
     p = tl.program_id(2)  # 0=Q, 1=K, 2=V
-    d = tl.arange(0, DIM)
+    d = tl.arange(0, D)
 
     good_r = r < ROWS
     good_h = h < HEADS
@@ -42,8 +43,8 @@ def _pack_fused_qkv(
 
     # Input is contiguous [rows, Q(all heads)|K(all heads)|V(all heads)].
     input_offset = (
-        r[:, None, None] * (3 * HEADS * DIM)
-        + (p * HEADS + h[None, :, None]) * DIM
+        r[:, None, None] * (3 * HEADS * D)
+        + (p * HEADS + h[None, :, None]) * D
         + d[None, None, :]
     )
     value = tl.load(INPUT + input_offset, mask=valid, other=0).to(tl.float32)
@@ -53,12 +54,12 @@ def _pack_fused_qkv(
         127.0,
     ).to(tl.int8)
 
-    # Output is [Q/K/V, HEAD, TOKEN, DIM], so a head group can later
+    # Output is [Q/K/V, HEAD, TOKEN, D], so a head group can later
     # unpack contiguous token rows into a Graph-owned BF16 buffer.
     absolute_r = CHUNK_START + r
     output_offset = (
-        (p * HEADS + h[None, :, None]) * (TOTAL_TOKENS * DIM)
-        + absolute_r[:, None, None] * DIM
+        (p * HEADS + h[None, :, None]) * (TOTAL_TOKENS * D)
+        + absolute_r[:, None, None] * D
         + d[None, None, :]
     )
     scale_offset = (
@@ -100,6 +101,6 @@ def pack_normalized_fused(fused, packed, scales, *, start, tokens, heads):
         fused, packed, scales,
         rows, start,
         heads, tokens,
-        ROWS_PER_CTA, HEADS_PER_CTA,
+        ROWS_PER_CTA, HEADS_PER_CTA, DIM,
         num_warps=4,
     )
