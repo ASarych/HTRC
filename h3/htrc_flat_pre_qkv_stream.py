@@ -140,10 +140,11 @@ def projected_graph_attention(x, weight, *, heads=56, group_heads=8,
                               kv_mode="separate", q_mode="window"):
     """All-group output without full QKV. Research-only; no H3 RoPE/norm.
 
-    A group owns full-sequence K/V because Flat queries the entire key range;
-    Q is projected on demand per window, into the Graph-owned Q buffer.
-    The existing Graph staging still copies K/V once per group: eliminating
-    that copy is an *unimplemented* separate optimization.
+    A group owns full-sequence K/V because Flat needs all keys. With
+    kv_mode=graph_owned, projection chunks write DIRECTLY to the stable
+    Graph K/V slots; with separate, an extra group K/V copy remains.
+    Q is either projected per window or once per group, then staged
+    immediately before the corresponding Graph replay.
     """
     validate_projection(x, weight, bias, heads)
     if x.device.type != "cuda":
