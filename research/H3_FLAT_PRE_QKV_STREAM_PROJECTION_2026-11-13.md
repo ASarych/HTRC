@@ -284,3 +284,96 @@ reason to abandon a >500 MiB memory saving.
 This commit records the user-supplied measurements
 only. CPU/GPU tests and actual H3 integration are
 **UNRUN** in this commit.
+
+## Native H3 QKV: real checkpoint integration gate (research-only)
+
+**Exact upstream anchor**: Comfy-Org/ComfyUI
+`comfy/ldm/minimax/model.py` blob
+`f2ab28114bd297c88f081782211baf67fee3a961`.
+H3 Attention.forward invokes
+`q,k,v=self.qkv_proj(x).split(heads*128)` followed by
+`comfy.quant_ops.ck.rms_rope_split_half_` with
+`comfy.model_management.cast_to(q_norm.weight/k_norm.weight)`
+and `rot_dim=rope_freqs.shape[-3]*2`, then original
+`self.out_proj`. The verified ComfyNodes
+`h3/kitchen_chunked_sol.py` uses the original projector on
+4096-row chunks and `model_prefetch.pause_malloc_graph()`
+for Q/K norm weight casts.
+
+HTRC now contains `h3/htrc_flat_h3_native_projection.py`:
+
+1. Invoke the actual `attn.qkv_proj(x[start:stop])` on the
+   currently installed H3 model. This retains CUDA NVFP4,
+   INT8/ConvRot, FP8, BF16, Comfy weight hooks, and per-call
+   prefetched model weight semantics. It does NOT inspect,
+   dequantize or repackage the checkpoint.
+2. Split real native `[Q(all),K(all),V(all)]` projected chunks.
+   Apply the same fused in-place Q/K RMSNorm+RoPE using the
+   matching slice `rope_freqs[:,start:stop]` and the
+   current model Q/K norm weights.
+3. Copy ONLY the selected 8 genuine heads into
+   Graph-owned K/V slots plus a group Q stage, respecting
+   stable CUDA Graph addresses and refreshing on every call.
+4. Replay identical HTRC Flat kernels; produce
+   `[N,hidden]` through the original model `out_proj`.
+   This is an explicit `compare_only` research path,
+   never a default or a validated denoise backend.
+
+**Known computational blocker:** the original quantized
+fused `qkv_proj` still emits ALL 56 heads per chunk.
+The research adapter performs one full projection for
+each eight-head group: **7 complete projection passes**
+per 56-head attention call, compared to one pass in
+the usual full-QKV path. Real NVFP4 weight-row slicing
+without dequantization or patch bypass is NOT proven.
+Do not call the adapter an optimized native QKV kernel
+or promise it beats the existing full projection.
+This first slice establishes actual model compatibility
+and numerical/VRAM behavior before selecting a
+one-pass or channel-selective implementation.
+
+The Graph function adds `research_source_kind="native_h3"`
+and `research_group_size=8` to its compare-only gate
+for accurate telemetry and explicit per-call session
+selection. The default production `legacy`,
+post-capture `MAX_EXTRA_MIB=768`, minimum free-VRAM
+gate, original eager Flat strict parity and fixed Flat
+math remain untouched. The grouping override bypasses
+only a conservative capacity estimate, never actual
+allocator/free-memory guards.
+
+ComfyNodes has a *separate* explicit
+`htrc_native_pre_qkv_probe` attention profile:
+it wraps a single selected block for its first eligible
+call, first executes and **returns the original**
+`Attention.forward` result, then runs an isolated
+native HTRC chunked projection canary on one head group.
+It samples 64 contiguous positions against a SECOND
+genuine model projection call and records RMS-RoPE Q/K,
+V, numerical error, timing and allocator peaks in
+`D:\ComfyOutput\H3\math_probe\h3_native_pre_qkv_canary.json`.
+A different GEMM batch can give nonzero numerical error;
+bitwise equality is recorded, not assumed. It never
+overwrites the actual denoiser output, and restores its
+forward patch after ModelPatcher cleanup/clone lifecycle.
+
+An optional `APL_H3_NATIVE_QKV_CANARY_FULL_GRAPH=1`
+enables the COMPLETE research Graph output from that one
+block, measuring total local time and memory; it still
+returns the unmodified original result and recomputes
+fused QKV seven times. This is a costly, explicitly
+opted-in canary, NOT a full generation benchmark.
+
+**Test status:** CPU native chunk/position-slicing tests
+and ComfyNodes probe lifecycle contract tests were added
+but **UNRUN** in the developer environment. User's
+RTX 5070 Ti has NOT executed native quantized QKV,
+real RMS-RoPE, pre-QKV Graph, or a complete denoise.
+No real VRAM saving or speedup is claimed by this slice.
+
+**Next performance question after native canary:** can
+we build a channel-selective packed-NVFP4 projector or
+one-pass K/V staging without seven repeated fused GEMMs?
+Only then compare the whole 50-block H3 denoise,
+model residency, offload traffic, latency and quality
+against the current optimized baseline.
