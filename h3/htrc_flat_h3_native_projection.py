@@ -102,10 +102,15 @@ def project_group_native(attn, x, rope_freqs, *, begin, end,
             if bool(mm.in_training):
                 raise RuntimeError("Native H3 chunked Graph refuses training")
             if resolve_norms is None:
-                resolve_norms = lambda: (
-                    mm.cast_to(attn.q_norm.weight, device=x.device),
-                    mm.cast_to(attn.k_norm.weight, device=x.device),
-                )
+                import comfy.model_prefetch as model_prefetch
+                def resolve_norms():
+                    # Match the current Kitchen provider's live Q/K norm
+                    # weight admission; never retain a stale GPU cast.
+                    with model_prefetch.pause_malloc_graph():
+                        return (
+                            mm.cast_to(attn.q_norm.weight, device=x.device),
+                            mm.cast_to(attn.k_norm.weight, device=x.device),
+                        )
             if rms_rope_inplace is None:
                 rms_rope_inplace = quant_ops.ck.rms_rope_split_half_
         qw, kw = resolve_norms()
