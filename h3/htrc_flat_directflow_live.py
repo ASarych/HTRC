@@ -163,7 +163,10 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups,
             # native_torch_mu's temporary torch.mean(...).contiguous()
             # result was allocated inside capture; Triton on the Windows
             # CUDA malloc-async backend rejected its pointer.
-            centers = geom.tile_count // int(cfg["kern"]["group"])
+            # Flat's group=1 is the established default; balanced/fast
+            # production configs do not always materialize that key.
+            # Use the SAME optional-key semantics as graph_attention_bthd.
+            centers = geom.tile_count // int(cfg.get("kern", {}).get("group", 1))
             leaves = (seq // 16)
             near = min(int(cfg["exact_leaves"]), leaves)
             if near < 1:
