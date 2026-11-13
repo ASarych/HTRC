@@ -58,6 +58,51 @@ class PreQKVStreamTests(unittest.TestCase):
                                 stage[:, b-a:, :],
                                 stage[:, b-a-1:b-a, :].expand(-1, 3, -1)))
 
+    def test_direct_kv_writer_overwrites_graph_owned_buffers(self):
+        with torch.inference_mode():
+            torch.manual_seed(15275)
+            x = torch.randn((37, 24), dtype=torch.bfloat16)
+            w = torch.randn((3*4*128, 24), dtype=torch.bfloat16)
+            bias = torch.randn((3*4*128,), dtype=torch.bfloat16)
+            _, wkv, _, bkv = pre.group_weights(w, bias, 4, 0, 2)
+            old_k, old_v = pre.project_kv_chunks(x, wkv, bkv, 2, 7)
+            new_k = torch.full_like(old_k, float("nan"))
+            new_v = torch.full_like(old_v, float("nan"))
+            ptr_k, ptr_v = new_k.data_ptr(), new_v.data_ptr()
+            pre.write_kv_chunks(x, wkv, bkv, 2, new_k, new_v, 7)
+            self.assertTrue(torch.equal(old_k, new_k))
+            self.assertTrue(torch.equal(old_v, new_v))
+            self.assertEqual(new_k.data_ptr(), ptr_k)
+            self.assertEqual(new_v.data_ptr(), ptr_v)
+            # Fresh noisy latent must refresh the same addresses in-place.
+            next_x = x + 0.25
+            ref_k, ref_v = pre.project_kv_chunks(next_x, wkv, bkv, 2, 7)
+            pre.write_kv_chunks(next_x, wkv, bkv, 2, new_k, new_v, 7)
+            self.assertTrue(torch.equal(ref_k, new_k))
+            self.assertTrue(torch.equal(ref_v, new_v))
+            self.assertFalse(torch.equal(old_k, new_k))
+            with self.assertRaises(ValueError):
+                pre.write_kv_chunks(x, wkv, bkv, 2, new_k, new_k, 7)
+
+    def test_group_q_writer_matches_full_group_projection(self):
+        with torch.inference_mode():
+            torch.manual_seed(5)
+            x = torch.randn((23, 17), dtype=torch.bfloat16)
+            w = torch.randn((3*3*128, 17), dtype=torch.bfloat16)
+            wq, _, bq, _ = pre.group_weights(w, None, 3, 0, 2)
+            group_q = F.linear(x, wq, bq).view(
+                23, 2, 128).permute(1, 0, 2).unsqueeze(0)
+            provider = pre.precomputed_query_provider(group_q)
+            for begin, end in ((0, 7), (14, 23), (22, 23)):
+                stage = torch.empty((2, end-begin+5, 128),
+                                    dtype=torch.bfloat16)
+                provider(begin, end, stage)
+                self.assertTrue(torch.equal(
+                    stage[:, :end-begin, :], group_q[0, :, begin:end, :]))
+                self.assertTrue(torch.equal(
+                    stage[:, end-begin:, :],
+                    stage[:, end-begin-1:end-begin, :].expand(-1, 5, -1)))
+
     def test_reject_incompatible_projection_or_stage(self):
         with torch.inference_mode():
             x = torch.zeros((20, 16), dtype=torch.bfloat16)
@@ -86,6 +131,10 @@ class PreQKVStreamTests(unittest.TestCase):
         self.assertIn("query_provider(geom.start, geom.end, item[\"q\"])",flow)
         self.assertIn("query_provider is not None",flow)
         self.assertIn("if query_provider is None:",flow)
+        self.assertIn("not compare_only or not callable(kv_provider)",flow)
+        self.assertIn("kv_provider(sk, sv)",flow)
+        self.assertIn('kv_provider(stage["k"], stage["v"])',flow)
+        self.assertIn("kv_provider=kv_provider",flow)
         self.assertIn("extra_reserved > max_extra*_MIB",flow)
         self.assertIn("free < min_free*_MIB",flow)
         self.assertIn("if not exact and not compare_only:",flow)
@@ -93,6 +142,10 @@ class PreQKVStreamTests(unittest.TestCase):
         self.assertIn('"h3_rmsnorm_rope": "UNRUN_NOT_IMPLEMENTED"',bench)
         self.assertIn('flat_pre_qkv_stream_ab.json',bench)
         self.assertIn("with tempfile.TemporaryDirectory(",bench)
+        self.assertIn('"direct_kv_lazy_q"',bench)
+        self.assertIn('"direct_kv_group_q"',bench)
+        self.assertIn('projected_call("graph_owned", "window")',bench)
+        self.assertIn('projected_call("graph_owned", "group")',bench)
 
 
 if __name__ == "__main__":
