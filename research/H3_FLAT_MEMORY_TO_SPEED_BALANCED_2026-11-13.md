@@ -191,3 +191,65 @@ Suggested single local run after updating HTRC:
 The local GPU A/B, CUDA compilation and performance measurement
 remain **UNRUN** for this slice. No video test, mode promotion, cap
 increase, or Sol comparison is implied.
+
+## RTX 5070 Ti second short A/B: memory gate contamination suspected
+
+User-provided \`flat_graph_group_balanced_ab(2).json\` is from
+\`2e9b19c13985cf5a8af1ed1034cb45b08fa62dee\`, synthetic BF16
+56-head QKV, balanced materialized Graph, 16 tiles, 768 MiB extra cap,
+64 sampled FP32 all-key dense query reference. Results:
+
+| Tokens | 7-head full GPU time | 8-head full GPU time | Improvement for 8 | 7 / 8 extra reserved MiB |
+|---:|---:|---:|---:|---:|
+| 15,275 | 66.852 ms | 64.716 ms | 3.19% less time | 498 / 570 |
+| 18,723 | 90.903 ms | 87.979 ms | 3.22% less time | 550 / 648 |
+
+Legacy11 and reuse11 failed the allocator \`extra_reserved <=768 MiB\`
+gate at 796 / 868 MiB. Reuse14 failed at 888 / 934 MiB.
+Neither failure means physical free VRAM was exhausted: NVIDIA
+\`mem_get_info\` still reported at least 12.9 GiB free.
+The first captured 11-head session was only +286 / +276 MiB
+reserved vs baseline. At the second head group's pre-replay
+\`after_session\` snapshot (AFTER the prior group's Graph+eager
+comparison), reservation had climbed to +712 / +766 MiB while
+allocated grew much less. After the third group reservation hit
++796 / +868 MiB without equivalent live allocation growth.
+Likewise, 14-head groups went from +384 / +336 MiB after capture
+to +888 / +934 MiB after the next group's start.
+
+**Interpretation:** the eager Flat diagnostic allocates large
+temporary buffers and is a strong candidate for contaminating the
+Graph-only reserved-memory gate. The old trace did not sample
+immediately after Graph replay and before eager, so attribution
+is a hypothesis, not proven causation. \`reserved-allocated\`
+cannot be treated as private CUDA Graph pool size.
+
+The 7- and 8-head samples produced *identical relative L2 error*
+against dense on the same QKV bank: 55.329% (15,275) and 60.563%
+(18,723). These are high approximation errors for random QKV.
+They are not graphical-quality or video evidence; they establish
+no quality regression from the change in grouping by themselves.
+
+## Next opt-in experiment: isolate Graph from eager diagnostic
+
+For \`compare_only=True\`, first-call Graph replay and allocator
+trace remain active, but the eager Flat parity diagnostic is **skipped**.
+That diagnostic is redundant for sampled dense quality benchmarking
+and adds unrelated allocations to the Graph memory A/B. The report
+explicitly uses \`eager_first_call_diagnostic=SKIPPED_COMPARE_ONLY\`,
+\`exact_flat_parity=null\`, \`all_groups_bit_exact=null\`,
+\`speedup_eager_over_graph_gpu_by_group_sums=null\`; it does NOT
+pretend parity was checked. \`after_group_graph_replay\` is sampled
+to distinguish Graph replay footprint from the previous eager phase.
+**Real production invocation (\`compare_only=False\`) remains strictly
+bitwise checked against eager Flat, fail-closed and unchanged.**
+
+The same five-arm one-JSON short sweep and hard 768 MiB gate
+are retained. Pairwise comparisons now use legacy when it completes,
+otherwise the first successful arm, with \`pairwise_reference_arm\`
+clearly reported. Repeat the same local 15,275/18,723 synthetic
+A/B before revisiting 40k/82k or selecting a group policy.
+
+No inference performance gain for 11/14 has yet been measured.
+This slice's CPU unit execution, CUDA checks and GPU run are **UNRUN**;
+nothing was promoted to the default runtime.
