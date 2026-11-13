@@ -19,8 +19,8 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-from tools.h3_flat_scale_protocol import GPU_VARIANTS, plan
+sys.path.insert(0, str(ROOT / "tools"))
+from h3_flat_scale_protocol import GPU_VARIANTS, plan
 
 RUNNERS = {
     "split_stream": ROOT / "tools" / "benchmark_h3_flat_streamed_vb_ab.py",

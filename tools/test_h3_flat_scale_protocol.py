@@ -10,8 +10,8 @@ import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-from tools import h3_flat_scale_protocol as proto
+sys.path.insert(0, str(ROOT / "tools"))
+import h3_flat_scale_protocol as proto
 
 CLI = ROOT / "tools" / "benchmark_h3_flat_scale_matrix.py"
 
