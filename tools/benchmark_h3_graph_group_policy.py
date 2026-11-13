@@ -129,7 +129,23 @@ def run_case(row, args, write):
                             workspace=True,compare_only=True,
                         )
 
-                got=call()
+                try:
+                    got=call()
+                except BaseException:
+                    # Read the fail-closed report before TemporaryDirectory
+                    # removes it; the outer exception handler stores status.
+                    if gate_path.exists():
+                        try:
+                            failure=json.loads(gate_path.read_text(encoding="utf-8"))
+                            result["first_call_gate_status"]=failure.get("status")
+                            result["actual_head_group_cap"]=failure.get("head_group_cap")
+                            result["memory_trace"]=failure.get("memory_trace")
+                            result["memory_at_failure"]=failure.get("memory_at_failure")
+                            result["head_groups_completed"]=failure.get("head_groups_completed")
+                            result["memory_trace_semantics"]=failure.get("memory_trace_semantics")
+                        except (OSError, ValueError) as read_error:
+                            result["gate_report_read_error"]=str(read_error)[:500]
+                    raise
                 torch.cuda.synchronize()
                 gate=json.loads(Path(os.environ[
                     "APL_HTRC_DIRECTFLOW_REPORT"]).read_text(encoding="utf-8"))
@@ -163,21 +179,7 @@ def run_case(row, args, write):
         except BaseException as exc:
             result["status"]="RUNTIME_FAILED"
             result["error"]=f"{type(exc).__name__}: {exc}"[:1600]
-            # Preserve diagnostics from the TEMP per-arm runtime report,
-            # even when the first-call cap prevents numerical measurements.
-            gate_file=locals().get("gate_path")
-            if gate_file is not None and gate_file.exists():
-                try:
-                    failed_gate=json.loads(gate_file.read_text(encoding="utf-8"))
-                    result["first_call_gate_status"]=failed_gate.get("status")
-                    result["actual_head_group_cap"]=failed_gate.get("head_group_cap")
-                    result["memory_trace"]=failed_gate.get("memory_trace")
-                    result["memory_at_failure"]=failed_gate.get("memory_at_failure")
-                    result["head_groups_completed"]=failed_gate.get("head_groups_completed")
-                    result["memory_trace_semantics"]=failed_gate.get("memory_trace_semantics")
-                except (OSError, ValueError) as report_error:
-                    result["gate_report_read_error"]=str(report_error)[:500]
-        finally:
+         finally:
             try:
                 flow.clear_session_cache()
                 torch.cuda.synchronize()
