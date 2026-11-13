@@ -80,7 +80,11 @@ def _one_window(window_capture, ids, cfg, tr, cache, ws, tail, geom,
         window_capture, ids, cfg, tr, tile_count=geom.tile_count,
         quant_backend="triton", input_cast="gpu", kv_cache=cache,
         query_workspace=ws, valid_query_rows=geom.valid_rows,
-        query_staging="native_torch_mu", vb_mode=vb_mode,
+        query_staging=(
+            "native_direct"
+            if os.environ.get("APL_HTRC_GRAPH_CAPTURE_SAFE_MU","0")=="1"
+            else "native_torch_mu"
+        ), vb_mode=vb_mode,
     )
     if vb_mode == "split_stream":
         partial, _ = batch.launch_prepared_tile_batch_split_stream(
@@ -153,6 +157,23 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups,
         win["q_qhd"] = qbuf.permute(1, 0, 2)
         ws = shared.alloc_workspace(win, h, geom.tile_count, cfg,
                                     vb_mode=vb_mode)
+        if os.environ.get("APL_HTRC_GRAPH_CAPTURE_SAFE_MU","0") == "1":
+            # Allocate all Triton launch pointer arguments in ordinary
+            # CUDA memory BEFORE CUDA Graph capture. In the previous path
+            # native_torch_mu's temporary torch.mean(...).contiguous()
+            # result was allocated inside capture; Triton on the Windows
+            # CUDA malloc-async backend rejected its pointer.
+            centers = geom.tile_count // int(cfg["kern"]["group"])
+            leaves = (seq // 16)
+            near = min(int(cfg["exact_leaves"]), leaves)
+            if near < 1:
+                raise RuntimeError("HTRC captured topk requires >=1 leaf")
+            ws["MU"] = torch.empty(
+                (h,centers,128),device=bank[0].device,dtype=torch.float32)
+            ws["_TOPK_VALUES"] = torch.empty(
+                (h*centers,near),device=bank[0].device,dtype=torch.float32)
+            ws["_TOPK_IDS"] = torch.empty(
+                (h*centers,near),device=bank[0].device,dtype=torch.int64)
         note("after_workspace_alloc", geom)
         def perform():
             return _one_window(win, ids, cfg, tr, cache, ws, tail, geom,
