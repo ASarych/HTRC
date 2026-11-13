@@ -15,6 +15,7 @@ from __future__ import annotations
 import torch
 import triton
 import triton.language as tl
+from triton.language.extra import libdevice
 
 DIM = 128
 ROWS_PER_CTA = 16
@@ -48,7 +49,7 @@ def _pack_fused_qkv(
     value = tl.load(INPUT + input_offset, mask=valid, other=0).to(tl.float32)
     scale = tl.maximum(tl.max(tl.abs(value), 2), 1.0e-8) / 127.0
     quant = tl.minimum(
-        tl.maximum(tl.round(value / scale[:, :, None]), -127.0),
+        tl.maximum(libdevice.nearbyint(value / scale[:, :, None]), -127.0),
         127.0,
     ).to(tl.int8)
 
