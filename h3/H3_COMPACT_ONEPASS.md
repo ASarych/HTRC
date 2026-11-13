@@ -160,3 +160,78 @@ A real GPU benchmark of the Triton fast path is
 **UNRUN**; no speedup or memory reduction is claimed
 until it runs. The previous 91.744-ms Torch figure
 is the local control, not a guarantee.
+
+## 2026-11-14 01:07 — Real output-producing HTRC Graph capture failure
+
+The user's `h3_live_graph_diagnostic_010512.txt` contains the
+real six-step HyperFlow NVFP4 **Live Graph** failure at block 0:
+
+- `h3_native_graph_live.json`: `FAIL_CLOSED_NO_STOCK_FALLBACK`,
+  `blocks_completed_first_cycle=0/49`,
+  `complete_cycles=0`, `attention_calls=0`,
+  `total_graph_gpu_event_ms=0`. No HTRC denoise/video result.
+- Exact traceback:
+  `htrc_flat_directflow_live._new_session` captures
+  `perform()` using `with torch.cuda.graph(graph)`,
+  then `htrc_flat_head_batch.prepare_batched_head_states`
+  invokes `triton_module._stats_kernel`. The **first**
+  Triton pointer is `MU.view(h*centers,dim)`, a transient
+  `grouped_q.mean(...).contiguous()` CUDA tensor created
+  **inside** the capture.
+  CUDA driver reports `ValueError: Pointer argument (at 0)
+  cannot be accessed from Triton (cpu tensor?)`.
+  This message does **not** prove that the model QKV was
+  CPU-resident: CUDA Q/K/V providers, warmups and workspace
+  were already GPU-resident. A capture-private allocation
+  / pointer lifetime incompatibility is the leading
+  explanation.
+- After failure the backend emits
+  `CUDAMallocAsyncAllocator: Attempting uncaptured free of
+  a captured allocation`, then Windows fatal
+  `0x80000003`. This confirms a **capture/cleanup hazard**,
+  not a numerical quality or model-weight issue.
+- Native model load and 47/47 file-cache warmup were
+  successful. Original attention was **not used as a
+  fallback**, as explicitly required.
+
+### Capture-safe research path (opt-in only)
+
+`APL_HTRC_GRAPH_CAPTURE_SAFE_MU=1` changes the **HTRC
+Direct-Flow capture staging**, not Comfy's global attention
+or NVFP4 model weights:
+
+1. `_new_session` preallocates persistent CUDA tensors
+   `ws["MU"]`, `ws["_TOPK_VALUES"]`, `ws["_TOPK_IDS"]`
+   **before** `torch.cuda.graph`.
+2. `_one_window` opts into the already implemented native
+   Triton `_direct_q_mu_kernel` on those stable pointers,
+   instead of allocating a fresh `torch.mean` result in
+   capture. When the environment knob is not set,
+   `native_torch_mu` remains unchanged.
+3. The top-k implementation explicitly writes FP32 values
+   and INT64 indices into existing GPU workspace via
+   `torch.topk(..., out=(topv,ids))`; `idx.copy_(ids)`
+   casts into persistent INT32 stage without another
+   short-lived GPU allocation.
+4. Both source and runtime validate dimensions, dtype,
+   device and contiguity before launching Triton.
+   Any missing capture-safe buffer fails closed.
+5. A separate *small* GPU test,
+   `tools/smoke_h3_graph_capture_gpu.py`, executes two
+   HTRC Graph capture/replay calls on just 1024 tokens
+   and 8 heads, no H3 checkpoint, under a fresh process.
+   The safe ComfyNodes launcher runs this BEFORE moving
+   any user checkout or loading HyperFlow.
+6. The import-free CPU source contract
+   `tools/check_h3_graph_capture_safe_cpu.py` checks the
+   real MU/topk preallocation, opt-in gating and smoke
+   wiring without CUDA.
+
+**Status:** Source-level repair authored on research
+branch. CPU and small CUDA smoke on the user's exact
+Windows/Triton build, full 40,759-token HTRC Graph,
+whole denoise, peak VRAM and video quality are all
+**UNRUN**. Do not claim this fixes the CUDA driver until
+the small capture smoke and real one-block graph pass.
+Original `torch` QKV pack remains selected for
+the live model path.
