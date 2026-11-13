@@ -4,10 +4,12 @@ Calls attention.qkv_proj on chunks WITHOUT reading/slicing/dequantizing
 weights. Preserves Comfy's NVFP4/INT8/FP8 operations, model patches and
 forward hooks. Then runs Comfy's actual fused Q/K RMSNorm+split-half RoPE.
 
-For now the complete fused projection is repeated for every 8-head group:
-56 heads / 8 = SEVEN full projection passes. This is a correctness and
-memory gate, NOT a performance-optimized channel-sliced QKV kernel.
-No automatic backend promotion. Never cache activations across denoise steps.
+The legacy default repeats the complete fused projection for every 8-head
+group: 56 heads / 8 = SEVEN full passes. An explicit research-only
+compact_int8_onepass strategy now projects ALL heads once per token chunk and
+keeps activations in per-token/head INT8+FP32 scales for grouped Graph staging.
+Both paths are experimental; no automatic backend promotion or cross-denoise
+activation caching.
 """
 from __future__ import annotations
 
