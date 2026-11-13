@@ -94,6 +94,33 @@ def graph_stage_head_bytes(*, tokens: int, tiles: int, mode: str,
     }
 
 
+
+def research_forced_group_size(value, *, compare_only: bool, policy: str,
+                               max_group: int, heads: int) -> int | None:
+    """Opt-in research override; never bypass runtime CUDA VRAM gates.
+
+    This may bypass the conservative *planner estimate* to test divisors
+    such as 28 on real hardware. It is forbidden for production calls,
+    where strict eager parity and planner protections must remain intact.
+    """
+    if value is None:
+        return None
+    if not compare_only or policy != "reuse_aware":
+        raise ValueError(
+            "Forced Graph group is allowed only for reuse_aware "
+            "compare_only=True research calls"
+        )
+    if type(value) is not str or not value.isdecimal():
+        raise ValueError("Forced Graph group must be a positive decimal integer")
+    forced = int(value)
+    if not 1 <= forced <= min(max_group, heads):
+        raise ValueError(
+            f"Forced Graph group {forced} exceeds selected cap/heads "
+            f"{max_group}/{heads}"
+        )
+    return forced
+
+
 def choose_group(*, tokens: int, heads: int, tiles: int, mode: str,
                  vb_mode: str, max_group: int, budget_mib: int,
                  reserve_mib: int, max_extra_mib: int, free_mib: float,
