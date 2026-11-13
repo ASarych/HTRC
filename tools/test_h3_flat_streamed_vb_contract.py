@@ -84,7 +84,7 @@ class StreamVBContracts(unittest.TestCase):
         self.assertIn('SPLIT_ID=split,SPLIT_COUNT=splits',src)
         self.assertIn('vb_split=ws["VB_SPLIT"]',FLOW.read_text(encoding="utf-8"))
         self.assertIn('if first<leaves:',src)
-        self.assertIn('if splits!=4 or bn!=32',src)
+        self.assertIn('if splits!=4 or bn!=64',src)
         self.assertIn('states["VB"].numel()!=1',src)
 
     def test_graph_explicit_mode_and_eager_oracle(self):
@@ -114,10 +114,10 @@ class StreamVBContracts(unittest.TestCase):
         from math import ceil
         for leaves in (954,1170,2547,5125,13975):
             ns=4
-            span=max(32,ceil(ceil(leaves/ns)/32)*32)
+            span=max(64,ceil(ceil(leaves/ns)/64)*64)
             self.assertLess(span,leaves)
             self.assertGreaterEqual(span,ceil(leaves/ns))
-            self.assertLessEqual(span*4,leaves+4*32)
+            self.assertLessEqual(span*4,leaves+4*64)
 
     def test_legacy_launcher_kept_separate(self):
         old=function_source(BATCH,"launch_prepared_tile_batch")

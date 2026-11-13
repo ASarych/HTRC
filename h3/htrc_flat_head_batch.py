@@ -290,7 +290,7 @@ def launch_prepared_tile_batch_split_stream(states, config, triton_module, *,
     near_bn=int(kern.get("tile_near_bn") or bn)
     warps=int(kern.get("tile_warps",4))
     stages=int(kern.get("tile_stages",1))
-    if splits!=4 or bn!=32 or near_bn!=32 or warps!=4:
+    if splits!=4 or bn!=64 or near_bn!=64 or warps!=4:
         raise ValueError("Unvalidated split-stream kernel geometry")
     span=triton_module._split(leaves,splits,bn)
     if (tuple(vb_split.shape)!=(heads,tiles,span,dim)

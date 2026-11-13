@@ -52,7 +52,7 @@ NOT numerically approved until the full attention A/B proves it.
    to eager or Sol.
 
 Streamed VB reduces peak transient VB scratch to approximately
-one-quarter (rounded for far BN=32), not the total logical VB
+one-quarter (rounded for the actual far BN=64), not the total logical VB
 write+read traffic per attention invocation. In fact it repeats
 K/V reads and adds producer launches: it can be slower. Its purpose is
 to validate a bounded producer/consumer primitive before moving to
@@ -63,8 +63,8 @@ a fused or register/shared-memory direct-VB Tile path.
 At 82,000 tokens, 56 heads, dim128, fast=256, four splits:
 - Full BF16 VB scratch for 11 heads x 16 centres x 5,125 leaves:
   230.9 decimal MB.
-- One split scratch 11 x 16 x 1,312 leaves:
-  59.1 decimal MB, ~74.4% smaller.
+- One split scratch 11 x 16 x 1,344 leaves:
+  60.6 decimal MB, ~73.8% smaller.
 - G is still 115.5 decimal MB for the same window/group and remains
   fully materialized. No full-H3 memory admission claim follows.
 
