@@ -328,3 +328,57 @@ Example single local short run with five timed rounds per arm:
 Current slice CPU unit test execution, GPU compilation, and
 forced-28 end-to-end timing are **UNRUN**. No change is promoted
 to production.
+
+## Fourth short-N GPU A/B: forced 28-head closure (RTX 5070 Ti)
+
+The user-provided `flat_graph_group_balanced_ab(5).json` from
+`278dd5c945cd076e824d7a8d4806211f6116ef03`
+reports `MEASURED` for every arm and short length:
+balanced 512 exact leaves, materialized Graph, 16 tiles,
+56 unique BF16 heads, five warmed GPU rounds, sampled dense FP32
+64-query quality, one input bank per token length.
+
+| Group (real, not planner estimate) | 15,275 full attention median GPU ms | 18,723 full attention median GPU ms | first-call extra reserved MiB (15k / 18k) |
+|---|---:|---:|---:|
+| 8 heads, 7 groups | **64.790** | 88.547 | **216 / 196** |
+| 14 heads, 4 groups | 65.280 | 88.599 | 384 / 336 |
+| 28 heads, 2 groups (research force) | 64.677 | **87.562** | 762 / 710 |
+
+28 vs 8 is only 0.175% faster at 15,275 tokens and 1.113%
+faster at 18,723 tokens, while first-call allocator extra
+reserved memory is 3.53x / 3.62x larger. 14 is slower than
+8 on both lengths while requiring more memory; it is
+dominated in these **specific** short-N measurements.
+The 28-head GPU median differences are too small and
+too specific to claim a general improvement.
+
+**Important cap interpretation:** the 28-head first-call
+post-capture gate passes at +762 MiB with a hard 768 MiB cap
+(only 6 MiB headroom at 15,275 tokens). But PyTorch's
+`peak_reserved_mib` for the *entire arm* was 1,676 MiB versus
+892 MiB reserved at the pre-capture baseline: +784 MiB.
+At 18,723 tokens the peak was 1,788 vs baseline 1,076:
++712 MiB. Whole-arm peak can include sampled quality
+evaluation and timed invocation, not isolated Graph; do not
+claim the hard gate itself monitored that peak. The narrow
+margin is another reason not to enable forced28 in production.
+No cap increase is justified.
+
+`bit_exact_between_policies` is true for 64 sampled query
+positions for 8 vs 14 and 8 vs 28 on both lengths.
+All three had the same dense-reference relative L2 error:
+55.3286% / 60.5630% on *random synthetic QKV*.
+Full-output bitwise parity and real-video quality were NOT
+tested in this `compare_only` matrix. The normal
+`compare_only=False` first-call eager parity gate has not
+been relaxed, and `legacy` remains the default.
+
+**Experiment decision:** STOP expanding head-group sizes.
+Retain 8 as a research-only Pareto-favorable short-N reference,
+keep legacy production defaults, and do not promote 14 or
+forced28. A next performance slice, if pursued, should
+attribute end-to-end time to K/V staging and quantization,
+Q staging, Graph kernels, and output write-back before
+proposing another kernel change. Group-replay count alone
+did not predict latency. No code changes or GPU validations
+are claimed by this documentation commit.
