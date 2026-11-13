@@ -81,3 +81,75 @@ a non-CUDA runner. Repository exact-source CPU preflight and actual
 RTX 5070 Ti GPU timings have not yet run on this new HEAD.
 Historical stock full-N-to-short-GEMM numerical mismatch is not a
 blocking quality verdict and is not re-tested by this speed gate.
+
+## 2026-11-14: first real compact one-pass GPU report
+
+The user's `h3_onepass_diagnostic.txt` contains a successful
+`MEASURED_NATIVE_SINGLEPASS_COMPACT_STAGE` one-block H3 canary,
+from the genuine NVFP4 HyperFlow model on RTX 5070 Ti,
+40,759 tokens / 56 heads / groups of 8 / 4096-row chunks.
+The original model attention output was returned unchanged.
+
+| Exact measured value | Result |
+|---|---:|
+| Original complete Kitchen attention, block 0 | 554.165 ms |
+| Legacy one 8-head group fused QKV | 20.872 ms |
+| **Compact all-56-head projection + Torch INT8 packing** | **84.151 ms** |
+| **Decode all seven groups** (7 K/V groups, 70 Q windows) | **7.593 ms** |
+| **Pack/build + 7-group decode** | **91.744 ms** |
+| Packed INT8 + FP32 scale allocations | 903,871,584 bytes = 862.0 MiB |
+| Incremental peak CUDA allocated during compact build | **1,254.874 MiB** |
+| Incremental extra reserved allocator pool | 0 MiB |
+| Actual H3 fused projector invocations for compact stage | 10 |
+| Fused projector calls avoided vs 7-group repeated method | 60 |
+| Original denoise first step | 32.25 s (stock attention; no Graph) |
+
+An arithmetic seven-fold extrapolation from this run's
+20.872-ms legacy one-group producer gives ~146.11 ms for
+sequentially repeated QKV, before Graph. The measured
+compact pack+unpack is ~1.59x faster against **that estimate**
+(54.36 ms less) but takes ~836 MiB more peak memory
+than the separately measured old one-group producer
+(418.635 MiB extra). The seven-group repeated method
+was not separately benchmarked end-to-end; these numbers
+are NOT full model speedup or video quality evidence.
+
+## Next experiment: one Triton pack instead of FP32 PyTorch intermediates
+
+In the initial Torch staging path, every one of Q/K/V
+calls `values.float()`, computes per-token/head absmax,
+normalizes and rounds FP32, converts to new INT8, then
+copies into the packed buffer. It makes a ~112 MiB FP32
+temporary per full-size Q/K/V part and runs multiple
+independent PyTorch kernels. The compact *persistent*
+buffer is already only 862 MiB; its transient FP32 pack
+path is the next speed/peak-memory target.
+
+`h3/htrc_flat_h3_pack_triton.py` adds a **separate opt-in**
+Triton kernel that jointly packs Q/K/V for 16 rows ×
+4 heads per CTA. A single launch per QKV projector
+chunk reads the genuine post-RMSNorm/RoPE contiguous BF16
+fused output and writes INT8 activations with one FP32
+scale per token/head/part into the EXISTING buffers.
+It avoids creating full FP32 activation tensors.
+The NVFP4 model weights and Comfy qkv_proj remain
+unchanged. Pack scale uses the same absmax/127 clamp
+and round-to-nearest scheme as the Torch fallback.
+No source-relative/cross-step QKV activation caching.
+
+Selection: `APL_HTRC_QKV_PACK_BACKEND=triton`.
+Default remains `torch`. Fast path fails closed if:
+- not on a real CUDA tensor or without native RoPE;
+- native fused Q/K normalization returned different
+  allocations rather than in-place views of the source;
+- Triton package/round instruction unavailable;
+- input or staging layout/dtype/shape changed.
+
+The safe ComfyNodes canary preflights the Triton
+import and source CPU tests **before** loading the
+checkpoint. It records selected backend in the same
+`h3_native_pre_qkv_canary.json`. A real GPU
+benchmark of the Triton fast path is **UNRUN**; no
+speedup or memory reduction is claimed until it runs.
+The exact previous 91.744-ms Torch figure is the
+local control, not a guarantee.
