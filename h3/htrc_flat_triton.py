@@ -122,7 +122,8 @@ def _stats_kernel(MU, K, V, G, LZ, VB, SG, SV, tc, nb, scale,
                   DIRECT_KV: tl.constexpr = 0,
                   K_SH: tl.constexpr = 0, K_SS: tl.constexpr = 0,
                   K_SD: tl.constexpr = 0, V_SH: tl.constexpr = 0,
-                  V_SS: tl.constexpr = 0, V_SD: tl.constexpr = 0):
+                  V_SS: tl.constexpr = 0, V_SD: tl.constexpr = 0,
+                  SCORE_ONLY: tl.constexpr = 0):
     pt = tl.program_id(0)
     pl = tl.program_id(1)
     if BATCH_TILES_PER_HEAD > 0:
@@ -146,27 +147,33 @@ def _stats_kernel(MU, K, V, G, LZ, VB, SG, SV, tc, nb, scale,
             if DIRECT_KV:
                 kj=tl.load(K+head*K_SH+(l*LEAF+s)[:,None]*K_SS+
                            d[None,:]*K_SD).to(tl.float32)
-                vj=tl.load(V+head*V_SH+(l*LEAF+s)[:,None]*V_SS+
-                           d[None,:]*V_SD).to(tl.float32)
+                if not SCORE_ONLY:
+                    vj=tl.load(V+head*V_SH+(l*LEAF+s)[:,None]*V_SS+
+                               d[None,:]*V_SD).to(tl.float32)
             else:
                 kj = tl.load(K + (key_base + l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
-                vj = tl.load(V + (key_base + l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
+                if not SCORE_ONLY:
+                    vj = tl.load(V + (key_base + l * LEAF + s)[:, None] * D + d[None, :]).to(tl.float32)
             a = tl.dot(mu, tl.trans(kj), input_precision=PREC) * scale      # [BT, LEAF]
             m = tl.max(a, axis=1)
             w = tl.exp(a - m[:, None])
             z = tl.sum(w, axis=1)
             w = w / z[:, None]
             g = tl.dot(w, kj, input_precision=PREC) * scale                   # [BT, D]
-            vb = tl.dot(w, vj, input_precision=PREC)
+            if not SCORE_ONLY:
+                vb = tl.dot(w, vj, input_precision=PREC)
             off = (t * nb + l)[:, None] * D + d[None, :]
             if FP8:
                 # row-scaled e4m3: stored = x / s, s = max|x| / 448 (state tolerates 4-8 bit, STATE round 42/44)
                 sg = tl.maximum(tl.max(tl.abs(g), axis=1) * (1.0 / 448.0), 1.0e-30)
-                sv = tl.maximum(tl.max(tl.abs(vb), axis=1) * (1.0 / 448.0), 1.0e-30)
+                if not SCORE_ONLY:
+                    sv = tl.maximum(tl.max(tl.abs(vb), axis=1) * (1.0 / 448.0), 1.0e-30)
                 tl.store(G + off, (g / sg[:, None]).to(G.dtype.element_ty), mask=tm[:, None])
-                tl.store(VB + off, (vb / sv[:, None]).to(VB.dtype.element_ty), mask=tm[:, None])
+                if not SCORE_ONLY:
+                    tl.store(VB + off, (vb / sv[:, None]).to(VB.dtype.element_ty), mask=tm[:, None])
                 tl.store(SG + t * nb + l, sg, mask=tm)
-                tl.store(SV + t * nb + l, sv, mask=tm)
+                if not SCORE_ONLY:
+                    tl.store(SV + t * nb + l, sv, mask=tm)
             elif I8:
                 # int8 far-field slope g (row scale sg); vbar stays bf16 (it is the PV operand)
                 am = tl.maximum(tl.max(tl.abs(g), axis=1), 1.0e-30)
@@ -174,11 +181,13 @@ def _stats_kernel(MU, K, V, G, LZ, VB, SG, SV, tc, nb, scale,
                 x = g * (127.0 / am)[:, None]
                 x = tl.where(x >= 0, x + 0.5, x - 0.5)
                 tl.store(G + off, x.to(tl.int8), mask=tm[:, None])
-                tl.store(VB + off, vb.to(VB.dtype.element_ty), mask=tm[:, None])
+                if not SCORE_ONLY:
+                    tl.store(VB + off, vb.to(VB.dtype.element_ty), mask=tm[:, None])
                 tl.store(SG + t * nb + l, sg, mask=tm)
             else:
                 tl.store(G + off, g.to(G.dtype.element_ty), mask=tm[:, None])
-                tl.store(VB + off, vb.to(VB.dtype.element_ty), mask=tm[:, None])
+                if not SCORE_ONLY:
+                    tl.store(VB + off, vb.to(VB.dtype.element_ty), mask=tm[:, None])
             tl.store(LZ + t * nb + l, m + tl.log(z), mask=tm)
 
 

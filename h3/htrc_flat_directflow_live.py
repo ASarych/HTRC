@@ -11,6 +11,7 @@ No implicit fallback or replacement of the default Flat path.
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import threading
@@ -200,10 +201,10 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
     if torch.is_grad_enabled():
         raise RuntimeError("H3 Direct-Flow is inference-only")
     if (mode not in ("fast", "balanced") or not workspace
-        or not isinstance(tiles, int) or tiles != 16
+        or not isinstance(tiles, int) or tiles not in (16, 32, 64)
         or any(x.dtype != torch.bfloat16 for x in (q,k,v))):
         raise ValueError(
-            "H3 Direct-Flow supports only fast/balanced / tiles16 / workspace / BF16"
+            "H3 Direct-Flow supports only fast/balanced / tiles16,32,64 / workspace / BF16"
         )
     cap = shared.capture_from_bhsd(q, k, v, heads)
     s, total_heads, _ = map(int, cap["q_qhd"].shape)
@@ -325,6 +326,9 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "source":"actual H3 post-RoPE BHSD QKV before out_proj",
                     "gpu":torch.cuda.get_device_name(dev),
                     "heads":total_heads, "tokens":s, "head_groups":rows,
+                    "window_tiles":tiles,
+                    "query_windows":len(geometries),
+                    "graph_replays_per_attention":len(geometries)*math.ceil(total_heads/group_cap),
                     "all_groups_bit_exact":all(x["exact_flat_parity"] for x in rows),
                     "speedup_eager_over_graph_gpu_by_group_sums":(
                         sum(x["eager_gpu_event_ms"] for x in rows)/
@@ -340,7 +344,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "center_group":1,
                     "notes":[
                         "First real model attention call only, group-by-group exact parity.",
-                        "Two reused graph geometries per size, no stale model QKV pointers.",
+                        "One or two reused graph geometries per size, no stale model QKV pointers.",
                         "Graph capture time excluded from GPU sample, recorded separately.",
                         "Wall times include independent per-group synchronizations; "
                         "do not interpret group sum as whole-denoise gain.",
