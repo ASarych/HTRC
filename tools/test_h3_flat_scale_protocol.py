@@ -151,7 +151,7 @@ class ScaleProtocolContracts(unittest.TestCase):
         self.assertIn("quality_against_exact(",gpu)
         self.assertIn("normalized_difference_percent(",gpu)
         self.assertIn('outcome["bit_exact_to_materialized_is_not_required"]=True',gpu)
-        self.assertIn('"status":"RUNTIME_FAILED"',gpu)
+        self.assertIn('outcome["status"]="RUNTIME_FAILED"',gpu)
         self.assertNotIn("run_h3_baseline.ps1",txt)
         self.assertNotIn("run_hyperflow_t2v.ps1",txt)
 
