@@ -31,6 +31,19 @@ class CompactAllHeadsQKV:
             raise ValueError("Expected BF16 H3 hidden states and qkv_proj")
         if (type(chunk_rows) is not int or not 1 <= chunk_rows <= x.shape[0]):
             raise ValueError("Invalid native QKV chunk size")
+        self.pack_backend = os.environ.get(
+            "APL_HTRC_QKV_PACK_BACKEND", "torch").strip().lower()
+        if self.pack_backend not in ("torch", "triton"):
+            raise ValueError("Unknown compact native QKV packing backend")
+        if self.pack_backend == "triton" and (
+            x.device.type != "cuda" or rope_freqs is None
+            or normalize_chunk is not None
+        ):
+            # Native Comfy fused RMSNorm/RoPE must normalize Q/K IN PLACE
+            # in the actual fused projection; a custom injected normalizer
+            # or no-RoPE CPU test cannot prove this storage invariant.
+            raise RuntimeError(
+                "Triton QKV packing requires live CUDA native in-place RMSNorm/RoPE")
         self.tokens = int(x.shape[0])
         self.heads = int(attn.heads)
         if self.heads < 1 or int(attn.head_dim) != DIM:
@@ -99,6 +112,11 @@ class CompactAllHeadsQKV:
                     return normalized_native_group_chunk(
                         attn, fused, None, begin=0, end=self.heads)
 
+        pack_normalized_fused = None
+        if self.pack_backend == "triton":
+            # Lazy import: torch pack remains the default, and CPU tests
+            # never require Triton/CUDA.
+            from .htrc_flat_h3_pack_triton import pack_normalized_fused
         wall = time.perf_counter()
         start = end = None
         if x.is_cuda:
@@ -115,10 +133,33 @@ class CompactAllHeadsQKV:
             q, k, v = normalize_chunk(
                 fused,
                 rope_freqs[:, begin:stop] if rope_freqs is not None else None)
-            for part, value in enumerate((q, k, v)):
-                self._encode_into(
-                    value, self.packed[part, :, begin:stop, :],
-                    self.scales[part, :, begin:stop])
+            if pack_normalized_fused is None:
+                for part, value in enumerate((q, k, v)):
+                    self._encode_into(
+                        value, self.packed[part, :, begin:stop, :],
+                        self.scales[part, :, begin:stop])
+            else:
+                # Unlike generic torch fallback, the fused pack kernel
+                # reads directly from the entire original contiguous
+                # projection tensor AFTER Q/K have been normalized.
+                # Verify that the installed Comfy fused norm kept Q/K/V
+                # as views of the same original data. Never silently pack
+                # un-normalized BF16 Q/K if a future Comfy version changes
+                # its in-place kernel.
+                part_size = self.heads * DIM * fused.element_size()
+                expected_ptrs = tuple(
+                    fused.data_ptr() + i * part_size for i in range(3))
+                if (not fused.is_contiguous()
+                    or any(
+                        value.data_ptr() != expected
+                        for value, expected in zip((q, k, v), expected_ptrs)
+                    )):
+                    raise RuntimeError(
+                        "Native RMSNorm/RoPE changed fused QKV aliasing; "
+                        "Triton fast pack refused")
+                pack_normalized_fused(
+                    fused, self.packed, self.scales,
+                    start=begin, tokens=self.tokens, heads=self.heads)
             self.projection_chunks += 1
             self.total_projection_rows += stop-begin
             del fused, q, k, v
@@ -159,6 +200,8 @@ class CompactAllHeadsQKV:
             "build_gpu_ms": self.build_gpu_ms,
             "build_wall_seconds": self.build_wall_seconds,
             "activation_quantization": "signed_int8_per_head_per_token_fp32_scale",
+            "activation_packing_backend": self.pack_backend,
+            "fused_pack_without_fp32_activation_staging": self.pack_backend == "triton",
             "quantized_model_weights_unmodified": True,
             "output_parity": "UNTESTED",
         }
