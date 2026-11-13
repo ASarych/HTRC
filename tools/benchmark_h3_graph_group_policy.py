@@ -36,7 +36,9 @@ SHAPES={"short":(15275,18723),
         "scaling":(15275,18723,40759,82000)}
 # Explicit capped Graph schedules; a cap is NOT a guaranteed group size.
 # The reuse-aware planner may choose a smaller feasible candidate.
-POLICIES=("legacy","reuse_cap7","reuse_cap8","reuse_cap11","reuse_cap14")
+POLICIES=("legacy","reuse_cap7","reuse_cap8","reuse_cap11","reuse_cap14",
+          "reuse_force28")
+DEFAULT_ARMS=POLICIES[:-1]
 
 
 def _atomic_report(path,payload):
@@ -88,13 +90,16 @@ def run_case(row, args, write):
         "APL_HTRC_DIRECTFLOW_GROUP_POLICY",
         "APL_HTRC_DIRECTFLOW_GROUP",
         "APL_HTRC_DIRECTFLOW_MAX_EXTRA_MIB",
+        "APL_HTRC_DIRECTFLOW_RESEARCH_FORCE_GROUP",
         "APL_HTRC_DIRECTFLOW_VB_MODE",
         "APL_HTRC_DIRECTFLOW_REPORT",
     )
     original={name:os.environ.get(name) for name in env_keys}
-    for policy in POLICIES:
+    for policy in args.arms:
         runtime_policy=("legacy" if policy=="legacy" else "reuse_aware")
-        group_limit=(11 if policy=="legacy" else int(policy.removeprefix("reuse_cap")))
+        group_limit=(11 if policy=="legacy" else 28
+                     if policy=="reuse_force28" else
+                     int(policy.removeprefix("reuse_cap")))
         result={"status":"UNRUN","policy":runtime_policy,
                 "arm":policy,"requested_group_cap":group_limit,
                 "quality_reference":"all-key FP32 dense sampled queries",
@@ -106,6 +111,9 @@ def run_case(row, args, write):
             torch.cuda.empty_cache()
             os.environ["APL_HTRC_DIRECTFLOW_GROUP_POLICY"]=runtime_policy
             os.environ["APL_HTRC_DIRECTFLOW_GROUP"]=str(group_limit)
+            os.environ.pop("APL_HTRC_DIRECTFLOW_RESEARCH_FORCE_GROUP",None)
+            if policy=="reuse_force28":
+                os.environ["APL_HTRC_DIRECTFLOW_RESEARCH_FORCE_GROUP"]="28"
             os.environ["APL_HTRC_DIRECTFLOW_VB_MODE"]="materialized"
             os.environ["APL_HTRC_DIRECTFLOW_MAX_EXTRA_MIB"]=str(args.max_extra_mib)
             # The first-call parity diagnostic goes into a TEMP directory.
@@ -199,12 +207,12 @@ def run_case(row, args, write):
     # Even if legacy is blocked by a VRAM gate, compare every successful
     # candidate against the first successful arm, never return an empty
     # comparison merely because legacy failed.
-    baseline_arm=next((arm for arm in POLICIES if arm in saved),None)
+    baseline_arm=next((arm for arm in args.arms if arm in saved),None)
     row["pairwise_reference_arm"]=baseline_arm
     if baseline_arm is not None:
         ref_sample=exact.detach().cpu().float()
         ref_norm=float(torch.linalg.vector_norm(ref_sample).clamp_min(1.0e-30))
-        for arm in POLICIES:
+        for arm in args.arms:
             if arm==baseline_arm or arm not in saved:
                 continue
             diff=saved[arm]-saved[baseline_arm]
@@ -228,6 +236,9 @@ def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--execute",action="store_true")
     ap.add_argument("--scope",choices=tuple(SHAPES),default="short")
+    ap.add_argument("--arms",default=",".join(DEFAULT_ARMS),
+                    help="Comma-separated independent variants; available: "
+                         +",".join(POLICIES))
     ap.add_argument("--mode",choices=("balanced","fast"),default="balanced")
     ap.add_argument("--tiles",type=int,choices=(16,32,64),default=16)
     ap.add_argument("--heads",type=int,default=56)
@@ -240,6 +251,12 @@ def main():
     ap.add_argument("--seed",type=int,default=42026)
     ap.add_argument("--output",type=Path,default=OUTPUT)
     args=ap.parse_args()
+    arms=tuple(x.strip() for x in args.arms.split(","))
+    if (not arms or len(arms)!=len(set(arms))
+        or any(arm not in POLICIES for arm in arms)):
+        ap.error("--arms must be a unique, comma-separated subset of "
+                 +",".join(POLICIES))
+    args.arms=arms
     if (args.heads<1 or args.heads>56 or args.rounds<2 or
         args.sample_queries<1):
         ap.error("Invalid heads, rounds or sample-queries")
@@ -258,7 +275,7 @@ def main():
             "tokens":tokens,
             "band":"short" if tokens<20000 else "medium_long",
             "model_reuse_aware":plan,
-            "policies":{arm:{"status":"UNRUN"} for arm in POLICIES},
+            "policies":{arm:{"status":"UNRUN"} for arm in args.arms},
             "status":"UNRUN",
         })
     report={
@@ -270,15 +287,16 @@ def main():
         "vb_mode":"materialized",
         "default_runtime_group_policy":"legacy",
         "baseline":"graph_materialized_legacy_group11",
-        "candidate":"graph_materialized_reuse_aware_group_caps_7_8_11_14",
+        "candidate":"graph_materialized_reuse_aware_caps_and_research_force28",
         "reference":"FP32 exact dense all-key sampled queries",
         "no_bitwise_requirement_between_modes":True,
         "quality_is_percent_relative_l2_to_dense":True,
         "short_cases_are_mandatory":True,
         "scope":args.scope,"gpu_heads":args.heads,"window_tiles":args.tiles,
-        "arms":list(POLICIES),
+        "arms":list(args.arms),
         "head_group_caps":{"legacy":11,"reuse_cap7":7,"reuse_cap8":8,
-                           "reuse_cap11":11,"reuse_cap14":14},
+                           "reuse_cap11":11,"reuse_cap14":14,
+                           "reuse_force28":28},
         "warnings":[
             "No stage K/V copies eliminated by this experiment: it only "
             "exploits already existing native KV aliases and better group sizing.",
@@ -290,7 +308,10 @@ def main():
             "Requested group cap is an upper bound; actual group can be smaller.",
             "Allocator trace is not an exact measurement of CUDA Graph private pools.",
             "Compare-only first call skips eager Flat; production strict parity is unchanged.",
-            "Pairwise reference is legacy if available, otherwise the first successful arm."
+            "Pairwise reference is legacy if available, otherwise the first successful arm.",
+            "reuse_force28 is compare-only: it bypasses the conservative "
+            "planner ESTIMATE but NOT the runtime 768 MiB hard gate.",
+            "Forced 28-head group is not a production recommendation."
         ],
         "rows":rows,
     }
