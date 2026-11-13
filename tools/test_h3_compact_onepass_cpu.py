@@ -95,6 +95,28 @@ class CompactAllHeadsTests(unittest.TestCase):
             self.assertFalse(torch.equal(first.scales,second.scales))
             self.assertNotEqual(first.scales.data_ptr(),second.scales.data_ptr())
 
+    def test_graph_wires_existing_single_stage_and_keeps_legacy_default(self):
+        import ast
+        native_file = ROOT / "h3" / "htrc_flat_h3_native_projection.py"
+        source = native_file.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(native_file))
+        graph = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "graph_attention_native_h3"
+        )
+        args = list(graph.args.kwonlyargs)
+        defaults = graph.args.kw_defaults
+        strategy_index = [arg.arg for arg in args].index("projection_strategy")
+        self.assertEqual(
+            ast.literal_eval(defaults[strategy_index]), "repeated_group")
+        self.assertIn('build_compact_onepass_stage(attn, x, rope_freqs,', source)
+        self.assertIn('"compact_int8_onepass"', source)
+        self.assertIn('compact.group(begin, end) if compact is not None', source)
+        self.assertIn('query_provider=producer.fill_q, kv_provider=producer.fill_kv', source)
+        self.assertIn('"full_fused_qkv_repeated_per_head_group"', source)
+        self.assertIn('1 if compact is not None else heads//group_heads', source)
+
     def test_admission_and_structure_fail_closed_before_projection(self):
         m=_load()
         model=FakeH3()
