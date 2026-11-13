@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $SourceRef = "32443521ddf3cd474020cbeba8ef97bdc5b21186"
-$BenchmarkRef = "06162542010023c5935b33739293fb17e20cf1ab"
+$BenchmarkRef = "3facc340959c29ec7eb8bea2d51497b24e85661e"
 $CacheRoot = "D:\ComfyCache"
 $WorkRoot = Join-Path $CacheRoot "htrc_semantic_shared_centers_ab"
 $OutputRoot = "D:\ComfyOutput\H3\math_probe"
