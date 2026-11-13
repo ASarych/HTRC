@@ -147,7 +147,7 @@ class CompactAllHeadsTests(unittest.TestCase):
         self.assertIn("pack_normalized_fused",funcs)
         for token in (
             "tl.max(tl.abs(value), 2)",
-            "tl.round(value / scale[:, :, None])",
+            "libdevice.nearbyint(value / scale[:, :, None])",
             "tl.store(PACKED + output_offset, quant",
             "SCALES + scale_offset, scale",
             "triton.cdiv(rows, ROWS_PER_CTA)",
@@ -156,6 +156,8 @@ class CompactAllHeadsTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token,fast)
         self.assertNotIn("torch.empty(",fast)
+        self.assertIn("from triton.language.extra import libdevice",fast)
+        self.assertNotIn("tl.round(",fast)
         native=(ROOT/"h3"/"htrc_flat_h3_compact_once.py").read_text(encoding="utf-8")
         for token in (
             'APL_HTRC_QKV_PACK_BACKEND',
