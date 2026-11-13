@@ -266,7 +266,7 @@ def clear_session_cache():
 def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                          budget_mib, reserve_mib, workspace, observer=None,
                          compare_only=False, query_provider=None,
-                         kv_provider=None):
+                         kv_provider=None, research_source_kind="synthetic"):
     """Actual opt-in Flat output [1,S,H,128]. Fail closed on parity/VRAM."""
     if torch.is_grad_enabled():
         raise RuntimeError("H3 Direct-Flow is inference-only")
@@ -283,6 +283,12 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
     ):
         raise ValueError(
             "Graph-owned K/V provider requires compare_only=True and Q producer")
+    if research_source_kind not in ("synthetic", "native_h3"):
+        raise ValueError("Unrecognized research QKV source")
+    if research_source_kind == "native_h3" and (
+        not compare_only or kv_provider is None or query_provider is None
+    ):
+        raise ValueError("Native H3 producer is research-only and requires Q/K/V")
     if (mode not in ("fast", "balanced") or not workspace
         or not isinstance(tiles, int) or tiles not in (16, 32, 64)
         or any(x.dtype != torch.bfloat16 for x in (q,k,v))):
@@ -359,9 +365,14 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         # 1.5x staged model, but the *actual* post-capture hard memory
         # and free-VRAM gates below still fail closed.
         group_cap=forced
+    if kv_provider is not None and group_cap != total_heads:
+        raise ValueError(
+            "Graph-owned K/V producer requires one complete equal-head "
+            "session; set explicit reuse_aware research group cap"
+        )
     geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode,
             compare_only, policy, query_provider is not None,
-            kv_provider is not None)
+            kv_provider is not None, research_source_kind)
     geometries = list(windows.iter_query_windows(
         s, tiles, tile_rows=int(cfg["tile"]), center_group=1
     ))
@@ -509,20 +520,27 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "group_policy":policy,"head_group_cap":group_cap,
                     "group_plan":plan,
                     "capture_and_parity_first_call_wall_ms":(time.perf_counter()-call_wall_started)*1000,
-                    "real_model_qkv":not compare_only,
-                    "qkv_source":("pre_qkv_graph_owned_kv_synthetic"
-                                  if kv_provider is not None else
-                                  "pre_qkv_window_producer_synthetic"
-                                  if query_provider is not None else
-                                  "caller_supplied_may_be_synthetic" if compare_only
-                                  else "real_model_caller_contract"),
+                    "real_model_qkv":(
+                        research_source_kind == "native_h3" or not compare_only),
+                    "qkv_source":(
+                        "original_h3_quantized_qkv_projector_chunked"
+                        if research_source_kind == "native_h3" else
+                        "pre_qkv_graph_owned_kv_synthetic"
+                        if kv_provider is not None else
+                        "pre_qkv_window_producer_synthetic"
+                        if query_provider is not None else
+                        "caller_supplied_may_be_synthetic" if compare_only
+                        else "real_model_caller_contract"),
                     "query_provider_research_only":query_provider is not None,
                     "kv_provider_graph_owned_research_only":kv_provider is not None,
                     "full_model_denoise_or_video_complete":False,
                     "completed":True,
-                    "source":("synthetic pre-QKV dense BF16 projection, no RoPE"
-                              if query_provider is not None else
-                              "actual H3 post-RoPE BHSD QKV before out_proj"),
+                    "source":(
+                        "original H3 qkv_proj with native per-chunk Q/K RMS-RoPE"
+                        if research_source_kind == "native_h3" else
+                        "synthetic pre-QKV dense BF16 projection, no RoPE"
+                        if query_provider is not None else
+                        "actual H3 post-RoPE BHSD QKV before out_proj"),
                     "gpu":torch.cuda.get_device_name(dev),
                     "heads":total_heads, "tokens":s, "head_groups":rows,
                     "window_tiles":tiles,
@@ -601,7 +619,9 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "head_group_cap":group_cap,
                     "status":"FAIL_CLOSED",
                     "strict_parity_required":not compare_only,
-                    "real_model_qkv":not compare_only,
+                    "real_model_qkv":(
+                        research_source_kind == "native_h3" or not compare_only),
+                    "research_source_kind":research_source_kind,
                     "heads":total_heads, "tokens":s,
                     "head_groups_completed":rows,
                     "error":f"{type(exc).__name__}: {exc}"[:1200],
