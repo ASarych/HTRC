@@ -117,6 +117,59 @@ class CompactAllHeadsTests(unittest.TestCase):
         self.assertIn('"full_fused_qkv_repeated_per_head_group"', source)
         self.assertIn('1 if compact is not None else heads//group_heads', source)
 
+    def test_fast_pack_opt_in_refuses_cpu_and_unknown_modes(self):
+        m=_load()
+        model=FakeH3()
+        x=torch.ones((16,512),dtype=torch.bfloat16)
+        with torch.no_grad(),patch.dict(
+            os.environ,{"APL_HTRC_QKV_PACK_BACKEND":"triton"}):
+            with self.assertRaisesRegex(RuntimeError,"live CUDA native in-place"):
+                m.CompactAllHeadsQKV(
+                    model,x,None,chunk_rows=8,
+                    normalize_chunk=_normalizer(model))
+        self.assertEqual(model.calls,0)
+        with torch.no_grad(),patch.dict(
+            os.environ,{"APL_HTRC_QKV_PACK_BACKEND":"unsupported"}):
+            with self.assertRaisesRegex(ValueError,"Unknown compact"):
+                m.CompactAllHeadsQKV(
+                    model,x,None,chunk_rows=8,
+                    normalize_chunk=_normalizer(model))
+        self.assertEqual(model.calls,0)
+
+    def test_triton_source_packs_all_qkv_without_fp32_activation_buffers(self):
+        import ast
+        fast_file=ROOT/"h3"/"htrc_flat_h3_pack_triton.py"
+        fast=fast_file.read_text(encoding="utf-8")
+        tree=ast.parse(fast,filename=str(fast_file))
+        funcs={node.name:node for node in tree.body
+               if isinstance(node,ast.FunctionDef)}
+        self.assertIn("_pack_fused_qkv",funcs)
+        self.assertIn("pack_normalized_fused",funcs)
+        for token in (
+            "tl.max(tl.abs(value), 2)",
+            "tl.round(value / scale[:, :, None])",
+            "tl.store(PACKED + output_offset, quant",
+            "SCALES + scale_offset, scale",
+            "triton.cdiv(rows, ROWS_PER_CTA)",
+            "triton.cdiv(heads, HEADS_PER_CTA)",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token,fast)
+        self.assertNotIn("torch.empty(",fast)
+        native=(ROOT/"h3"/"htrc_flat_h3_compact_once.py").read_text(encoding="utf-8")
+        for token in (
+            'APL_HTRC_QKV_PACK_BACKEND',
+            'if self.pack_backend == "triton"',
+            "from .htrc_flat_h3_pack_triton import pack_normalized_fused",
+            "fused.data_ptr() + i * part_size",
+            "pack_normalized_fused(",
+            '"activation_packing_backend": self.pack_backend',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token,native)
+        self.assertIn('APL_HTRC_QKV_PACK_BACKEND", "torch"',native)
+        self.assertIn("if pack_normalized_fused is None:",native)
+
     def test_admission_and_structure_fail_closed_before_projection(self):
         m=_load()
         model=FakeH3()
