@@ -150,3 +150,44 @@ fake backend and asserts autograd-disabled/inference-enabled execution
 and state restoration. The actual GPU benchmark on this patched HEAD
 remains **UNRUN** pending a new local invocation. Do not count either
 of the failed attempts as numerical-quality or throughput evidence.
+
+## Next slice: allocator phase evidence and bounded cap sweep
+
+The next opt-in short-N benchmark compares **five sequential arms** in
+one `flat_graph_group_balanced_ab.json`: legacy11 and reuse-aware
+max-head caps 7/8/11/14. A cap is NOT a forced group size: the
+reuse-aware planner may select a smaller feasible group; check
+`group_size` / `actual_head_group_cap` before drawing conclusions.
+The 768 MiB `APL_HTRC_DIRECTFLOW_MAX_EXTRA_MIB` hard guard and
+the independent 256 MiB free-memory floor remain unchanged.
+The original runtime default stays legacy.
+
+The first research capture reports `memory_trace` with allocator
+`allocated_mib`, `reserved_mib`, `free_mib`, plus deltas from
+the baseline for stage KV/cache, each geometry's workspace,
+post-warmup, post-capture, and post-session. On fail-closed
+`MemoryError`, the benchmark copies `memory_trace` and
+`memory_at_failure` into its single aggregate JSON **before**
+deleting the temporary per-arm gate file. These counters establish
+where the extra **allocator reservation** appears, but do NOT isolate
+CUDA Graph private pools as a separate directly measured category.
+No extra profiling is done on warmed calls.
+
+The benchmark no longer retains full GPU outputs between candidates.
+Only 64 sampled query rows per arm are retained on CPU for the
+legacy-vs-candidate disagreement percentage. Same BF16 input bank
+and FP32 dense sampled-query reference are reused. The report records
+actual cap, numerical quality and full attention latency for each
+successful arm; failed arms retain error and memory evidence without
+invented speedup. When some arms fail, successful comparisons remain
+available and status is `MEASURED_WITH_FAILURES`.
+
+Suggested single local run after updating HTRC:
+
+    $py = "C:\Users\Misya\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\.venv\Scripts\python.exe"
+    & $py -m unittest discover -s tools -p test_h3_graph_group_plan.py -v
+    & $py -B tools\benchmark_h3_graph_group_policy.py --scope short --execute
+
+The local GPU A/B, CUDA compilation and performance measurement
+remain **UNRUN** for this slice. No video test, mode promotion, cap
+increase, or Sol comparison is implied.
