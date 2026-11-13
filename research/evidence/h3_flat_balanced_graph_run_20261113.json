@@ -1,0 +1,231 @@
+{
+  "experiment": "h3_flat_balanced_cuda_graph_real_video_run_20261113",
+  "status": "COMPLETED",
+  "code_base_commit": "c8b2257085975d158dae02c086ecec26ec0001f1",
+  "code_file": "h3/htrc_flat_directflow_live.py",
+  "code_file_sha256": "a4354d890d319b512db6e9ff15a6916f448e9e79335f4d001d08a366e795e25c",
+  "dispatch": "graph",
+  "htrc_mode": "balanced",
+  "exact_leaves": 512,
+  "center_group": 1,
+  "tiles": 16,
+  "workspace": true,
+  "query_staging": "native_torch_mu",
+  "kv_staging": "native_direct",
+  "quality_coefficient_used": false,
+  "reusable_slots": false,
+  "model": "minimax_h3_ref2va_hyperflow_flash_14b-nvfp4_from_int8.safetensors",
+  "encoder": "p-h3-image_text_encoder_w4a8.safetensors",
+  "video_vae": "minimax_h3_video_vae_fp16.safetensors",
+  "sampler": "euler",
+  "schedule": "HyperFlowSigmas",
+  "guider": "BasicGuider",
+  "cfg": 1.0,
+  "steps": 6,
+  "width": 1344,
+  "height": 768,
+  "frames": 39,
+  "fps": 24,
+  "seed": 424242,
+  "video_decoder": "trt",
+  "prompt_file": "C:\\Users\\Misya\\AppData\\Local\\Comfy-Desktop\\ComfyUI-Installs\\Misyau\\ComfyUI\\custom_nodes\\ComfyNodes\\h3\\prompts\\bear_fight_reference.txt",
+  "prompt_sha256": "96dd9149192c9595fd18fca384bb7b5c8f3135bb1b2573a68dd48422463d2ca8",
+  "reference": "D:\\ComfyOutput\\H3\\backend\\APL_klein_quality_anime_safe20_seed20260911_00001_.png",
+  "reference_sha256": "c9dc0978c5543078496b078c976cc7fb6d60bc359f1af41de6229170b98a6ccd",
+  "output_video": "D:\\ComfyOutput\\H3\\backend\\H3_htrc_flat_gpu_balanced_graph_on_p-h3_00001_.mp4",
+  "output_video_bytes": 2217951,
+  "output_video_sha256": "58f114180f6ea819db62fe9a1cdb88d0dc6a73ba1bd85342fd5fe41fa3208622",
+  "prompt_elapsed_seconds": 206.11082250000254,
+  "sampler_progress_step_seconds": [
+    76.02,
+    6.93,
+    6.38,
+    10.26,
+    6.71,
+    6.75
+  ],
+  "sampler_progress_total_seconds": 113.05,
+  "first_call_graph_capture_and_eager_parity_seconds": 33.044,
+  "parity": {
+    "status": "PASS_FIRST_REAL_CALL",
+    "mode": "balanced",
+    "dispatch": "graph",
+    "all_56_heads_bit_exact": true,
+    "tokens": 15275,
+    "extra_reserved_mib": 288.0,
+    "free_after_first_call_mib": 10891.0
+  },
+  "host_memory_during_run_approx": {
+    "available_min_gib": 3.3,
+    "commit_used_max_gib": 29.96,
+    "samples": 70
+  },
+  "memory_before": {
+    "system": {
+      "os": "win32",
+      "ram_total": 34279219200,
+      "ram_free": 20496601088,
+      "comfyui_version": "0.45.0",
+      "required_frontend_version": "1.59.1",
+      "installed_templates_version": "0.11.107",
+      "required_templates_version": "0.11.107",
+      "comfy_package_versions": [
+        {
+          "name": "comfyui-frontend-package",
+          "installed": "1.59.1",
+          "required": "1.59.1"
+        },
+        {
+          "name": "comfyui-workflow-templates",
+          "installed": "0.11.107",
+          "required": "0.11.107"
+        },
+        {
+          "name": "comfyui-embedded-docs",
+          "installed": "0.5.16",
+          "required": "0.5.16"
+        },
+        {
+          "name": "comfy-aimdo",
+          "installed": "0.6.0",
+          "required": "0.6.0"
+        },
+        {
+          "name": "comfy-kitchen",
+          "installed": "0.2.41",
+          "required": "0.2.41"
+        }
+      ],
+      "python_version": "3.13.12 (main, Feb 12 2026, 00:38:53) [MSC v.1944 64 bit (AMD64)]",
+      "pytorch_version": "2.12.1+cu130",
+      "embedded_python": false,
+      "deploy_environment": "local-desktop2-standalone",
+      "argv": [
+        "C:\\Users\\Misya\\AppData\\Local\\Comfy-Desktop\\ComfyUI-Installs\\Misyau\\ComfyUI\\main.py",
+        "--disable-all-custom-nodes",
+        "--whitelist-custom-nodes",
+        "ComfyNodes",
+        "ComfyUI-HyperFlow-Flash",
+        "--listen",
+        "127.0.0.1",
+        "--port",
+        "8188",
+        "--disable-auto-launch",
+        "--cache-none",
+        "--cuda-malloc",
+        "--disable-pinned-memory",
+        "--preview-method",
+        "none",
+        "--output-directory",
+        "D:\\ComfyOutput\\H3\\backend",
+        "--temp-directory",
+        "D:\\ComfyOutput\\H3\\temp",
+        "--fp16-vae",
+        "--disable-smart-memory",
+        "--disable-dynamic-vram",
+        "--disable-comfy-compiler"
+      ]
+    },
+    "devices": [
+      {
+        "name": "cuda:0 NVIDIA GeForce RTX 5070 Ti : cudaMallocAsync",
+        "type": "cuda",
+        "index": 0,
+        "vram_total": 17066360832,
+        "vram_free": 15769534464,
+        "torch_vram_total": 0,
+        "torch_vram_free": 0
+      }
+    ]
+  },
+  "memory_after": {
+    "system": {
+      "os": "win32",
+      "ram_total": 34279219200,
+      "ram_free": 9409191936,
+      "comfyui_version": "0.45.0",
+      "required_frontend_version": "1.59.1",
+      "installed_templates_version": "0.11.107",
+      "required_templates_version": "0.11.107",
+      "comfy_package_versions": [
+        {
+          "name": "comfyui-frontend-package",
+          "installed": "1.59.1",
+          "required": "1.59.1"
+        },
+        {
+          "name": "comfyui-workflow-templates",
+          "installed": "0.11.107",
+          "required": "0.11.107"
+        },
+        {
+          "name": "comfyui-embedded-docs",
+          "installed": "0.5.16",
+          "required": "0.5.16"
+        },
+        {
+          "name": "comfy-aimdo",
+          "installed": "0.6.0",
+          "required": "0.6.0"
+        },
+        {
+          "name": "comfy-kitchen",
+          "installed": "0.2.41",
+          "required": "0.2.41"
+        }
+      ],
+      "python_version": "3.13.12 (main, Feb 12 2026, 00:38:53) [MSC v.1944 64 bit (AMD64)]",
+      "pytorch_version": "2.12.1+cu130",
+      "embedded_python": false,
+      "deploy_environment": "local-desktop2-standalone",
+      "argv": [
+        "C:\\Users\\Misya\\AppData\\Local\\Comfy-Desktop\\ComfyUI-Installs\\Misyau\\ComfyUI\\main.py",
+        "--disable-all-custom-nodes",
+        "--whitelist-custom-nodes",
+        "ComfyNodes",
+        "ComfyUI-HyperFlow-Flash",
+        "--listen",
+        "127.0.0.1",
+        "--port",
+        "8188",
+        "--disable-auto-launch",
+        "--cache-none",
+        "--cuda-malloc",
+        "--disable-pinned-memory",
+        "--preview-method",
+        "none",
+        "--output-directory",
+        "D:\\ComfyOutput\\H3\\backend",
+        "--temp-directory",
+        "D:\\ComfyOutput\\H3\\temp",
+        "--fp16-vae",
+        "--disable-smart-memory",
+        "--disable-dynamic-vram",
+        "--disable-comfy-compiler"
+      ]
+    },
+    "devices": [
+      {
+        "name": "cuda:0 NVIDIA GeForce RTX 5070 Ti : cudaMallocAsync",
+        "type": "cuda",
+        "index": 0,
+        "vram_total": 17066360832,
+        "vram_free": 15250688024,
+        "torch_vram_total": 637534208,
+        "torch_vram_free": 242419736
+      }
+    ]
+  },
+  "comfy_result_report": "D:\\ComfyOutput\\H3\\logs\\HyperFlow_20261113-180037-149.result.json",
+  "comfy_workflow": "D:\\ComfyOutput\\H3\\logs\\HyperFlow_20261113-180037-149.workflow.json",
+  "comfy_events": "D:\\ComfyOutput\\H3\\logs\\HyperFlow_20261113-180037-149.result.events.jsonl",
+  "directflow_gate_report": "D:\\ComfyOutput\\H3\\math_probe\\flat_directflow_real_h3_ab.json",
+  "notes": [
+    "The qwen3vl_4b_fp8_scaled encoder was rejected by the current ComfyNodes native encoder loader before denoising; successful run used installed p-h3-image_text_encoder_w4a8.safetensors.",
+    "Therefore visual quality is not a strict encoder-matched comparison to prior Graph A/B runs.",
+    "Six step durations are deltas of Comfy prompt progress events; the reused backend did not produce a separate per-step CUDA profile file for this submit.",
+    "The first-step interval includes 33.044 s of first-call graph capture and eager-parity checking. Do not interpret cold eager timing as a warmed throughput comparison.",
+    "A single frame at 1.0 s was visually inspected; no severe still-frame artifact was apparent. Temporal quality was not quantitatively evaluated.",
+    "No OOM or admission denial. Host memory telemetry showed a 3.30 GiB minimum available during the approximate run interval; commit used peaked at 29.96 GiB."
+  ]
+}

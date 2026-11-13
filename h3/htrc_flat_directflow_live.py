@@ -1,7 +1,7 @@
 """Research-only model-resident H3 Direct-Flow Graph, disabled by default.
 
 Opt-in graph path uses real, fresh post-RoPE BHSD QKV. All math is the
-already-validated HTRC Flat fast 256-leaf / group1 path. Graph objects
+already-validated HTRC Flat fast/balanced 256/512-leaf / group1 paths. Graph objects
 own only STAGED GPU buffers, never source/model QKV or model weights.
 Same shape group sessions may be reused across model blocks/timesteps;
 every replay requantizes K, refreshes K/V tail and stages Q. The first
@@ -199,17 +199,21 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
     """Actual opt-in Flat output [1,S,H,128]. Fail closed on parity/VRAM."""
     if torch.is_grad_enabled():
         raise RuntimeError("H3 Direct-Flow is inference-only")
-    if (mode != "fast" or not workspace or not isinstance(tiles, int)
-        or tiles != 16 or any(x.dtype != torch.bfloat16 for x in (q,k,v))):
+    if (mode not in ("fast", "balanced") or not workspace
+        or not isinstance(tiles, int) or tiles != 16
+        or any(x.dtype != torch.bfloat16 for x in (q,k,v))):
         raise ValueError(
-            "H3 Direct-Flow supports only fast / tiles16 / workspace / BF16"
+            "H3 Direct-Flow supports only fast/balanced / tiles16 / workspace / BF16"
         )
     cap = shared.capture_from_bhsd(q, k, v, heads)
     s, total_heads, _ = map(int, cap["q_qhd"].shape)
-    cfg = shared.flat_config("fast", tiles)
-    if (int(cfg["exact_leaves"]) != 256
+    cfg = shared.flat_config(mode, tiles)
+    expected_leaves = {"fast": 256, "balanced": 512}[mode]
+    if (int(cfg["exact_leaves"]) != expected_leaves
         or int(cfg.get("kern", {}).get("group", 1)) != 1):
-        raise RuntimeError("Fixed Flat 256 exact leaves / centre group1 changed")
+        raise RuntimeError(
+            f"Fixed Flat {expected_leaves} exact leaves / centre group1 changed"
+        )
     from . import htrc_flat_live_backend as live
     tr = live._triton()
     tr._dll()
@@ -229,7 +233,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
     min_free = _env_int(
         "APL_HTRC_DIRECTFLOW_MIN_FREE_MIB", max(256, int(reserve_mib)), 64, 4096
     )
-    geom = (dev.index, s, tiles, str(q.dtype), "fast", group_cap)
+    geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap)
     geometries = list(windows.iter_query_windows(
         s, tiles, tile_rows=int(cfg["tile"]), center_group=1
     ))
@@ -313,6 +317,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                 result = {
                     "experiment":"h3_directflow_real_model_live_first_call_v1",
                     "status":"PASS_FIRST_REAL_CALL",
+                    "mode":mode,"dispatch":"graph",
                     "capture_and_parity_first_call_wall_ms":(time.perf_counter()-call_wall_started)*1000,
                     "real_model_qkv":True,
                     "full_model_denoise_or_video_complete":False,
@@ -331,7 +336,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "model_resident_free_after_mib":torch.cuda.mem_get_info(dev)[0]/_MIB,
                     "graph_cache_group_sizes":sorted(x[0] for x in _SESSIONS),
                     "quality_coefficient_used":False,
-                    "fixed_exact_leaves":256,
+                    "fixed_exact_leaves":int(cfg["exact_leaves"]),
                     "center_group":1,
                     "notes":[
                         "First real model attention call only, group-by-group exact parity.",
@@ -363,7 +368,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
             try:
                 _write_report({
                     "experiment":"h3_directflow_real_model_live_first_call_v1",
-                    "completed":False,
+                    "completed":False,"mode":mode,"dispatch":"graph",
                     "status":"FAIL_CLOSED",
                     "real_model_qkv":True,
                     "heads":total_heads, "tokens":s,
