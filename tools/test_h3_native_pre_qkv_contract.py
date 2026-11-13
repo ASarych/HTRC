@@ -43,7 +43,12 @@ class FakeH3:
 
     def qkv_proj(self,x):
         self.projector_calls += 1
-        return torch.nn.functional.linear(x,self.weight)
+        # CPU fixture is deliberately rowwise so a batch-size-dependent
+        # BLAS kernel cannot introduce spurious BF16 rounding differences.
+        return torch.cat([
+            torch.nn.functional.linear(row.unsqueeze(0),self.weight)
+            for row in x
+        ],dim=0)
 
 
 def fake_rope_inplace(q,k,rope,qw,kw,*,epsilon,rot_dim):
