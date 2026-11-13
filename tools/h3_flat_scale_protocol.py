@@ -1,7 +1,7 @@
 """HTRC Flat benchmark scope and hypothesis registry (stdlib only).
 
 Classification is a research hypothesis, NOT established speedup.
-Every executable long-context scope includes the two short cases.
+Every executable long-context scope includes the two short quality/latency cases.
 """
 from __future__ import annotations
 
@@ -38,55 +38,55 @@ APPROACHES = {
         "class": "universal_candidate",
         "target": "host launches and scheduling across all sequence lengths",
         "baseline": "eager Flat",
-        "validation": "short full attention, medium, long, H3 denoise",
+        "validation": "short and long latency + percent error vs exact attention",
     },
     "native_qkv_staging": {
         "class": "universal_candidate",
         "target": "unnecessary QKV copies, quantization staging",
         "baseline": "same math with old staging",
-        "validation": "short full attention and all other lengths",
+        "validation": "short and all other lengths; error % vs dense reference",
     },
     "stats_score_only": {
         "class": "universal_candidate",
         "target": "remove first-pass Vbar dot/store",
         "baseline": "materialized stats",
-        "validation": "stats-only micro A/B first; not full attention",
+        "validation": "stats-only micro A/B first; full-attention quality separately",
     },
     "graph_window_tiles": {
         "class": "length_amplified_candidate",
         "target": "group cap and graph replay count depend on N and budget",
         "baseline": "tiles16 with identical QKV and same mode",
-        "validation": "short/medium/long, including memory and exact output",
+        "validation": "short/medium/long: quality % vs dense, timing and memory",
     },
     "split_stream": {
         "class": "length_amplified_candidate",
         "target": "bounded Vbar scratch; N-dependent group size",
         "baseline": "graph + materialized",
-        "validation": "two-bank exact full output short first, then medium/long",
+        "validation": "two-bank percent error to dense: short, medium, long",
     },
     "fused_vb": {
         "class": "length_amplified_candidate",
         "target": "avoid global Vbar but potentially 16x extra K/V traffic",
         "baseline": "graph + materialized",
-        "validation": "short correctness and slowdown first, then medium/long",
+        "validation": "short dense-reference error % and speed; then medium/long",
     },
     "multi_centre_kv_reuse": {
         "class": "length_amplified_candidate",
         "target": "reuse native K/V across many query centres",
         "baseline": "graph + materialized",
-        "validation": "short regression + medium and long throughput",
+        "validation": "short quality/latency regression + medium/long crossover",
     },
     "qkv_streaming": {
         "class": "capacity_enabler",
         "target": "resident QKV+output need 11.94 GiB at 223605 tokens",
         "baseline": "unmodified H3 memory preflight",
-        "validation": "short correctness, long peak VRAM, Full HD admission",
+        "validation": "short error %, long peak VRAM and Full HD admission",
     },
     "workspace_grouping": {
         "class": "capacity_enabler",
         "target": "prevent small model-resident free VRAM from shrinking groups",
         "baseline": "old conservative planner",
-        "validation": "short no regression; long memory and group count",
+        "validation": "short quality %, short latency, long VRAM/group count",
     },
 }
 
@@ -118,7 +118,10 @@ def plan(variants: tuple[str, ...], scope: str,
     selected = select_cases(scope)
     return {
         "schema": "h3-flat-length-gate-v1",
-        "purpose": "short regression plus length scaling, one JSON; no video",
+        "purpose": "short+long quality percent vs exact dense + speed, one JSON",
+        "reference": "exact_FP32_softmax_over_all_keys_sampled_queries",
+        "disagreement_policy": "record_and_continue",
+        "bit_exact_between_flat_modes_required": False,
         "classification_is_hypothesis_not_evidence": True,
         "scope": scope,
         "baseline": "graph_materialized",

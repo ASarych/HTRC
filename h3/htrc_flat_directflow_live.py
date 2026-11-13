@@ -209,10 +209,13 @@ def clear_session_cache():
 
 
 def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
-                         budget_mib, reserve_mib, workspace, observer=None):
+                         budget_mib, reserve_mib, workspace, observer=None,
+                         compare_only=False):
     """Actual opt-in Flat output [1,S,H,128]. Fail closed on parity/VRAM."""
     if torch.is_grad_enabled():
         raise RuntimeError("H3 Direct-Flow is inference-only")
+    if type(compare_only) is not bool:
+        raise TypeError("compare_only must be a bool (research API, off by default)")
     if (mode not in ("fast", "balanced") or not workspace
         or not isinstance(tiles, int) or tiles not in (16, 32, 64)
         or any(x.dtype != torch.bfloat16 for x in (q,k,v))):
@@ -254,7 +257,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         raise ValueError(
             "APL_HTRC_DIRECTFLOW_VB_MODE must be materialized, split_stream or fused_vb"
         )
-    geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode)
+    geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode, compare_only)
     geometries = list(windows.iter_query_windows(
         s, tiles, tile_rows=int(cfg["tile"]), center_group=1
     ))
@@ -316,15 +319,22 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                         )
                     eager_t = _measurement(eager, dev)
                     exact = bool(torch.equal(group_out, eager_out[0]))
-                    if not exact:
-                        mismatch = (group_out.float()-eager_out[0].float()).abs()
+                    diff = group_out.float()-eager_out[0].float()
+                    maximum = float(diff.abs().amax().item())
+                    rel_l2_pct = float(
+                        diff.norm().item() /
+                        max(eager_out[0].float().norm().item(),1.0e-30)*100.0
+                    )
+                    if not exact and not compare_only:
                         raise AssertionError(
                             f"Direct-Flow real H3 mismatch at heads "
-                            f"[{begin},{end}): max_abs={mismatch.amax().item():.8g}"
+                            f"[{begin},{end}): max_abs={maximum:.8g}"
                         )
                     rows.append({
                         "head_range":[begin,end],
                         "exact_flat_parity":exact,
+                        "relative_l2_to_eager_flat_percent":rel_l2_pct,
+                        "max_abs_to_eager_flat":maximum,
                         "graph_gpu_event_ms":graph_t["gpu_event_ms"],
                         "eager_gpu_event_ms":eager_t["gpu_event_ms"],
                         "graph_sync_wall_ms":graph_t["sync_wall_ms"],
@@ -338,10 +348,15 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                 _STATE["verified"] = True
                 result = {
                     "experiment":"h3_directflow_real_model_live_first_call_v1",
-                    "status":"PASS_FIRST_REAL_CALL",
+                    "status":("RECORDED_FIRST_CALL" if compare_only
+                              else "PASS_FIRST_REAL_CALL"),
+                    "strict_parity_required":not compare_only,
+                    "reference_for_quality":"NOT_EAGER_FLAT__USE_EXACT_SOFTMAX",
                     "mode":mode,"dispatch":"graph","vb_mode":vb_mode,
                     "capture_and_parity_first_call_wall_ms":(time.perf_counter()-call_wall_started)*1000,
-                    "real_model_qkv":True,
+                    "real_model_qkv":not compare_only,
+                    "qkv_source":("caller_supplied_may_be_synthetic" if compare_only
+                                  else "real_model_caller_contract"),
                     "full_model_denoise_or_video_complete":False,
                     "completed":True,
                     "source":"actual H3 post-RoPE BHSD QKV before out_proj",
@@ -364,7 +379,10 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "fixed_exact_leaves":int(cfg["exact_leaves"]),
                     "center_group":1,
                     "notes":[
-                        "First real model attention call only, group-by-group exact parity.",
+                        ("Research compare_only: eager Flat disagreement is a metric, "
+                         "not a correctness gate; exact softmax quality is external."
+                         if compare_only else
+                         "First real model attention call only, group-by-group exact parity."),
                         "One or two reused graph geometries per size, no stale model QKV pointers.",
                         "Graph capture time excluded from GPU sample, recorded separately.",
                         "Wall times include independent per-group synchronizations; "
@@ -380,7 +398,11 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "vb_mode":vb_mode,
                     "heads":total_heads,"tokens":s,
                     "graph_cache_group_sizes":sorted(x[0] for x in _SESSIONS),
-                    "first_call_parity_verified":bool(_STATE["verified"]),
+                    "first_call_parity_verified":bool(
+                        _STATE["verified"] and
+                        (not _STATE["reports"] or
+                         _STATE["reports"][-1].get("all_groups_bit_exact",False))
+                    ),
                     "quality_coefficient_used":False,
                     "free_bytes":torch.cuda.mem_get_info(dev)[0],
                     "ts_perf":time.perf_counter(),
@@ -397,7 +419,8 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "completed":False,"mode":mode,"dispatch":"graph",
                     "vb_mode":vb_mode,
                     "status":"FAIL_CLOSED",
-                    "real_model_qkv":True,
+                    "strict_parity_required":not compare_only,
+                    "real_model_qkv":not compare_only,
                     "heads":total_heads, "tokens":s,
                     "head_groups_completed":rows,
                     "error":f"{type(exc).__name__}: {exc}"[:1200],

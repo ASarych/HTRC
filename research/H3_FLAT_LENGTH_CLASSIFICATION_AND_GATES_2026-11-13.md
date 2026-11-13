@@ -1,5 +1,14 @@
 # HTRC Flat: universal vs long-context optimization and test gates
 
+> **Numerical policy updated on 2026-11-13.** The quality oracle is
+> **exact dense attention**, and numerical disagreements between Flat
+> variants must be recorded as percent relative error, never aborting
+> the experiment. The previous bit-exact gating described further below
+> is retained only as historical design text, not the active matrix
+> contract. Canonical implementation and procedure:
+> H3_FLAT_DENSE_QUALITY_PERCENT_2026-11-13.md.
+
+
 Date: 2026-11-13. Scope: ASarych/HTRC research branch only.
 Source base: experiment/flat-long-context-fused-vb-20261113
 @ 51aea61863920298e76922d2d902c38aae89b3df.
@@ -49,11 +58,12 @@ on memory admission, and even Sol required an additional workspace.
 
 ## Mandatory two-part scorecard
 
-1. **Numerical gate for every tested length.**
+1. **Quantitative quality measurement for every tested length.**
    Same native BF16 post-RoPE-style QKV, two independent QKV banks,
    same seed/heads/fast-or-balanced/tiles, same 256 or 512 near leaves,
-   same tail handling, exact IDX/EXCL and full output parity against
-   materialized + eager Flat. No pass from only individual microkernel.
+   same tail handling. Compute FP32 exact dense reference across ALL keys
+   for sampled Q rows, then error % per Flat variant. IDX/EXCL and
+   equality to eager/materialized remain optional diagnostics, NOT gates.
 2. **Performance and memory gate for every tested length.**
    Record warmed full-attention CUDA-event timing and synchronized wall,
    VRAM additional/reserved and group/head geometry. Do not compare
@@ -65,11 +75,11 @@ on memory admission, and even Sol required an additional workspace.
 
 A universal candidate needs short speed advantage (at both 15k/18k,
 within measurement noise) plus no substantial slowdown at 40k/82k.
-A length-amplified candidate can be slower at 15k, but must pass
-short exactness and show actual measured crossover at larger sizes,
+A length-amplified candidate can be slower at 15k, but must record
+short dense-reference error % and show actual measured crossover at larger sizes,
 not an inferred one. A capacity enabler can improve max feasible N
-even when it does not improve short latency, but still must retain
-short numerical correctness and document short latency penalty.
+even when it does not improve short latency, but still must quantify
+short error % against dense and document short latency penalty.
 
 ## Current code and one-report protocol
 
@@ -84,11 +94,13 @@ short numerical correctness and document short latency penalty.
   - scaling = short + 40,759 + 82,000;
   - capacity = scaling + analytic Full HD admission (never GPU).
 - **Default is PLANNED_ONLY**, no accidental GPU work.
-- Explicit --execute runs one sequence of existing *full attention*
-  candidate-vs-materialized Graph ABs. Any failed first-call exact
-  gate / bank B eager parity / output mismatch stops the matrix.
-- Output is ONE JSON, per-case PASS_NUMERIC or FAILED, and all cases
-  not executed remain UNRUN. A numerical pass is NOT a speed PASS.
+- Explicit --execute runs independent full-attention Graph variants
+  against the SAME FP32 dense all-key, sampled-query reference.
+  Numerical disagreement with eager/materialized never stops the matrix.
+  Actual CUDA/runtime failures are recorded separately.
+- Output is ONE JSON, per-case QUALITY_MEASURED / RUNTIME_FAILED /
+  NUMERIC_NONFINITE_RECORDED, and all cases not executed remain UNRUN.
+  No quality accuracy threshold or fabricated speed PASS.
   The 223605-token capacity row includes the existing conservative
   materialized-Flat source formula, explicitly NOT a true admission
   result or an estimate for fused_vb.
@@ -117,8 +129,8 @@ performance hypothesis. Neither new kernel has GPU approval yet.
 - Previously real-model proven: Graph+materialized vs eager on 15k,
   six-step latents exact; speed gain at that size. Comparisons to Sol
   were earlier and not fully matched.
-- split_stream: research implementation, CUDA numeric/performance UNRUN.
-- fused_vb: research implementation, CUDA numeric/performance UNRUN.
+- split_stream: research implementation, dense quality %/GPU timing UNRUN.
+- fused_vb: research implementation, dense quality %/GPU timing UNRUN.
 - New classification protocol, plan-only matrix and CPU contracts:
   implementation complete; unit-test runtime status UNRUN until run.
 - Multi-centre shared-K/V, fully fused SEL/Far, 223k streamed QKV:

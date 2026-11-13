@@ -1,6 +1,6 @@
 """CPU contracts: mandatory short A/B for every long-context HTRC claim.
 
-No GPU is run, and no PASS_NUMERIC status is allowed from plan-only mode.
+No GPU is run; numerical disagreement is a measured quality result, not an abort.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import h3_flat_scale_protocol as proto
+import h3_flat_quality_reference as exact
 
 CLI = ROOT / "tools" / "benchmark_h3_flat_scale_matrix.py"
 
@@ -28,6 +29,9 @@ class ScaleProtocolContracts(unittest.TestCase):
         paths=(
             ROOT / "tools" / "h3_flat_scale_protocol.py",
             CLI,
+            ROOT / "tools" / "h3_flat_quality_ab.py",
+            ROOT / "tools" / "h3_flat_quality_reference.py",
+            ROOT / "h3" / "htrc_flat_directflow_live.py",
             Path(__file__),
         )
         for path in paths:
@@ -65,6 +69,10 @@ class ScaleProtocolContracts(unittest.TestCase):
              "fused_vb":"length_amplified_candidate"}
         )
         self.assertTrue(x["classification_is_hypothesis_not_evidence"])
+        self.assertEqual(x["disagreement_policy"],"record_and_continue")
+        self.assertEqual(
+            x["reference"],"exact_FP32_softmax_over_all_keys_sampled_queries")
+        self.assertFalse(x["bit_exact_between_flat_modes_required"])
 
     def test_all_length_group_is_separate_from_long_group(self):
         expected={
@@ -110,13 +118,15 @@ class ScaleProtocolContracts(unittest.TestCase):
             with self.subTest(change=change),self.assertRaises(ValueError):
                 proto.plan(("split_stream",),"short",**opts)
 
-    def test_single_json_and_fail_closed_gpu_path(self):
+    def test_single_json_numeric_nonabort_gpu_path(self):
         txt=CLI.read_text(encoding="utf-8")
         self.assertIn("args.output",txt)
         self.assertIn("tmp.replace(path)",txt)
-        self.assertIn('"status": "UNRUN"',txt)
-        self.assertIn('report["status"] = "FAIL_CLOSED"',txt)
-        self.assertIn('report["gpu_execution"] = "STOPPED_AT_FAILURE"',txt)
+        self.assertIn('"status":"UNRUN"',txt)
+        self.assertIn('run_quality_case(',txt)
+        self.assertIn('"RECORD_PERCENT_AND_CONTINUE"',txt)
+        self.assertIn('"numerical_disagreement_aborts":False',txt)
+        self.assertNotIn("STOPPED_AT_FAILURE",txt)
         self.assertIn('if args.execute:',txt)
         self.assertIn('default="short"',txt)
         self.assertIn('cap["source_model"]=estimate_case(',txt)
@@ -132,13 +142,66 @@ class ScaleProtocolContracts(unittest.TestCase):
         self.assertTrue(all(x["required_short_regression"] for x in cases[:2]))
         self.assertFalse(any(x["required_short_regression"] for x in cases[2:]))
 
-    def test_legacy_runner_is_not_replaced(self):
-        text=CLI.read_text(encoding="utf-8")
-        self.assertIn("benchmark_h3_flat_streamed_vb_ab.py",text)
-        self.assertIn("benchmark_h3_flat_fused_vb_ab.py",text)
-        self.assertIn('["materialized"]["sync_wall_ms_per_call"]',text)
-        self.assertNotIn("run_h3_baseline.ps1",text)
-        self.assertNotIn("run_hyperflow_t2v.ps1",text)
+    def test_quality_runner_has_same_dense_reference_for_every_mode(self):
+        txt=CLI.read_text(encoding="utf-8")
+        gpu=(ROOT/"tools"/"h3_flat_quality_ab.py").read_text(encoding="utf-8")
+        self.assertIn("from h3_flat_quality_ab import run_case",txt)
+        self.assertIn('order=("materialized",)+tuple(variants)',gpu)
+        self.assertIn('exact_dense_sampled_queries(*bank,positions',gpu)
+        self.assertIn("quality_against_exact(",gpu)
+        self.assertIn("normalized_difference_percent(",gpu)
+        self.assertIn('outcome["bit_exact_to_materialized_is_not_required"]=True',gpu)
+        self.assertIn('"status":"RUNTIME_FAILED"',gpu)
+        self.assertNotIn("run_h3_baseline.ps1",txt)
+        self.assertNotIn("run_hyperflow_t2v.ps1",txt)
+
+    def test_exact_reference_reads_all_keys_but_samples_queries(self):
+        src=(ROOT/"tools"/"h3_flat_quality_reference.py").read_text(
+            encoding="utf-8")
+        self.assertIn("logits=(qh@kh.transpose(0,1))*scaling",src)
+        self.assertIn("probabilities=torch.softmax(logits,dim=-1)",src)
+        self.assertIn("out[start:start+len(ix),head,:]=probabilities@vh",src)
+        self.assertIn("FP32_softmax_all_KV_for_sampled_query_positions",src)
+        self.assertNotIn("torch.topk",src)
+
+    def test_sampled_query_positions_stable_and_inclusive(self):
+        self.assertEqual(exact.query_positions(1,64),(0,))
+        self.assertEqual(exact.query_positions(5,5),(0,1,2,3,4))
+        self.assertEqual(exact.query_positions(10,3),(0,4,9))
+        for n in (15275,18723,40759,82000,223605):
+            pos=exact.query_positions(n,64)
+            self.assertEqual(len(pos),64)
+            self.assertEqual(pos[0],0)
+            self.assertEqual(pos[-1],n-1)
+            self.assertEqual(len(set(pos)),len(pos))
+        with self.assertRaises(ValueError):
+            exact.query_positions(0,10)
+
+    def test_graph_research_only_relaxes_eager_exact_gate(self):
+        graph=(ROOT/"h3"/"htrc_flat_directflow_live.py").read_text(
+            encoding="utf-8")
+        self.assertIn('compare_only=False):',graph)
+        self.assertIn('if not exact and not compare_only:',graph)
+        self.assertIn('"relative_l2_to_eager_flat_percent":rel_l2_pct',graph)
+        self.assertIn('"strict_parity_required":not compare_only',graph)
+        self.assertIn('not compare_only',graph)
+        self.assertIn('torch.equal(group_out, eager_out[0])',graph)
+
+    def test_numeric_error_is_percent_not_bit_exact_flag(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("PyTorch unavailable on CPU")
+        reference=torch.ones((3,2,128),dtype=torch.float32)
+        whole=torch.ones((1,3,2,128),dtype=torch.float32)
+        got=exact.quality_against_exact(whole,reference,(0,1,2))
+        self.assertAlmostEqual(got["relative_l2_percent"],0.0)
+        whole *= 0.5
+        got=exact.quality_against_exact(whole,reference,(0,1,2))
+        self.assertAlmostEqual(got["relative_l2_percent"],50.0,places=5)
+        whole *= 0
+        got=exact.quality_against_exact(whole,reference,(0,1,2))
+        self.assertAlmostEqual(got["relative_l2_percent"],100.0,places=5)
 
 
 if __name__ == "__main__":
