@@ -122,9 +122,8 @@ real runs. Do not rerun superseded standalone Model-Resident Shadow.
 
 ## Status
 
-- Source created in HTRC research-only branch; ComfyNodes production
-  code and defaults untouched.
-- GPU real full-call and complete H3 video: UNRUN.
-- CPU AST and staging contracts: UNRUN until executed in a Python
-  environment with source checkout. Do not count them as PASS by
-  merely reading this document.
+- Source is published in this HTRC research-only branch; ComfyNodes defaults remain unchanged.
+- **PASS_FIRST_REAL_CALL** on RTX 5070 Ti: exact output parity against native-eager HTRC Flat for all 56 actual H3 heads at 15,275 tokens. Conditions, measurements and raw JSON are in [the 2026-11-12 run record](H3_FLAT_DIRECTFLOW_REAL_H3_RUN_2026-11-12.md) and [raw evidence](evidence/flat_directflow_real_h3_first_call_20261112.json).
+- The separate 39-frame / 2-step user sampler run **ABORTED** at 0/2 during background block prefetch with `Reusable H3 slot entry layout mismatch`; no video completed. This does not count as an OOM or as evidence of end-to-end speed/quality.
+- The standalone synthetic fixed-input CUDA Graph result remains separate. No default promotion, whole-video speedup, or visual/temporal quality claim is established.
+- CPU staging contracts were reported separately; they do not upgrade the real-model or full-video result.

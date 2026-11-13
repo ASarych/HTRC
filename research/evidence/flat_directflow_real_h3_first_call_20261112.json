@@ -1,0 +1,104 @@
+{
+  "experiment": "h3_directflow_real_model_live_first_call_v1",
+  "status": "PASS_FIRST_REAL_CALL",
+  "capture_and_parity_first_call_wall_ms": 15195.777100001578,
+  "real_model_qkv": true,
+  "full_model_denoise_or_video_complete": false,
+  "completed": true,
+  "source": "actual H3 post-RoPE BHSD QKV before out_proj",
+  "gpu": "NVIDIA GeForce RTX 5070 Ti",
+  "heads": 56,
+  "tokens": 15275,
+  "head_groups": [
+    {
+      "head_range": [
+        0,
+        11
+      ],
+      "exact_flat_parity": true,
+      "graph_gpu_event_ms": 10.623135566711426,
+      "eager_gpu_event_ms": 7006.33984375,
+      "graph_sync_wall_ms": 13.810799999191659,
+      "eager_sync_wall_ms": 7008.530699997209,
+      "capture_wall_ms": 508.13449999986915
+    },
+    {
+      "head_range": [
+        11,
+        22
+      ],
+      "exact_flat_parity": true,
+      "graph_gpu_event_ms": 160.4913330078125,
+      "eager_gpu_event_ms": 15.695072174072266,
+      "graph_sync_wall_ms": 161.26799999983632,
+      "eager_sync_wall_ms": 16.724099998100428,
+      "capture_wall_ms": 0.0
+    },
+    {
+      "head_range": [
+        22,
+        33
+      ],
+      "exact_flat_parity": true,
+      "graph_gpu_event_ms": 10.126463890075684,
+      "eager_gpu_event_ms": 17.303647994995117,
+      "graph_sync_wall_ms": 10.529800001677359,
+      "eager_sync_wall_ms": 18.589800001791446,
+      "capture_wall_ms": 0.0
+    },
+    {
+      "head_range": [
+        33,
+        44
+      ],
+      "exact_flat_parity": true,
+      "graph_gpu_event_ms": 9.870528221130371,
+      "eager_gpu_event_ms": 20.343616485595703,
+      "graph_sync_wall_ms": 10.243600001558661,
+      "eager_sync_wall_ms": 21.33239999966463,
+      "capture_wall_ms": 0.0
+    },
+    {
+      "head_range": [
+        44,
+        55
+      ],
+      "exact_flat_parity": true,
+      "graph_gpu_event_ms": 10.482687950134277,
+      "eager_gpu_event_ms": 17.327392578125,
+      "graph_sync_wall_ms": 11.073099998611724,
+      "eager_sync_wall_ms": 18.25000000098953,
+      "capture_wall_ms": 0.0
+    },
+    {
+      "head_range": [
+        55,
+        56
+      ],
+      "exact_flat_parity": true,
+      "graph_gpu_event_ms": 1.6219520568847656,
+      "eager_gpu_event_ms": 7039.619140625,
+      "graph_sync_wall_ms": 2.046399997198023,
+      "eager_sync_wall_ms": 7040.503500000341,
+      "capture_wall_ms": 11.284600001090439
+    }
+  ],
+  "all_groups_bit_exact": true,
+  "speedup_eager_over_graph_gpu_by_group_sums": 69.46609380597906,
+  "extra_reserved_mib": 224.0,
+  "model_resident_free_after_mib": 5227.0,
+  "graph_cache_group_sizes": [
+    1,
+    11
+  ],
+  "quality_coefficient_used": false,
+  "fixed_exact_leaves": 256,
+  "center_group": 1,
+  "notes": [
+    "First real model attention call only, group-by-group exact parity.",
+    "Two reused graph geometries per size, no stale model QKV pointers.",
+    "Graph capture time excluded from GPU sample, recorded separately.",
+    "Wall times include independent per-group synchronizations; do not interpret group sum as whole-denoise gain.",
+    "Model/video completion not established by this one-call gate."
+  ]
+}
