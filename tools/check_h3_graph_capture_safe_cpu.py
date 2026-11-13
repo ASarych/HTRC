@@ -40,6 +40,11 @@ def check():
             and 'torch.topk(sel,kx,dim=-1,sorted=False,out=(topv,ids))' in hb
             and 'idx.copy_(ids.view(h,centers,kx))' in hb
         ),
+        "balanced config without explicit group keeps centre group 1": (
+            'centers = geom.tile_count // int(cfg.get("kern", {}).get("group", 1))'
+                in graph
+            and 'cfg["kern"]["group"]' not in graph
+        ),
         "MU allocated outside capture": (
             'ws["MU"] = torch.empty(' in graph
             and graph.index('ws["MU"] = torch.empty(')
