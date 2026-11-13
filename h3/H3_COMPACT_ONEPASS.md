@@ -147,9 +147,16 @@ Default remains `torch`. Fast path fails closed if:
 
 The safe ComfyNodes canary preflights the Triton
 import and source CPU tests **before** loading the
-checkpoint. It records selected backend in the same
-`h3_native_pre_qkv_canary.json`. A real GPU
-benchmark of the Triton fast path is **UNRUN**; no
-speedup or memory reduction is claimed until it runs.
-The exact previous 91.744-ms Torch figure is the
-local control, not a guarantee.
+checkpoint. The kernel uses explicit `D=128` constexpr
+and `triton.language.extra.libdevice.nearbyint` for
+CUDA's ties-to-even quantization (rather than unsupported
+`tl.round`). It asserts the normalized Q/K and original
+V still alias the real fused output before running; any
+future Comfy API change fails closed. The report explicitly
+names `activation_packing_backend="triton"`, and the
+launcher rejects a report naming the fallback backend.
+
+A real GPU benchmark of the Triton fast path is
+**UNRUN**; no speedup or memory reduction is claimed
+until it runs. The previous 91.744-ms Torch figure
+is the local control, not a guarantee.
