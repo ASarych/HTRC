@@ -126,6 +126,60 @@ class TestGraphMemoryToSpeed(unittest.TestCase):
         self.assertIn('heads, mode="balanced", tiles=16',src)
         self.assertIn('os.environ.get("APL_HTRC_FLAT_DISPATCH","eager")',src)
 
+    def test_gpu_runner_calls_backend_under_inference_mode(self):
+        """Execute the actual nested GPU call closure with a CPU stub.
+
+        This catches the exact user-observed error: calling Direct-Flow
+        while grad tracking is enabled, even though GPU data are synthetic.
+        """
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("CPU PyTorch unavailable")
+        from types import SimpleNamespace
+        source=RUNNER.read_text(encoding="utf8")
+        tree=ast.parse(source,filename=str(RUNNER))
+        run=next(n for n in tree.body
+                 if isinstance(n,ast.FunctionDef) and n.name=="run_case")
+        calls=[n for n in ast.walk(run)
+               if isinstance(n,ast.FunctionDef) and n.name=="call"]
+        self.assertEqual(len(calls),1)
+        observed=[]
+        def fake_backend(*inputs,**kwargs):
+            observed.append({
+                "grad_enabled":torch.is_grad_enabled(),
+                "inference_mode":torch.is_inference_mode_enabled(),
+                "input_count":len(inputs),
+                "compare_only":kwargs.get("compare_only"),
+            })
+            if torch.is_grad_enabled():
+                raise RuntimeError("H3 Direct-Flow is inference-only")
+            return "inference-ok"
+        namespace={
+            "torch":torch,
+            "flow":SimpleNamespace(graph_attention_bthd=fake_backend),
+            "bank":("synthetic_Q","synthetic_K","synthetic_V"),
+            "args":SimpleNamespace(
+                heads=56,mode="balanced",tiles=16,
+                budget_mib=1024,reserve_mib=256,
+            ),
+        }
+        compiled=compile(ast.fix_missing_locations(
+            ast.Module(body=[calls[0]],type_ignores=[])),
+            str(RUNNER),"exec")
+        exec(compiled,namespace)
+        with torch.enable_grad():
+            self.assertTrue(torch.is_grad_enabled())
+            self.assertEqual(namespace["call"](),"inference-ok")
+            self.assertTrue(torch.is_grad_enabled(),
+                            "Call must restore caller grad state")
+        self.assertEqual(observed,[{
+            "grad_enabled":False,
+            "inference_mode":True,
+            "input_count":3,
+            "compare_only":True,
+        }])
+
     def test_quality_ab_is_nonfatal(self):
         src=RUNNER.read_text(encoding="utf8")
         self.assertIn("quality_against_exact(",src)

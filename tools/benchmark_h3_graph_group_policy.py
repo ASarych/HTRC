@@ -116,11 +116,16 @@ def run_case(row, args, write):
                 write()
 
                 def call():
-                    return flow.graph_attention_bthd(
-                        *bank,heads=args.heads,mode=args.mode,tiles=args.tiles,
-                        budget_mib=args.budget_mib,reserve_mib=args.reserve_mib,
-                        workspace=True,compare_only=True,
-                    )
+                    # Both the first call and every warmed replay must be
+                    # inference-only. H3 Direct-Flow explicitly rejects
+                    # autograd-enabled invocation. Keep the scope local:
+                    # restore the caller's original grad setting on return.
+                    with torch.inference_mode():
+                        return flow.graph_attention_bthd(
+                            *bank,heads=args.heads,mode=args.mode,tiles=args.tiles,
+                            budget_mib=args.budget_mib,reserve_mib=args.reserve_mib,
+                            workspace=True,compare_only=True,
+                        )
 
                 got=call()
                 torch.cuda.synchronize()

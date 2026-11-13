@@ -129,3 +129,24 @@ dense, not by bit equality with one another.
 - Zero-copy graph QKV and adaptive empirical fastest-group policy:
   NOT IMPLEMENTED.
 - Real short-N/long-N speed gains and Sol crossover: UNKNOWN.
+
+## RTX 5070 Ti first short A/B report and harness fix
+
+User-run `flat_graph_group_balanced_ab.json` after the preceding CPU test
+correction reached the GPU runner. Both legacy and reuse_aware arms at
+15,275 and 18,723 tokens ended `RUNTIME_FAILED` with the same exact
+`RuntimeError: H3 Direct-Flow is inference-only` message. No quality,
+VRAM peak, full-attention GPU time or real speedup was measured.
+The planner outputs 14 heads x 4 groups at both short lengths remain
+source-derived *estimates only*.
+
+Cause: the GPU A/B harness called `flow.graph_attention_bthd` while
+PyTorch autograd was enabled, which the inference-only backend correctly
+rejects. The GPU harness's nested `call()` now wraps the backend in
+`with torch.inference_mode():` for BOTH first-call capture and warmed
+replay timings, restoring the caller's prior state on return.
+A new CPU regression test executes the exact nested call source with a
+fake backend and asserts autograd-disabled/inference-enabled execution
+and state restoration. The actual GPU benchmark on this patched HEAD
+remains **UNRUN** pending a new local invocation. Do not count either
+of the failed attempts as numerical-quality or throughput evidence.
