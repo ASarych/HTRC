@@ -236,3 +236,30 @@ whole denoise, peak VRAM and video quality are all
 the small capture smoke and real one-block graph pass.
 Original `torch` QKV pack remains selected for
 the live model path.
+
+### 2026-11-14: model-free smoke exposed optional `kern.group`
+
+The first independent Windows CUDA Graph smoke correctly stopped
+**before HyperFlow was loaded** with:
+
+```text
+KeyError: 'group'
+htrc_flat_directflow_live.py, _new_session
+centers = geom.tile_count // int(cfg["kern"]["group"])
+```
+
+This is **not** evidence of a CUDA pointer regression. The new
+capture-safe preallocation mistakenly required an explicit
+`cfg["kern"]["group"]`, while balanced/fast Flat config permits
+the missing key and uses default `1` elsewhere in the same module.
+It now uses
+`int(cfg.get("kern", {}).get("group", 1))`.
+The import-free CPU source gate explicitly rejects a reintroduction
+of the direct indexed form. No Graph memory/performance or video
+claim is possible from this early smoke failure.
+
+The **next** small CUDA smoke may progress to new kernels and
+may expose other independent capture issues. If that happens,
+report the next exact traceback rather than declaring the entire
+live path tested. CPU/real GPU execution on this new HEAD remains
+**UNRUN**; the unchanged fallback policy is fail-closed.
