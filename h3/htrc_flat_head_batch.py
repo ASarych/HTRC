@@ -129,7 +129,8 @@ def iter_head_groups(total_heads: int, heads_per_group: int) -> Iterator[tuple[i
         yield start, min(total_heads,start+heads_per_group)
 
 
-def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
+def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
+                               fused_vb=False):
     """One _tile_kernel call for arbitrary H prepared, same-shape native heads.
 
     The call uses existing BEST math with TAIL=0. Tail-in-Merge must be
@@ -142,6 +143,12 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
         raise ValueError(f"Missing prepared state: {missing}")
     direct=bool(states.get("_direct_q",False))
     direct_v=bool(states.get("_direct_v",False))
+    if fused_vb:
+        if (states.get("_vb_mode")!="fused_vb" or not direct or not direct_v):
+            raise ValueError("Fused VB requires explicit opt-in and direct BF16 Q/K/V")
+        kbf=states.get("_stream_kbf")
+        if kbf is None or kbf.dtype!=torch.bfloat16 or not kbf.is_cuda:
+            raise ValueError("Fused VB requires native BF16 K")
     if any(not states[name].is_contiguous()
            for name in req if name not in (("Q","V") if direct_v else ("Q",))):
         raise ValueError("Prepared packed state tensors must be contiguous")
@@ -173,8 +180,15 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
         raise ValueError("K/V must be [heads,keys,dim]")
     if states["KS"].shape!=(heads,keys):
         raise ValueError("KS scales mismatch")
-    if states["G"].shape!=(heads,centers,leaves,dim) or states["VB"].shape!=states["G"].shape:
-        raise ValueError("G/VB dims mismatch")
+    if states["G"].shape!=(heads,centers,leaves,dim):
+        raise ValueError("G dims mismatch")
+    if (not fused_vb and states["VB"].shape!=states["G"].shape
+        or fused_vb and states["VB"].numel()!=1):
+        raise ValueError("VB state layout mismatch for selected mode")
+    if fused_vb and (kbf.shape!=(heads,keys,dim)
+        or states["V"].dtype!=torch.bfloat16
+        or states["K"].dtype!=torch.int8):
+        raise ValueError("Fused VB source layout/dtype mismatch")
     if any(states[name].shape!=(heads,centers,leaves) for name in ("LZ","SG","EXCL")):
         raise ValueError("LZ/SG/EXCL dims mismatch")
     idx=states["IDX"]
@@ -211,6 +225,14 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
     vptr=states["V"] if direct_v else states["V"].view(heads*keys,dim)
     vstrides=tuple(map(int,states["V"].stride())) if direct_v else (0,0,0)
     lz=flat("LZ")
+    vb_kernel_kwargs={}
+    if fused_vb:
+        vb_kernel_kwargs={
+            "FUSED_VB":1,"KBF":kbf,
+            "KB_SH":int(kbf.stride(0)),
+            "KB_SS":int(kbf.stride(1)),
+            "KB_SD":int(kbf.stride(2)),
+        }
     compiled=triton_module._tile_kernel[(heads*tiles,splits,1)](
         qptr,flat("MU"),flat("G"),lz,flat("VB"),
         flat("EXCL"),flat("IDX"),
@@ -233,9 +255,17 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
         Q_SR=qstrides[2],Q_SD=qstrides[3],
         V_DIRECT=int(direct_v),V_SH=vstrides[0],
         V_SS=vstrides[1],V_SD=vstrides[2],
-        num_warps=warps,num_stages=stages
+        num_warps=warps,num_stages=stages,**vb_kernel_kwargs
     )
     return buffers,compiled
+
+def launch_prepared_tile_batch_fused_vb(states, config, triton_module, *,
+                                         buffers=None):
+    """Opt-in, no-global-VB Tile specialization; old Tile remains default."""
+    if states.get("_vb_mode")!="fused_vb":
+        raise ValueError("Fused Tile invoked on non-fused prepared state")
+    return launch_prepared_tile_batch(states,config,triton_module,
+                                      buffers=buffers,fused_vb=True)
 
 
 
@@ -473,8 +503,8 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     """
     import torch
     triton_module._dll()
-    if vb_mode not in ("materialized", "split_stream"):
-        raise ValueError("vb_mode must be materialized or split_stream")
+    if vb_mode not in ("materialized", "split_stream", "fused_vb"):
+        raise ValueError("vb_mode must be materialized, split_stream or fused_vb")
     if quant_backend not in ("torch", "triton"):
         raise ValueError("quant_backend must be torch or triton")
     if input_cast not in ("gpu", "cpu"):
@@ -547,11 +577,11 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     if group not in (1,2,4) or tile_count % group:
         raise ValueError("Query tile count must divide centre group 1/2/4")
     centers=tile_count//group
-    if vb_mode == "split_stream" and (
+    if vb_mode in ("split_stream","fused_vb") and (
         group != 1 or kv_cache is None or query_workspace is None
         or query_staging not in ("native_direct","native_torch_mu")
     ):
-        raise ValueError("split_stream requires group1, resident KV, native Q and workspace")
+        raise ValueError("Streaming VB requires group1, resident KV, native Q and workspace")
     n_query=tile_count*tile
     if n_query>int(q_cap.shape[0]):
         raise ValueError("Not enough query rows in native capture")
@@ -737,13 +767,13 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         V_SH=(int(vbf.stride(0)) if direct_kv else 0),
         V_SS=(int(vbf.stride(1)) if direct_kv else 0),
         V_SD=(int(vbf.stride(2)) if direct_kv else 0),
-        SCORE_ONLY=int(vb_mode=="split_stream"),
+        SCORE_ONLY=int(vb_mode in ("split_stream","fused_vb")),
         num_warps=4
     )
     mark_stage("leaf_stats")
     # The streaming VB producer reads the genuine BF16 K (not K8) with
     # the same MU as the original stats kernel, after selection is fixed.
-    stream_kbf=kbf if vb_mode=="split_stream" else None
+    stream_kbf=kbf if vb_mode in ("split_stream","fused_vb") else None
     del kbf
     muf=MU.view(h*centers,dim)
     gf=G.view(h*centers,nb,dim)

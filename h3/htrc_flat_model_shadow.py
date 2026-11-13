@@ -83,9 +83,9 @@ def alloc_workspace(capture, head_count, tiles, cfg, *, vb_mode="materialized"):
     def make(shape,dtype):
         return torch.empty(shape,dtype=dtype,device=dev)
     ps=(h,tiles,ns,64)
-    if vb_mode not in ("materialized", "split_stream"):
+    if vb_mode not in ("materialized", "split_stream", "fused_vb"):
         raise ValueError("Unknown VB workspace mode")
-    # Worst-case leaf span rounded to Tile's far BN=32. Streamed stage
+    # Worst-case leaf span rounded to the configured far Tile BN. Streamed stage
     # holds only ONE split while preserving complete G/LZ/SG/IDX state.
     bn=int(cfg.get("kern",{}).get("tile_bn",32))
     per=math.ceil(n/ns)

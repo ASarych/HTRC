@@ -245,6 +245,42 @@ def _vbar_split_kernel(MU, KBF, VBF, VB, tc, nb, scale,
 
 
 @triton.jit
+def _fused_vbar_one_leaf(MU_VEC, KBF, VBF, head, leaf, scale,
+                        D: tl.constexpr, LEAF: tl.constexpr,
+                        PREC: tl.constexpr,
+                        KB_SH: tl.constexpr, KB_SS: tl.constexpr,
+                        KB_SD: tl.constexpr,
+                        V_SH: tl.constexpr, V_SS: tl.constexpr,
+                        V_SD: tl.constexpr):
+    """Recover one BF16 Vbar lane in the Tile CTA without global VB staging.
+
+    Reproduce reference _stats_kernel's 16x16 tensor-core arithmetic by
+    broadcasting the same centre MU to 16 rows and extracting row zero.
+    This is intentionally a correctness-first research specialization;
+    redundant work can make it much slower than materialized VB.
+    """
+    rd=tl.arange(0,D)
+    token=tl.arange(0,LEAF)
+    lane=tl.arange(0,LEAF)
+    k=tl.load(KBF + head*KB_SH + (leaf*LEAF+token)[:,None]*KB_SS
+              + rd[None,:]*KB_SD).to(tl.float32)
+    v=tl.load(VBF + head*V_SH + (leaf*LEAF+token)[:,None]*V_SS
+              + rd[None,:]*V_SD).to(tl.float32)
+    mu_matrix=tl.broadcast_to(MU_VEC[None,:],(LEAF,D))
+    logits=tl.dot(mu_matrix,tl.trans(k),input_precision=PREC)*scale
+    # Row 0 is computed by the same 16x16 x 16x128 dot geometry as
+    # the original stats kernel. The other broadcast rows are discarded.
+    scores=tl.sum(tl.where(lane[:,None]==0,logits,0.0),axis=0)
+    maximum=tl.max(scores,axis=0)
+    weights=tl.exp(scores-maximum)
+    weights=weights/tl.sum(weights,axis=0)
+    w_matrix=tl.broadcast_to(weights[None,:],(LEAF,LEAF))
+    weighted_v=tl.dot(w_matrix,v,input_precision=PREC)
+    result=tl.sum(tl.where(lane[:,None]==0,weighted_v,0.0),axis=0)
+    return result.to(tl.bfloat16)
+
+
+@triton.jit
 def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV, KS, nb, kx, lps, eps, nt, scale,
                  T: tl.constexpr, D: tl.constexpr, BN: tl.constexpr, BN_NEAR: tl.constexpr, LEAF: tl.constexpr,
                  PREC: tl.constexpr, DOT: tl.constexpr, GR: tl.constexpr = 1, FP8: tl.constexpr = 0,
@@ -263,7 +299,11 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
                  VB_START: tl.constexpr = 0,
                  VB_SPAN: tl.constexpr = 0,
                  SPLIT_ID: tl.constexpr = -1,
-                 SPLIT_COUNT: tl.constexpr = 0):
+                 SPLIT_COUNT: tl.constexpr = 0,
+                 FUSED_VB: tl.constexpr = 0, KBF = None,
+                 KB_SH: tl.constexpr = 0,
+                 KB_SS: tl.constexpr = 0,
+                 KB_SD: tl.constexpr = 0):
     """Split-K over leaves: program (tile t, split sp) covers far leaves [sp*lps, +lps) and
     exact tokens [sp*eps, +eps); writes partial (max, sum, acc) merged on the host."""
     t = tl.program_id(0)
@@ -361,7 +401,23 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
             p = tl.exp(sc - m_s[:, None])
             alpha = tl.exp(m_i - m_s)
             l_i = l_i * alpha + tl.sum(p, axis=1)
-            if VB_SPLIT_STREAM:
+            if FUSED_VB:
+                # One centre per tile: recompute Vbar for each full leaf
+                # directly in registers; do NOT load from VB or write VB.
+                # The existing Tile far online-softmax/PV math follows.
+                vb = tl.full((BN,D),0.0,tl.bfloat16)
+                row = tl.arange(0,BN)
+                for lane in range(0,BN):
+                    leaf = n0 + lane
+                    if leaf < nb:
+                        one = _fused_vbar_one_leaf(
+                            mu, KBF, V, head, leaf, scale,
+                            D=D, LEAF=LEAF, PREC=PREC,
+                            KB_SH=KB_SH,KB_SS=KB_SS,KB_SD=KB_SD,
+                            V_SH=V_SH,V_SS=V_SS,V_SD=V_SD,
+                        )
+                        vb = tl.where(row[:,None]==lane,one[None,:],vb)
+            elif VB_SPLIT_STREAM:
                 vb = tl.load(VB + (gt * VB_SPAN + c - VB_START)[:, None] * D + d[None, :],
                              mask=cm[:, None], other=0.0)
             else:

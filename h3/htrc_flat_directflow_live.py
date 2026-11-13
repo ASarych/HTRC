@@ -64,6 +64,10 @@ def _one_window(window_capture, ids, cfg, tr, cache, ws, tail, geom,
         partial, _ = batch.launch_prepared_tile_batch_split_stream(
             states, cfg, tr, buffers=ws["_partials"], vb_split=ws["VB_SPLIT"]
         )
+    elif vb_mode == "fused_vb":
+        partial, _ = batch.launch_prepared_tile_batch_fused_vb(
+            states, cfg, tr, buffers=ws["_partials"]
+        )
     else:
         partial, _ = batch.launch_prepared_tile_batch(
             states, cfg, tr, buffers=ws["_partials"]
@@ -246,8 +250,10 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
     vb_mode=os.environ.get(
         "APL_HTRC_DIRECTFLOW_VB_MODE","materialized"
     ).strip().lower()
-    if vb_mode not in ("materialized","split_stream"):
-        raise ValueError("APL_HTRC_DIRECTFLOW_VB_MODE must be materialized or split_stream")
+    if vb_mode not in ("materialized","split_stream","fused_vb"):
+        raise ValueError(
+            "APL_HTRC_DIRECTFLOW_VB_MODE must be materialized, split_stream or fused_vb"
+        )
     geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode)
     geometries = list(windows.iter_query_windows(
         s, tiles, tile_rows=int(cfg["tile"]), center_group=1
