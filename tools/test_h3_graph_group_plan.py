@@ -180,6 +180,40 @@ class TestGraphMemoryToSpeed(unittest.TestCase):
             "compare_only":True,
         }])
 
+    def test_research_memory_trace_fail_closed(self):
+        src=FLOW.read_text(encoding="utf8")
+        tree=ast.parse(src,filename=str(FLOW))
+        names={n.name for n in ast.walk(tree) if isinstance(n,ast.FunctionDef)}
+        self.assertIn("_memory_probe",names)
+        self.assertIn("_new_session",names)
+        for phase in ("baseline", "after_stage_kv_cache",
+                      "after_workspace_alloc", "after_warmup",
+                      "after_capture", "after_session"):
+            with self.subTest(phase=phase):
+                self.assertIn('"' + phase + '"',src)
+        self.assertIn('failure["memory_at_failure"]',src)
+        self.assertIn('result["memory_trace"]',src)
+        self.assertIn("reserved_minus_allocated_mib",src)
+        self.assertIn("if (compare_only and verify) else None",src)
+        self.assertIn("extra_reserved > max_extra*_MIB",src)
+
+    def test_gpu_sweep_keeps_one_report_and_only_cpu_samples(self):
+        src=RUNNER.read_text(encoding="utf8")
+        for arm in ("legacy","reuse_cap7","reuse_cap8",
+                    "reuse_cap11","reuse_cap14"):
+            with self.subTest(arm=arm):
+                self.assertIn('"' + arm + '"',src)
+        self.assertIn("saved[policy]=got[0].index_select(0,ix).float().cpu()",src)
+        self.assertIn("del ix,got",src)
+        self.assertIn("failure=json.loads(gate_path.read_text",src)
+        self.assertIn("except BaseException:",src)
+        self.assertIn("tempfile.TemporaryDirectory",src)
+        self.assertIn("max-extra-mib",src)
+        self.assertIn("flat_graph_group_balanced_ab.json",src)
+        self.assertNotIn('saved[policy]=got.detach().clone()',src)
+        self.assertNotIn('args.max_group',src)
+        compile(src,str(RUNNER),"exec")
+
     def test_quality_ab_is_nonfatal(self):
         src=RUNNER.read_text(encoding="utf8")
         self.assertIn("quality_against_exact(",src)
