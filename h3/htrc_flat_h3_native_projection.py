@@ -148,6 +148,16 @@ def project_group_native(attn, x, rope_freqs, *, begin, end,
             "selective_nvfp4_output_projection": False}
 
 
+def build_compact_onepass_stage(attn, x, rope_freqs, *, chunk_rows=4096):
+    """Prepare one true fused QKV pass (all heads) into compact INT8 storage.
+
+    Explicit research API only. Does not cache weight/activation data across
+    model forwards or change the output-producing ComfyUI backend.
+    """
+    from .htrc_flat_h3_compact_once import CompactAllHeadsQKV
+    return CompactAllHeadsQKV(attn, x, rope_freqs, chunk_rows=chunk_rows)
+
+
 class NativeGroupProducer:
     """Fresh projection for one head group; Q used after K/V writer.
 
@@ -191,7 +201,8 @@ class NativeGroupProducer:
 @torch.no_grad()
 def graph_attention_native_h3(attn, x, rope_freqs, *, group_heads=8,
                               chunk_rows=4096, mode="balanced", tiles=16,
-                              budget_mib=1024, reserve_mib=256):
+                              budget_mib=1024, reserve_mib=256,
+                              projection_strategy="repeated_group"):
     """One native model attention, preserving original quantized qkv_proj.
 
     Requests one 8-head research session per call with a per-call override.
@@ -205,15 +216,25 @@ def graph_attention_native_h3(attn, x, rope_freqs, *, group_heads=8,
         raise ValueError("Native H3 Flat requires equal genuine head groups")
     if torch.is_grad_enabled():
         raise RuntimeError("Real H3 Graph research requires no-grad eval")
+    if projection_strategy not in ("repeated_group", "compact_int8_onepass"):
+        raise ValueError("Unknown research-only native H3 projection strategy")
     s = int(x.shape[0])
+    compact = (
+        build_compact_onepass_stage(attn, x, rope_freqs,
+                                   chunk_rows=chunk_rows)
+        if projection_strategy == "compact_int8_onepass" else None
+    )
     # Shape-only metadata placeholders; no real QKV values read from these.
     marker = torch.zeros((1, 1, 1, 1), device=x.device, dtype=x.dtype)
     output = torch.empty((1, s, heads, DIM), device=x.device, dtype=x.dtype)
     summary = []
     for begin in range(0, heads, group_heads):
         end = begin+group_heads
-        producer = NativeGroupProducer(attn, x, rope_freqs, begin, end,
-                                       chunk_rows=chunk_rows)
+        producer = (
+            compact.group(begin, end) if compact is not None else
+            NativeGroupProducer(attn, x, rope_freqs, begin, end,
+                                chunk_rows=chunk_rows)
+        )
         placeholder = marker.expand(1, group_heads, s, DIM)
         result = flow.graph_attention_bthd(
             placeholder, placeholder, placeholder,
@@ -224,13 +245,26 @@ def graph_attention_native_h3(attn, x, rope_freqs, *, group_heads=8,
             research_source_kind="native_h3",
             research_group_size=group_heads)
         output[:, :, begin:end, :].copy_(result)
-        summary.append(producer.stats)
+        if compact is None:
+            summary.append(producer.stats)
         del result, producer
     projected = attn.out_proj(output.reshape(s, heads*DIM))
     return projected, {
-        "projection_mode": "full_fused_qkv_repeated_per_head_group",
-        "projection_passes_per_attention": heads//group_heads,
-        "projection_chunk_calls_per_attention": sum(x["projection_chunks"] for x in summary),
+        "projection_mode": (
+            "native_fused_once_compact_int8_all_heads"
+            if compact is not None else
+            "full_fused_qkv_repeated_per_head_group"
+        ),
+        "projection_passes_per_attention": (
+            1 if compact is not None else heads//group_heads
+        ),
+        "projection_chunk_calls_per_attention": (
+            compact.projection_chunks if compact is not None
+            else sum(item["projection_chunks"] for item in summary)
+        ),
+        "compact_stage": compact.summary() if compact is not None else None,
+        "compact_activation_lossy": compact is not None,
         "selective_quantized_weight_slicing": "UNIMPLEMENTED",
         "real_model_graph_math": "HTRC Flat balanced or fast, not stock dense/Sol",
+        "model_output_parity": "UNTESTED",
     }
