@@ -86,6 +86,39 @@ class TestGraphMemoryToSpeed(unittest.TestCase):
         self.assertEqual(x["group_count"],12)
         self.assertEqual(x["unique_graph_session_sizes"],[5,1])
 
+    def test_forced_group_is_compare_only_and_within_runtime_cap(self):
+        def forced(value, **kwargs):
+            settings=dict(compare_only=True, policy="reuse_aware",
+                          max_group=32, heads=56)
+            settings.update(kwargs)
+            return m.research_forced_group_size(value, **settings)
+        self.assertIsNone(forced(None))
+        self.assertEqual(forced("28"),28)
+        for requested, changes in (
+            ("28",dict(compare_only=False)),
+            ("28",dict(policy="legacy")),
+            ("28",dict(max_group=14)),
+            ("28",dict(heads=14)),
+            ("0",{}),
+            ("33",{}),
+            ("28oops",{}),
+            ("-1",{}),
+        ):
+            with self.subTest(value=requested, changes=changes):
+                with self.assertRaises(ValueError):
+                    forced(requested, **changes)
+
+    def test_runtime_research_force_never_changes_default_or_hard_gate(self):
+        src=FLOW.read_text(encoding="utf8")
+        self.assertIn("group_plan.research_forced_group_size(",src)
+        self.assertIn('"APL_HTRC_DIRECTFLOW_RESEARCH_FORCE_GROUP"',src)
+        self.assertIn('plan["research_force_bypasses_capacity_estimate"]=True',src)
+        self.assertIn('plan["research_force_runtime_guard"]="UNCHANGED"',src)
+        self.assertIn("extra_reserved > max_extra*_MIB",src)
+        self.assertIn("free < min_free*_MIB",src)
+        self.assertIn('"APL_HTRC_DIRECTFLOW_GROUP_POLICY","legacy"',src)
+        self.assertIn("if not exact and not compare_only:",src)
+
     def test_budget_or_free_limit_fails_closed(self):
         for x in (dict(budget_mib=400),
                   dict(free_mib=320,min_free_mib=256),
@@ -235,6 +268,12 @@ class TestGraphMemoryToSpeed(unittest.TestCase):
         self.assertIn("tempfile.TemporaryDirectory",src)
         self.assertIn("max-extra-mib",src)
         self.assertIn("flat_graph_group_balanced_ab.json",src)
+        self.assertIn('"reuse_force28"',src)
+        self.assertIn('"--arms"',src)
+        self.assertIn("args.arms=arms",src)
+        self.assertIn('if policy=="reuse_force28":',src)
+        self.assertIn('os.environ.pop("APL_HTRC_DIRECTFLOW_RESEARCH_FORCE_GROUP",None)',src)
+        self.assertIn("baseline_arm=next((arm for arm in args.arms if arm in saved),None)",src)
         self.assertNotIn('saved[policy]=got.detach().clone()',src)
         self.assertIn('row["pairwise_reference_arm"]=baseline_arm',src)
         self.assertIn('next((arm for arm in POLICIES if arm in saved),None)',src)
