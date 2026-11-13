@@ -34,7 +34,9 @@ from h3_flat_quality_reference import (
 OUTPUT=Path(r"D:\ComfyOutput\H3\math_probe\flat_graph_group_balanced_ab.json")
 SHAPES={"short":(15275,18723),
         "scaling":(15275,18723,40759,82000)}
-POLICIES=("legacy","reuse_aware")
+# Explicit capped Graph schedules; a cap is NOT a guaranteed group size.
+# The reuse-aware planner may choose a smaller feasible candidate.
+POLICIES=("legacy","reuse_cap7","reuse_cap8","reuse_cap11","reuse_cap14")
 
 
 def _atomic_report(path,payload):
@@ -91,7 +93,10 @@ def run_case(row, args, write):
     )
     original={name:os.environ.get(name) for name in env_keys}
     for policy in POLICIES:
-        result={"status":"UNRUN","policy":policy,
+        runtime_policy=("legacy" if policy=="legacy" else "reuse_aware")
+        group_limit=(11 if policy=="legacy" else int(policy.removeprefix("reuse_cap")))
+        result={"status":"UNRUN","policy":runtime_policy,
+                "arm":policy,"requested_group_cap":group_limit,
                 "quality_reference":"all-key FP32 dense sampled queries",
                 "real_video":"UNRUN"}
         row["policies"][policy]=result
@@ -99,18 +104,15 @@ def run_case(row, args, write):
         try:
             flow.clear_session_cache()
             torch.cuda.empty_cache()
-            os.environ["APL_HTRC_DIRECTFLOW_GROUP_POLICY"]=policy
-            os.environ["APL_HTRC_DIRECTFLOW_GROUP"]=str(
-                11 if policy=="legacy" else args.max_group
-            )
+            os.environ["APL_HTRC_DIRECTFLOW_GROUP_POLICY"]=runtime_policy
+            os.environ["APL_HTRC_DIRECTFLOW_GROUP"]=str(group_limit)
             os.environ["APL_HTRC_DIRECTFLOW_VB_MODE"]="materialized"
             os.environ["APL_HTRC_DIRECTFLOW_MAX_EXTRA_MIB"]=str(args.max_extra_mib)
             # The first-call parity diagnostic goes into a TEMP directory.
             # Only the aggregate matrix JSON persists after this arm.
             with tempfile.TemporaryDirectory(prefix="htrc-group-gate-") as temp:
-                os.environ["APL_HTRC_DIRECTFLOW_REPORT"]=str(
-                    Path(temp)/"first_call_gate.json"
-                )
+                gate_path=Path(temp)/"first_call_gate.json"
+                os.environ["APL_HTRC_DIRECTFLOW_REPORT"]=str(gate_path)
                 torch.cuda.reset_peak_memory_stats()
                 result["status"]="RUNNING"
                 write()
@@ -133,15 +135,21 @@ def run_case(row, args, write):
                     "APL_HTRC_DIRECTFLOW_REPORT"]).read_text(encoding="utf-8"))
                 if gate.get("status")!="RECORDED_FIRST_CALL":
                     raise RuntimeError("Missing research first-call Graph report")
-                saved[policy]=got.detach().clone()
                 result["quality"]=quality_against_exact(
-                    saved[policy],exact,positions
+                    got,exact,positions
                 )
+                # Keep only 64 sampled rows on CPU: retaining full GPU
+                # outputs would distort the next arm's VRAM headroom.
+                ix=torch.as_tensor(positions,device=got.device,dtype=torch.long)
+                saved[policy]=got[0].index_select(0,ix).float().cpu()
+                del ix,got
                 result["planner"]=gate.get("group_plan")
                 result["group_size"]=gate.get("head_group_cap")
                 result["group_count"]=math.ceil(args.heads/int(result["group_size"]))
                 result["distinct_session_sizes"]=gate.get("graph_cache_group_sizes")
                 result["extra_reserved_mib"]=gate.get("extra_reserved_mib")
+                result["memory_trace"]=gate.get("memory_trace")
+                result["memory_trace_semantics"]=gate.get("memory_trace_semantics")
                 result["eager_flat_diagnostic"]=gate.get("head_groups")
                 result["timing"]=_timing(call,args.rounds)
                 result["peak_allocated_mib"]=float(
@@ -155,6 +163,20 @@ def run_case(row, args, write):
         except BaseException as exc:
             result["status"]="RUNTIME_FAILED"
             result["error"]=f"{type(exc).__name__}: {exc}"[:1600]
+            # Preserve diagnostics from the TEMP per-arm runtime report,
+            # even when the first-call cap prevents numerical measurements.
+            gate_file=locals().get("gate_path")
+            if gate_file is not None and gate_file.exists():
+                try:
+                    failed_gate=json.loads(gate_file.read_text(encoding="utf-8"))
+                    result["first_call_gate_status"]=failed_gate.get("status")
+                    result["actual_head_group_cap"]=failed_gate.get("head_group_cap")
+                    result["memory_trace"]=failed_gate.get("memory_trace")
+                    result["memory_at_failure"]=failed_gate.get("memory_at_failure")
+                    result["head_groups_completed"]=failed_gate.get("head_groups_completed")
+                    result["memory_trace_semantics"]=failed_gate.get("memory_trace_semantics")
+                except (OSError, ValueError) as report_error:
+                    result["gate_report_read_error"]=str(report_error)[:500]
         finally:
             try:
                 flow.clear_session_cache()
@@ -168,17 +190,20 @@ def run_case(row, args, write):
             os.environ.pop(key,None)
         else:
             os.environ[key]=value
-    if len(saved)==2:
-        row["pairwise_difference_percent_to_dense_scale"]=(
-            normalized_difference_percent(
-                saved["legacy"],saved["reuse_aware"],exact,positions
-            )
-        )
-        row["bit_exact_between_policies"]=bool(torch.equal(
-            saved["legacy"],saved["reuse_aware"]
-        ))
-    else:
-        row["pairwise_difference_percent_to_dense_scale"]=None
+    row["pairwise_difference_percent_to_dense_scale"]={}
+    row["bit_exact_between_policies"]={}
+    if "legacy" in saved:
+        ref_sample=exact.detach().cpu().float()
+        ref_norm=float(torch.linalg.vector_norm(ref_sample).clamp_min(1.0e-30))
+        for policy in POLICIES:
+            if policy=="legacy" or policy not in saved:
+                continue
+            diff=saved[policy]-saved["legacy"]
+            row["pairwise_difference_percent_to_dense_scale"][policy]=(
+                float(torch.linalg.vector_norm(diff))/ref_norm*100.0
+                if bool(torch.isfinite(diff).all()) else None)
+            row["bit_exact_between_policies"][policy]=bool(torch.equal(
+                saved[policy],saved["legacy"]))
     row["sampled_queries"]=len(positions)
     row["sampled_query_positions"]=list(positions)
     row["status"]=(
@@ -197,7 +222,6 @@ def main():
     ap.add_argument("--mode",choices=("balanced","fast"),default="balanced")
     ap.add_argument("--tiles",type=int,choices=(16,32,64),default=16)
     ap.add_argument("--heads",type=int,default=56)
-    ap.add_argument("--max-group",type=int,default=32)
     ap.add_argument("--budget-mib",type=int,default=1024)
     ap.add_argument("--reserve-mib",type=int,default=256)
     ap.add_argument("--max-extra-mib",type=int,default=768)
@@ -207,9 +231,9 @@ def main():
     ap.add_argument("--seed",type=int,default=42026)
     ap.add_argument("--output",type=Path,default=OUTPUT)
     args=ap.parse_args()
-    if (args.heads<1 or args.heads>56 or args.max_group<1 or
-        args.max_group>32 or args.rounds<2 or args.sample_queries<1):
-        ap.error("Invalid heads, max-group, rounds or sample-queries")
+    if (args.heads<1 or args.heads>56 or args.rounds<2 or
+        args.sample_queries<1):
+        ap.error("Invalid heads, rounds or sample-queries")
     # Apply Graph-specific caps exactly as the runtime does; this is
     # only a synthetic model-free planning comparison until --execute.
     rows=[]
@@ -217,7 +241,7 @@ def main():
         plan=planner.choose_group(
             tokens=tokens,heads=args.heads,tiles=args.tiles,
             mode=args.mode,vb_mode="materialized",
-            max_group=args.max_group,budget_mib=args.budget_mib,
+            max_group=14,budget_mib=args.budget_mib,
             reserve_mib=args.reserve_mib,max_extra_mib=args.max_extra_mib,
             free_mib=args.free_mib_plan,min_free_mib=max(256,args.reserve_mib),
         )
@@ -237,12 +261,15 @@ def main():
         "vb_mode":"materialized",
         "default_runtime_group_policy":"legacy",
         "baseline":"graph_materialized_legacy_group11",
-        "candidate":"graph_materialized_reuse_aware_group",
+        "candidate":"graph_materialized_reuse_aware_group_caps_7_8_11_14",
         "reference":"FP32 exact dense all-key sampled queries",
         "no_bitwise_requirement_between_modes":True,
         "quality_is_percent_relative_l2_to_dense":True,
         "short_cases_are_mandatory":True,
         "scope":args.scope,"gpu_heads":args.heads,"window_tiles":args.tiles,
+        "arms":list(POLICIES),
+        "head_group_caps":{"legacy":11,"reuse_cap7":7,"reuse_cap8":8,
+                           "reuse_cap11":11,"reuse_cap14":14},
         "warnings":[
             "No stage K/V copies eliminated by this experiment: it only "
             "exploits already existing native KV aliases and better group sizing.",
@@ -250,7 +277,9 @@ def main():
             "post-capture graph allocator and free VRAM gates are authoritative.",
             "Fewer Graph replays does NOT guarantee faster full attention.",
             "No video, checkpoint, or Sol comparison.",
-            "Numerical discrepancies are percent metrics and never abort the matrix."
+            "Numerical discrepancies are percent metrics and never abort the matrix.",
+            "Requested group cap is an upper bound; actual group can be smaller.",
+            "Allocator trace is not an exact measurement of CUDA Graph private pools."
         ],
         "rows":rows,
     }
