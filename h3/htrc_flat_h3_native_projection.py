@@ -216,7 +216,8 @@ def graph_attention_native_h3(attn, x, rope_freqs, *, group_heads=8,
             heads=group_heads, mode=mode, tiles=tiles,
             budget_mib=budget_mib, reserve_mib=reserve_mib,
             workspace=True, compare_only=True,
-            query_provider=producer.fill_q, kv_provider=producer.fill_kv)
+            query_provider=producer.fill_q, kv_provider=producer.fill_kv,
+            research_source_kind="native_h3")
         output[:, :, begin:end, :].copy_(result)
         summary.append(producer.stats)
         del result, producer
