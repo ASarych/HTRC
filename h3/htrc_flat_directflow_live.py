@@ -103,7 +103,8 @@ def _one_window(window_capture, ids, cfg, tr, cache, ws, tail, geom,
 
 def _new_session(bank, geometries, tiles, cfg, tr, warmups,
                  vb_mode="materialized", memory_trace=None,
-                 baseline_memory=None):
+                 baseline_memory=None, query_provider=None,
+                 kv_provider=None):
     h, seq = int(bank[0].shape[1]), int(bank[0].shape[2])
     def note(phase, geom=None):
         if memory_trace is None:
@@ -117,8 +118,13 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups,
     ids = list(range(h))
     sk = torch.empty_like(bank[1], memory_format=torch.contiguous_format)
     sv = torch.empty_like(bank[2], memory_format=torch.contiguous_format)
-    sk.copy_(bank[1])
-    sv.copy_(bank[2])
+    if kv_provider is None:
+        sk.copy_(bank[1])
+        sv.copy_(bank[2])
+    else:
+        # Only synthetic compare-only mode supplies external projection.
+        # Fill stable graph-owned K/V before quantization and capture.
+        kv_provider(sk, sv)
     cap = {
         "k_khd": sk[0].permute(1, 0, 2),
         "v_khd": sv[0].permute(1, 0, 2),
@@ -139,7 +145,10 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups,
     for key, geom in unique.items():
         qbuf = torch.empty((h, geom.padded_rows, 128),
                            device=bank[0].device, dtype=torch.bfloat16)
-        _copy_q(bank[0], geom, qbuf)
+        if query_provider is None:
+            _copy_q(bank[0], geom, qbuf)
+        else:
+            query_provider(geom.start, geom.end, qbuf)
         win = dict(cap)
         win["q_qhd"] = qbuf.permute(1, 0, 2)
         ws = shared.alloc_workspace(win, h, geom.tile_count, cfg,
@@ -171,9 +180,14 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups,
     return stage
 
 
-def _refresh_kv(stage, bank, tr):
-    stage["k"].copy_(bank[1])
-    stage["v"].copy_(bank[2])
+def _refresh_kv(stage, bank, tr, kv_provider=None):
+    if kv_provider is None:
+        stage["k"].copy_(bank[1])
+        stage["v"].copy_(bank[2])
+    else:
+        # This runs ONCE before the attention windows, then K8/KS/tail
+        # are rebuilt from these fresh group-specific Graph-owned slots.
+        kv_provider(stage["k"], stage["v"])
     cache = stage["cache"]
     kbf = cache["KBF"]
     h, n, d = map(int, kbf.shape)
@@ -190,8 +204,9 @@ def _refresh_kv(stage, bank, tr):
         tv.copy_(stage["v"][0, :, -count:, :])
 
 
-def _replay(stage, bank, geometries, tr, output, query_provider=None):
-    _refresh_kv(stage, bank, tr)
+def _replay(stage, bank, geometries, tr, output,
+            query_provider=None, kv_provider=None):
+    _refresh_kv(stage, bank, tr, kv_provider=kv_provider)
     for geom in geometries:
         item = stage["graphs"][_geometry_key(geom)]
         if query_provider is None:
@@ -250,7 +265,8 @@ def clear_session_cache():
 
 def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                          budget_mib, reserve_mib, workspace, observer=None,
-                         compare_only=False, query_provider=None):
+                         compare_only=False, query_provider=None,
+                         kv_provider=None):
     """Actual opt-in Flat output [1,S,H,128]. Fail closed on parity/VRAM."""
     if torch.is_grad_enabled():
         raise RuntimeError("H3 Direct-Flow is inference-only")
@@ -261,6 +277,12 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
     ):
         raise ValueError(
             "Pre-QKV query provider requires compare_only=True and a callable")
+    if kv_provider is not None and (
+        not compare_only or not callable(kv_provider)
+        or query_provider is None
+    ):
+        raise ValueError(
+            "Graph-owned K/V provider requires compare_only=True and Q producer")
     if (mode not in ("fast", "balanced") or not workspace
         or not isinstance(tiles, int) or tiles not in (16, 32, 64)
         or any(x.dtype != torch.bfloat16 for x in (q,k,v))):
@@ -338,7 +360,8 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         # and free-VRAM gates below still fail closed.
         group_cap=forced
     geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode,
-            compare_only, policy, query_provider is not None)
+            compare_only, policy, query_provider is not None,
+            kv_provider is not None)
     geometries = list(windows.iter_query_windows(
         s, tiles, tile_rows=int(cfg["tile"]), center_group=1
     ))
@@ -376,6 +399,8 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                         bank, geometries, tiles, cfg, tr, warmups,
                         vb_mode=vb_mode, memory_trace=memory_trace,
                         baseline_memory=baseline_memory,
+                        query_provider=query_provider,
+                        kv_provider=kv_provider,
                     )
                     _SESSIONS[key] = stage
                 if memory_trace is not None:
@@ -398,7 +423,8 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                 group_out = output[:,begin:end,:]
                 def replay():
                     _replay(stage, bank, geometries, tr, group_out,
-                            query_provider=query_provider)
+                            query_provider=query_provider,
+                            kv_provider=kv_provider)
                 # Actual real H3 QKV, after construction warmup; the GPU
                 # timing excludes first capture but includes fresh staging,
                 # K8, all windows, merge and output writes.
@@ -484,11 +510,14 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "group_plan":plan,
                     "capture_and_parity_first_call_wall_ms":(time.perf_counter()-call_wall_started)*1000,
                     "real_model_qkv":not compare_only,
-                    "qkv_source":("pre_qkv_window_producer_synthetic"
+                    "qkv_source":("pre_qkv_graph_owned_kv_synthetic"
+                                  if kv_provider is not None else
+                                  "pre_qkv_window_producer_synthetic"
                                   if query_provider is not None else
                                   "caller_supplied_may_be_synthetic" if compare_only
                                   else "real_model_caller_contract"),
                     "query_provider_research_only":query_provider is not None,
+                    "kv_provider_graph_owned_research_only":kv_provider is not None,
                     "full_model_denoise_or_video_complete":False,
                     "completed":True,
                     "source":("synthetic pre-QKV dense BF16 projection, no RoPE"
