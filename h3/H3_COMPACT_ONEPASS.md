@@ -218,7 +218,8 @@ or NVFP4 model weights:
    Any missing capture-safe buffer fails closed.
 5. A separate *small* GPU test,
    `tools/smoke_h3_graph_capture_gpu.py`, executes two
-   HTRC Graph capture/replay calls on just 1024 tokens
+   HTRC Graph capture/replay calls on 8192 tokens
+   (balanced mode's 512 aligned 16-token leaves)
    and 8 heads, no H3 checkpoint, under a fresh process.
    The safe ComfyNodes launcher runs this BEFORE moving
    any user checkout or loading HyperFlow.
