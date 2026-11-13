@@ -253,3 +253,78 @@ A/B before revisiting 40k/82k or selecting a group policy.
 No inference performance gain for 11/14 has yet been measured.
 This slice's CPU unit execution, CUDA checks and GPU run are **UNRUN**;
 nothing was promoted to the default runtime.
+
+## RTX 5070 Ti third short A/B: contamination removed, all arms measured
+
+User-supplied `flat_graph_group_balanced_ab(4).json` reports
+`MEASURED` at both 15,275 and 18,723 tokens, balanced materialized
+Graph, 56 distinct BF16 heads, 16 tiles, exactly the same input per
+arm and 64 sampled all-key dense FP32 query positions.
+Both the 768 MiB Graph-extra gate and the production default
+`legacy` were unchanged.
+
+| Group / policy | 15,275 full GPU ms | 18,723 full GPU ms | extra reserved MiB (15k / 18k) |
+|---|---:|---:|---:|
+| Legacy cap 11 | 68.404 | 96.238 | 332 / 304 |
+| Reuse cap 7 | 68.407 | 100.462 | 194 / 174 |
+| Reuse cap 8 | **65.435** | **89.563** | **216 / 196** |
+| Reuse cap 11 | 68.254 | 102.583 | 332 / 304 |
+| Reuse cap 14 | 65.797 | 89.954 | 384 / 336 |
+
+The 8-head version was faster than legacy11 by 4.34% and 6.94%
+on the respective short lengths. The 14-head version was only
+0.55% / 0.44% slower than group 8, not a conclusive universal
+performance difference with only three timed repeats. Group 8
+uses 168 / 140 MiB less additional reserved VRAM than group 14.
+
+All successful variants were bit-equal to legacy on **sampled 64
+query positions**, not necessarily validated bitwise for the
+entire output. Relative L2 vs dense FP32 was identical for
+all arms at 55.329% / 60.563% on synthetic QKV; this is not
+real H3 model/video quality evidence.
+
+The previous group-11 Graph gate failure at 796/868 MiB extra
+disappeared: after skipping research eager Flat diagnostic it
+used 332/304 MiB. Likewise, group14 fell from 888/934 MiB
+to 384/336 MiB. Memory stayed flat across reused Graph replays.
+This confirms that an unrelated eager-Flat first-call allocation
+was polluting the Graph-only memory gate; it does NOT establish
+private Graph-pool size and is NOT a reason to alter the production
+strict first-call parity path.
+
+## Follow-up: measure group 28 without changing hard VRAM cap
+
+The replay-count-only reuse planner favors group 14 at short N,
+but real end-to-end latency did not confirm a meaningful win
+over 8. A 28-head divisor produces two balanced head groups,
+potentially increasing arithmetic density while reducing Graph
+replays. Its real performance and reserve usage are unknown.
+The existing conservative stage-budget model would exclude it
+before measurement, although 14-head actual Graph reservation
+suggests it *might* fit under the same 768 MiB hard gate.
+
+This research slice adds a compare-only forced group override:
+`APL_HTRC_DIRECTFLOW_RESEARCH_FORCE_GROUP=28` alongside
+`APL_HTRC_DIRECTFLOW_GROUP_POLICY=reuse_aware`,
+`APL_HTRC_DIRECTFLOW_GROUP=28`, and `compare_only=True`.
+It bypasses only the conservative **planning estimate**;
+it does NOT bypass the actual post-capture extra-reserved and
+free-VRAM guards. The override is rejected on production calls
+and invalid group sizes; no changes to default `legacy`,
+eager parity checks or automatic fallback.
+
+The benchmark now accepts `--arms reuse_cap8,reuse_cap14,reuse_force28`
+and saves ONE JSON for the three arms. If 28 exceeds the actual
+768 MiB reservation gate, the failure is preserved with memory
+trace and the remaining successful comparisons are still reported.
+The pairwise reference will be the first successful selected arm,
+normally cap8. No full model, real video or Sol parity is inferred.
+
+Example single local short run with five timed rounds per arm:
+
+    & $py -B -m unittest discover -s tools -p test_h3_graph_group_plan.py -v
+    & $py -B tools\benchmark_h3_graph_group_policy.py --execute --scope short --mode balanced --heads 56 --tiles 16 --arms reuse_cap8,reuse_cap14,reuse_force28 --budget-mib 1024 --reserve-mib 256 --max-extra-mib 768 --sample-queries 64 --rounds 5
+
+Current slice CPU unit test execution, GPU compilation, and
+forced-28 end-to-end timing are **UNRUN**. No change is promoted
+to production.
