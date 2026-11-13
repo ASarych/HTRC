@@ -206,3 +206,81 @@ Exactly ONE persistent JSON:
 
 New CPU repository suite and all four GPU arms: **UNRUN**
 in this new commit. No backend promotion.
+
+## RTX 5070 Ti second A/B: memory-for-speed Pareto frontier
+
+User-provided `flat_pre_qkv_stream_ab(1).json` was produced by the
+four-arm code at `9ba03242e531fc530ac15da609dde26bad630751`.
+Both lengths and all four arms report `MEASURED`, with three
+warmed GPU timings; same synthetic dense BF16 X and weights,
+56 genuine distinct heads, 8-head Graph sessions, H3-like
+fused channel order, 4096-row K/V chunks and 768 MiB hard
+Graph-extra cap. No real H3 checkpoint, NVFP4, RMSNorm, RoPE,
+video, out_proj, or cross-block offload effect is measured.
+
+| Arm | 15,275 GPU median ms | 18,723 GPU median ms | 15,275 warm peak allocated MiB | 18,723 warm peak allocated MiB |
+|---|---:|---:|---:|---:|
+| full_qkv | **71.953** | **97.489** | 1149.299 | 1331.361 |
+| streamed_kv_lazy_q | 75.765 | 101.675 | 618.811 | 679.354 |
+| direct_kv_lazy_q | 73.564 | 99.709 | **573.036** | **620.217** |
+| direct_kv_group_q | **72.870** | **98.907** | 603.036 | 656.785 |
+
+Relative to full_qkv:
+
+- `direct_kv_group_q` costs **+0.917 ms / +1.419 ms**
+  (+1.275% / +1.455%) and saves **546.263 MiB /
+  674.576 MiB** warm peak allocated. This is the fastest
+  streamed option (best current latency/memory balance).
+- `direct_kv_lazy_q` costs **+1.611 ms / +2.221 ms**
+  (+2.239% / +2.278%) and saves **576.263 MiB /
+  711.144 MiB**. It saves a further 30 / 36.568 MiB
+  against group-Q but is 0.694 / 0.802 ms slower.
+- The original `streamed_kv_lazy_q` is dominated by
+  `direct_kv_lazy_q` on both timings and allocated peak.
+  Preserve it for attribution only, not as a proposed mode.
+- All three streamed variants are bit-equal to the full-QKV
+  control **on 64 sampled query positions** at each length,
+  with `max_abs=0` and `relative_l2_percent=0`. This
+  is not complete output or real-model parity.
+
+The extra saved VRAM is **not a speedup by itself**. It can
+improve total H3 denoise throughput if it is actually
+reinvested to prevent GPU/CPU model offload, reduce
+synchronization, increase resident working buffers or
+permit a better kernel schedule. This is a
+**system-level hypothesis**; the synthetic benchmark
+cannot validate such an improvement. In particular,
+`hidden_width=1024` and dense BF16 weights are not the
+real H3 NVFP4 layout, and the measured timings exclude
+the model's 49-block pipeline, all other allocations
+and the actual H3 out projection.
+
+### Disposition and next gate
+
+Keep two opt-in research references:
+`direct_kv_group_q` (balanced) and `direct_kv_lazy_q`
+(minimum peak VRAM). Do not keep optimizing synthetic
+head grouping for differences under a millisecond.
+Do not promote either to production; existing legacy
+and fail-closed parity gates remain unchanged.
+
+Next **meaningful** gate is an actual H3 pre-QKV
+provider, matching `sol_kitchen_chunked`'s model
+interception and ComfyUI layer hooks. It must honor the
+real `self.qkv_proj` (including NVFP4 packed weight
+semantics), Q/K norm, RoPE, input/output types, and
+must NOT silently replace quantized projection by
+BF16 F.linear. For HTRC Flat, global K/V visibility
+is still required across query windows: either
+selective channel projection or a bounded staging
+representation must be shown numerically and
+performance-safe. Measure **whole denoise-step**
+GPU+wall time, peak resident VRAM, offload transfers,
+and full-output/visual parity. An advantage in total
+inference at the same or lower VRAM is the target;
+a local 1%-2% latency penalty is not in itself a
+reason to abandon a >500 MiB memory saving.
+
+This commit records the user-supplied measurements
+only. CPU/GPU tests and actual H3 integration are
+**UNRUN** in this commit.
