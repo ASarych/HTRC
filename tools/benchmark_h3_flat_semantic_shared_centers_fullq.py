@@ -109,6 +109,7 @@ def run_one(flat, q, k_main, v_main, tail, order, group, args):
         tile=64, exact_leaves=int(args.exact_leaves),
         order=order, tile_chunk=int(args.tile_chunk),
         sink_leaves=0, tail=tail, prof=None,
+        sel_stride=max(1, int(group) // 4),
     )
     cfg["kern"] = dict(cfg["kern"], group=int(group))
     return flat.flat_attention(q, k_main, v_main, **cfg)
@@ -169,6 +170,7 @@ def main():
             "Not full model denoising, not Sol A/B, no model checkpoint",
             "Does not reassign arbitrary nonadjacent tiles to exactly one global K-means centroid",
             "Semantic sorting alters exact-leaf selection groups in addition to center sharing",
+            "Selector rows are capped to 256 per center group by equal-stride sampling for both seq_gG and semantic_gG",
             "GPU validation local only; standalone script is not a production patch",
         ],
         "settings": {"exact_leaves":args.exact_leaves, "tile":64, "tile_chunk":args.tile_chunk,
@@ -228,7 +230,8 @@ def main():
                 cfg = dict(flat.PROD)
                 cfg.update(tile=64, exact_leaves=args.exact_leaves, order=order,
                            tile_chunk=args.tile_chunk, sink_leaves=0,
-                           tail=tail, prof=profiler)
+                           tail=tail, prof=profiler,
+                           sel_stride=max(1, int(group) // 4))
                 cfg["kern"] = dict(cfg["kern"], group=group)
                 pp = flat.flat_attention(q,kmain,vmain,**cfg)
                 torch.cuda.synchronize()
@@ -237,6 +240,7 @@ def main():
                 row = {
                     "head":raw_head,"case":name,"order":order,"group":group,
                     "shared_center_count":ncenters,"stats_center_leaf_pairs":ncenters*n_leaves,
+                    "selector_stride":max(1, int(group) // 4),
                     "median_total_wall_ms":statistics.median(times),
                     "total_wall_samples_ms":times,
                     "dense_ref_ms":dense_ms,
