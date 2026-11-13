@@ -73,7 +73,7 @@ def flat_config(mode, tiles):
     return config
 
 
-def alloc_workspace(capture, head_count, tiles, cfg):
+def alloc_workspace(capture, head_count, tiles, cfg, *, vb_mode="materialized"):
     """Preallocate query workspace, but NEVER share results between windows."""
     h,n=int(head_count),int(capture["k_khd"].shape[0])//16
     kx=min(int(cfg["exact_leaves"]),n)
@@ -83,9 +83,20 @@ def alloc_workspace(capture, head_count, tiles, cfg):
     def make(shape,dtype):
         return torch.empty(shape,dtype=dtype,device=dev)
     ps=(h,tiles,ns,64)
+    if vb_mode not in ("materialized", "split_stream"):
+        raise ValueError("Unknown VB workspace mode")
+    # Worst-case leaf span rounded to Tile's far BN=32. Streamed stage
+    # holds only ONE split while preserving complete G/LZ/SG/IDX state.
+    bn=int(cfg.get("kern",{}).get("tile_bn",32))
+    per=math.ceil(n/ns)
+    span=max(bn,math.ceil(per/bn)*bn)
+    vb_shape=((h,centers,n,128) if vb_mode=="materialized" else (1,))
+    vb_split=(make((h,centers,span,128),torch.bfloat16)
+              if vb_mode=="split_stream" else None)
     return {
         "G":make((h,centers,n,128),torch.int8),
-        "VB":make((h,centers,n,128),torch.bfloat16),
+        "VB":make(vb_shape,torch.bfloat16),
+        **({"VB_SPLIT":vb_split} if vb_split is not None else {}),
         "LZ":make((h,centers,n),torch.float32),
         "SG":make((h,centers,n),torch.float32),
         "sel":make((h*centers,n),torch.float32),

@@ -239,6 +239,143 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None):
 
 
 
+
+def launch_prepared_tile_batch_split_stream(states, config, triton_module, *,
+                                            buffers, vb_split):
+    """Experimental 4-split BF16 VB producer/Tile consumer with bounded staging.
+
+    Produce ONLY one split's VB and consume it immediately in the existing
+    far/near Tile math; then overwrite the same VB scratch for the next
+    split. G/LZ/SG/IDX/EXCL are unchanged and still full-size. Requires
+    SCORE_ONLY stats preparation. Never select from the default Tile API.
+    GPU parity is mandatory before any deployment.
+    """
+    import math
+    import torch
+    if states.get("_vb_mode")!="split_stream":
+        raise ValueError("split-stream Tile requires SCORE_ONLY preparation")
+    q=states["Q"]
+    if q.ndim!=4:
+        raise ValueError("Expected [H,tiles,64,128] native Q")
+    heads,tiles,tile,dim=map(int,q.shape)
+    group=int(config.get("kern",{}).get("group",1))
+    if group!=1 or tile!=64 or dim!=128 or not bool(states.get("_direct_q")):
+        raise ValueError("split-stream Tile supports native Q/group1/64rows/dim128")
+    if config.get("dot")!="bf16" or config.get("store")!="int8":
+        raise ValueError("split-stream Tile requires pinned INT8/BF16 math")
+    kbf=states.get("_stream_kbf")
+    if kbf is None or kbf.dtype!=torch.bfloat16:
+        raise ValueError("Missing original BF16 K for VB recomputation")
+    k8,v,ks=states["K"],states["V"],states["KS"]
+    keys=int(k8.shape[1])
+    leaves=keys//16
+    if (keys%16 or k8.shape!=(heads,keys,dim)
+        or v.shape!=(heads,keys,dim)
+        or kbf.shape!=(heads,keys,dim)
+        or ks.shape!=(heads,keys)):
+        raise ValueError("Incompatible K/K8/V/KS split shapes")
+    if v.dtype!=torch.bfloat16 or k8.dtype!=torch.int8:
+        raise ValueError("Streaming far requires BF16 original V and INT8 K")
+    if states["G"].shape!=(heads,tiles,leaves,dim):
+        raise ValueError("Invalid full G state")
+    if states["LZ"].shape!=(heads,tiles,leaves):
+        raise ValueError("Invalid full LZ state")
+    if states["MU"].shape!=(heads,tiles,dim):
+        raise ValueError("Invalid MU state")
+    if states["VB"].numel()!=1:
+        raise ValueError("Full VB was unexpectedly allocated in split-stream mode")
+    splits=int(config["splits"])
+    kern=config.get("kern",{})
+    bn=int(kern.get("tile_bn",32))
+    near_bn=int(kern.get("tile_near_bn") or bn)
+    warps=int(kern.get("tile_warps",4))
+    stages=int(kern.get("tile_stages",1))
+    if splits!=4 or bn!=32 or near_bn!=32 or warps!=4:
+        raise ValueError("Unvalidated split-stream kernel geometry")
+    span=triton_module._split(leaves,splits,bn)
+    if (tuple(vb_split.shape)!=(heads,tiles,span,dim)
+        or vb_split.dtype!=torch.bfloat16
+        or not vb_split.is_contiguous()):
+        raise ValueError("Invalid split VB scratch dimensions or layout")
+    partial_shape=(heads,tiles,splits,tile)
+    for name,shape in (("pm",partial_shape),
+                       ("pl",partial_shape),
+                       ("acc",partial_shape+(dim,))):
+        if (name not in buffers or tuple(buffers[name].shape)!=shape
+            or buffers[name].dtype!=torch.float32
+            or not buffers[name].is_contiguous()):
+            raise ValueError("Incompatible partial buffer "+name)
+    if any(t.device!=q.device for t in
+           (vb_split,kbf,v,k8,ks,buffers["pm"],buffers["pl"],buffers["acc"])):
+        raise ValueError("All stream buffers must be on the same CUDA device")
+    htc=heads*tiles
+    qstride=tuple(map(int,q.stride()))
+    direct_v=bool(states.get("_direct_v",False))
+    kstride=tuple(map(int,kbf.stride()))
+    vstride=tuple(map(int,v.stride()))
+    vptr=v if direct_v else v.view(heads*keys,dim)
+    triton_module._dll()
+    last=None
+    # Split loop order exactly matches the original sp=0..3 Tile partials.
+    # Same-stream sequential launches prevent VB scratch overwrite races.
+    for split in range(splits):
+        first=split*span
+        if first<leaves:
+            triton_module._vbar_split_kernel[
+                (heads*math.ceil(tiles/16),triton_module.triton.cdiv(span,4))
+            ](
+                states["MU"].view(htc,dim),
+                kbf,v,vb_split,
+                htc,leaves,1.0/math.sqrt(dim),
+                D=dim,BT=16,LEAF=16,BL=4,PREC="tf32",
+                BATCH_TILES_PER_HEAD=tiles,
+                BATCH_TILE_BLOCKS_PER_HEAD=math.ceil(tiles/16),
+                LEAF_START=first,LEAF_SPAN=span,
+                DIRECT_KV=int(direct_v),
+                K_SH=(kstride[0] if direct_v else 0),
+                K_SS=(kstride[1] if direct_v else 0),
+                K_SD=(kstride[2] if direct_v else 0),
+                V_SH=(vstride[0] if direct_v else 0),
+                V_SS=(vstride[1] if direct_v else 0),
+                V_SD=(vstride[2] if direct_v else 0),
+                num_warps=4,
+            )
+        last=triton_module._tile_kernel[(htc,1,1)](
+            q,states["MU"].view(htc,dim),
+            states["G"].view(htc,leaves,dim),
+            states["LZ"].view(htc,leaves),
+            vb_split,
+            states["EXCL"].view(htc,leaves),
+            states["IDX"].view(htc,-1),
+            k8.view(heads*keys,dim),vptr,
+            buffers["pm"].view(htc,splits,tile),
+            buffers["pl"].view(htc,splits,tile),
+            buffers["acc"].view(htc,splits,tile,dim),
+            states["SG"].view(htc,leaves),
+            states["LZ"].view(htc,leaves),
+            states["LZ"].view(htc,leaves),
+            states["LZ"].view(htc,leaves),
+            ks.view(heads*keys),
+            leaves,int(states["IDX"].shape[-1]),
+            span,triton_module._split(int(states["IDX"].shape[-1])*16,splits,bn),
+            0,1.0/math.sqrt(dim),
+            T=tile,D=dim,BN=bn,BN_NEAR=near_bn,LEAF=16,
+            PREC="tf32",DOT=1,GR=1,FP8=0,TAIL=0,RB=1,I8=1,
+            PASS=0,LATE_NEAR_Q=0,FAR_PREFETCH_LZ=0,
+            FAR_PV_ACC=0,NEAR_PV_ACC=0,
+            BATCH_TILES_PER_HEAD=tiles,BATCH_KEY_ROWS=keys,
+            Q_DIRECT=1,Q_SH=qstride[0],Q_ST=qstride[1],
+            Q_SR=qstride[2],Q_SD=qstride[3],
+            V_DIRECT=int(direct_v),V_SH=vstride[0] if direct_v else 0,
+            V_SS=vstride[1] if direct_v else 0,
+            V_SD=vstride[2] if direct_v else 0,
+            VB_SPLIT_STREAM=1,VB_START=first,VB_SPAN=span,
+            SPLIT_ID=split,SPLIT_COUNT=splits,
+            num_warps=warps,num_stages=stages,
+        )
+    return buffers,last
+
+
 def launch_prepared_merge_batch(
     states, config, triton_module, partials, *, tails=None,
     output=None, merge_rows: int = 32
@@ -326,7 +463,7 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
                                 input_cast="gpu", stage_timings_ms=None,
                                 kv_cache=None, query_workspace=None,
                                 valid_query_rows=None, query_staging="gather",
-                                stage_gpu_events=None):
+                                stage_gpu_events=None, vb_mode="materialized"):
     """One head-group preparation: one stats launch, one rowmax, one topk.
 
     Reads trusted native same-block captured Q/K/V; repeated raw head
@@ -336,6 +473,8 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     """
     import torch
     triton_module._dll()
+    if vb_mode not in ("materialized", "split_stream"):
+        raise ValueError("vb_mode must be materialized or split_stream")
     if quant_backend not in ("torch", "triton"):
         raise ValueError("quant_backend must be torch or triton")
     if input_cast not in ("gpu", "cpu"):
@@ -408,6 +547,11 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     if group not in (1,2,4) or tile_count % group:
         raise ValueError("Query tile count must divide centre group 1/2/4")
     centers=tile_count//group
+    if vb_mode == "split_stream" and (
+        group != 1 or kv_cache is None or query_workspace is None
+        or query_staging not in ("native_direct","native_torch_mu")
+    ):
+        raise ValueError("split_stream requires group1, resident KV, native Q and workspace")
     n_query=tile_count*tile
     if n_query>int(q_cap.shape[0]):
         raise ValueError("Not enough query rows in native capture")
@@ -566,7 +710,7 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         return buf
     # Reuse storage only; the stats kernel overwrites every element for every Q tile.
     G=state_buffer("G",(h,centers,nb,dim),torch.int8)
-    VB=state_buffer("VB",(h,centers,nb,dim),torch.bfloat16)
+    VB=state_buffer("VB",((h,centers,nb,dim) if vb_mode=="materialized" else (1,)),torch.bfloat16)
     LZ=state_buffer("LZ",(h,centers,nb),torch.float32)
     SG=state_buffer("SG",(h,centers,nb),torch.float32)
     BT,BL=16,4
@@ -578,7 +722,7 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         (vbf if direct_kv else vbf.view(h*nkeys,dim)),
         G.view(h*centers,nb,dim),
         LZ.view(h*centers,nb),
-        VB.view(h*centers,nb,dim),
+        (VB.view(h*centers,nb,dim) if vb_mode=="materialized" else VB),
         SG.view(h*centers,nb),
         LZ.view(h*centers,nb),
         h*centers,nb,1.0/math.sqrt(dim),
@@ -593,9 +737,13 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         V_SH=(int(vbf.stride(0)) if direct_kv else 0),
         V_SS=(int(vbf.stride(1)) if direct_kv else 0),
         V_SD=(int(vbf.stride(2)) if direct_kv else 0),
+        SCORE_ONLY=int(vb_mode=="split_stream"),
         num_warps=4
     )
     mark_stage("leaf_stats")
+    # The streaming VB producer reads the genuine BF16 K (not K8) with
+    # the same MU as the original stats kernel, after selection is fixed.
+    stream_kbf=kbf if vb_mode=="split_stream" else None
     del kbf
     muf=MU.view(h*centers,dim)
     gf=G.view(h*centers,nb,dim)
@@ -640,7 +788,9 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
         "EXCL":excl.view(h,centers,nb),
         "IDX":idx,
         "_direct_q":query_staging in ("native_direct","native_torch_mu"),
-        "_direct_v":direct_kv
+        "_direct_v":direct_kv,
+        "_vb_mode":vb_mode,
+        "_stream_kbf":stream_kbf,
     }
     return states,config,nkeys,nb,kx
 

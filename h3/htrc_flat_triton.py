@@ -192,6 +192,59 @@ def _stats_kernel(MU, K, V, G, LZ, VB, SG, SV, tc, nb, scale,
 
 
 @triton.jit
+def _vbar_split_kernel(MU, KBF, VBF, VB, tc, nb, scale,
+                       D: tl.constexpr, BT: tl.constexpr,
+                       LEAF: tl.constexpr, BL: tl.constexpr,
+                       PREC: tl.constexpr,
+                       BATCH_TILES_PER_HEAD: tl.constexpr,
+                       BATCH_TILE_BLOCKS_PER_HEAD: tl.constexpr,
+                       LEAF_START: tl.constexpr, LEAF_SPAN: tl.constexpr,
+                       DIRECT_KV: tl.constexpr,
+                       K_SH: tl.constexpr, K_SS: tl.constexpr,
+                       K_SD: tl.constexpr, V_SH: tl.constexpr,
+                       V_SS: tl.constexpr, V_SD: tl.constexpr):
+    """Recompute only BF16 VB for one bounded leaf split, exact stats math.
+
+    The original _stats_kernel is still the oracle. Scratch shape is
+    [H * centres, LEAF_SPAN, D]. A caller MUST consume the split before
+    reusing VB for another split (same-stream producer/consumer ordering).
+    """
+    pt=tl.program_id(0)
+    pl=tl.program_id(1)
+    head=pt // BATCH_TILE_BLOCKS_PER_HEAD
+    local_t=(pt % BATCH_TILE_BLOCKS_PER_HEAD)*BT+tl.arange(0,BT)
+    t=head*BATCH_TILES_PER_HEAD+local_t
+    tm=local_t<BATCH_TILES_PER_HEAD
+    d=tl.arange(0,D)
+    n=tl.arange(0,LEAF)
+    mu=tl.load(MU+t[:,None]*D+d[None,:],mask=tm[:,None],other=0.0)
+    for j in tl.static_range(0,BL):
+        loc=pl*BL+j
+        leaf=LEAF_START+loc
+        if loc < LEAF_SPAN:
+            if leaf < nb:
+                if DIRECT_KV:
+                    k=tl.load(KBF+head*K_SH+(leaf*LEAF+n)[:,None]*K_SS+
+                              d[None,:]*K_SD).to(tl.float32)
+                    v=tl.load(VBF+head*V_SH+(leaf*LEAF+n)[:,None]*V_SS+
+                              d[None,:]*V_SD).to(tl.float32)
+                else:
+                    k=tl.load(KBF+(head*nb*LEAF+leaf*LEAF+n)[:,None]*D+
+                              d[None,:]).to(tl.float32)
+                    v=tl.load(VBF+(head*nb*LEAF+leaf*LEAF+n)[:,None]*D+
+                              d[None,:]).to(tl.float32)
+                a=tl.dot(mu,tl.trans(k),input_precision=PREC)*scale
+                maxima=tl.max(a,axis=1)
+                weights=tl.exp(a-maxima[:,None])
+                divisor=tl.sum(weights,axis=1)
+                weights=weights/divisor[:,None]
+                vb=tl.dot(weights,v,input_precision=PREC)
+                off=(t*LEAF_SPAN+loc)[:,None]*D+d[None,:]
+                tl.store(VB+off,vb.to(VB.dtype.element_ty),mask=tm[:,None])
+
+
+
+@triton.jit
 def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV, KS, nb, kx, lps, eps, nt, scale,
                  T: tl.constexpr, D: tl.constexpr, BN: tl.constexpr, BN_NEAR: tl.constexpr, LEAF: tl.constexpr,
                  PREC: tl.constexpr, DOT: tl.constexpr, GR: tl.constexpr = 1, FP8: tl.constexpr = 0,
@@ -205,7 +258,12 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
                  Q_ST: tl.constexpr = 0, Q_SR: tl.constexpr = 0,
                  Q_SD: tl.constexpr = 0, V_DIRECT: tl.constexpr = 0,
                  V_SH: tl.constexpr = 0, V_SS: tl.constexpr = 0,
-                 V_SD: tl.constexpr = 0):
+                 V_SD: tl.constexpr = 0,
+                 VB_SPLIT_STREAM: tl.constexpr = 0,
+                 VB_START: tl.constexpr = 0,
+                 VB_SPAN: tl.constexpr = 0,
+                 SPLIT_ID: tl.constexpr = -1,
+                 SPLIT_COUNT: tl.constexpr = 0):
     """Split-K over leaves: program (tile t, split sp) covers far leaves [sp*lps, +lps) and
     exact tokens [sp*eps, +eps); writes partial (max, sum, acc) merged on the host."""
     t = tl.program_id(0)
@@ -219,8 +277,12 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
     else:
         key_base = 0
     gt = t // GR          # far-field state / near leaves are shared by GR consecutive tiles
-    sp = tl.program_id(1)
-    ns = tl.num_programs(1)
+    if VB_SPLIT_STREAM:
+        sp = SPLIT_ID
+        ns = SPLIT_COUNT
+    else:
+        sp = tl.program_id(1)
+        ns = tl.num_programs(1)
     RT: tl.constexpr = T // RB          # rows per program: RB programs share one tile (same centre/near set), more warps resident
     r = tl.program_id(2) * RT + tl.arange(0, RT)
     d = tl.arange(0, D)
@@ -299,7 +361,12 @@ def _tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG, SV, TK, TV
             p = tl.exp(sc - m_s[:, None])
             alpha = tl.exp(m_i - m_s)
             l_i = l_i * alpha + tl.sum(p, axis=1)
-            vb = tl.load(VB + (gt * nb + c)[:, None] * D + d[None, :], mask=cm[:, None], other=0.0)
+            if VB_SPLIT_STREAM:
+                vb = tl.load(VB + (gt * VB_SPAN + c - VB_START)[:, None] * D + d[None, :],
+                             mask=cm[:, None], other=0.0)
+            else:
+                vb = tl.load(VB + (gt * nb + c)[:, None] * D + d[None, :],
+                             mask=cm[:, None], other=0.0)
             if DOT == 1:
                 if FP8:
                     svc = tl.load(SV + gt * nb + c, mask=cm, other=0.0)

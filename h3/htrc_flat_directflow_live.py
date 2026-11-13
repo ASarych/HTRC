@@ -52,16 +52,22 @@ def _copy_q(q_bhsd, geom, qbuf):
         )
 
 
-def _one_window(window_capture, ids, cfg, tr, cache, ws, tail, geom):
+def _one_window(window_capture, ids, cfg, tr, cache, ws, tail, geom,
+                vb_mode="materialized"):
     states, _, _, _, _ = batch.prepare_batched_head_states(
         window_capture, ids, cfg, tr, tile_count=geom.tile_count,
         quant_backend="triton", input_cast="gpu", kv_cache=cache,
         query_workspace=ws, valid_query_rows=geom.valid_rows,
-        query_staging="native_torch_mu",
+        query_staging="native_torch_mu", vb_mode=vb_mode,
     )
-    partial, _ = batch.launch_prepared_tile_batch(
-        states, cfg, tr, buffers=ws["_partials"]
-    )
+    if vb_mode == "split_stream":
+        partial, _ = batch.launch_prepared_tile_batch_split_stream(
+            states, cfg, tr, buffers=ws["_partials"], vb_split=ws["VB_SPLIT"]
+        )
+    else:
+        partial, _ = batch.launch_prepared_tile_batch(
+            states, cfg, tr, buffers=ws["_partials"]
+        )
     merged, _ = batch.launch_prepared_merge_batch(
         states, cfg, tr, partial, tails=tail,
         output=ws["_out"], merge_rows=32,
@@ -69,7 +75,8 @@ def _one_window(window_capture, ids, cfg, tr, cache, ws, tail, geom):
     return states, merged
 
 
-def _new_session(bank, geometries, tiles, cfg, tr, warmups):
+def _new_session(bank, geometries, tiles, cfg, tr, warmups,
+                 vb_mode="materialized"):
     h, seq = int(bank[0].shape[1]), int(bank[0].shape[2])
     ids = list(range(h))
     sk = torch.empty_like(bank[1], memory_format=torch.contiguous_format)
@@ -98,9 +105,11 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups):
         _copy_q(bank[0], geom, qbuf)
         win = dict(cap)
         win["q_qhd"] = qbuf.permute(1, 0, 2)
-        ws = shared.alloc_workspace(win, h, geom.tile_count, cfg)
+        ws = shared.alloc_workspace(win, h, geom.tile_count, cfg,
+                                    vb_mode=vb_mode)
         def perform():
-            return _one_window(win, ids, cfg, tr, cache, ws, tail, geom)
+            return _one_window(win, ids, cfg, tr, cache, ws, tail, geom,
+                               vb_mode=vb_mode)
         side = torch.cuda.Stream(device=bank[0].device)
         side.wait_stream(current)
         with torch.cuda.stream(side):
@@ -234,7 +243,12 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
     min_free = _env_int(
         "APL_HTRC_DIRECTFLOW_MIN_FREE_MIB", max(256, int(reserve_mib)), 64, 4096
     )
-    geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap)
+    vb_mode=os.environ.get(
+        "APL_HTRC_DIRECTFLOW_VB_MODE","materialized"
+    ).strip().lower()
+    if vb_mode not in ("materialized","split_stream"):
+        raise ValueError("APL_HTRC_DIRECTFLOW_VB_MODE must be materialized or split_stream")
+    geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode)
     geometries = list(windows.iter_query_windows(
         s, tiles, tile_rows=int(cfg["tile"]), center_group=1
     ))
@@ -261,7 +275,8 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                 stage = _SESSIONS.get(key)
                 first_group = stage is None
                 if first_group:
-                    stage = _new_session(bank, geometries, tiles, cfg, tr, warmups)
+                    stage = _new_session(bank, geometries, tiles, cfg, tr, warmups,
+                                         vb_mode=vb_mode)
                     _SESSIONS[key] = stage
                 # Absolute cache cap includes stage buffers and graph pools
                 # for all distinct head-group sizes, not a per-group limit.
@@ -318,7 +333,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                 result = {
                     "experiment":"h3_directflow_real_model_live_first_call_v1",
                     "status":"PASS_FIRST_REAL_CALL",
-                    "mode":mode,"dispatch":"graph",
+                    "mode":mode,"dispatch":"graph","vb_mode":vb_mode,
                     "capture_and_parity_first_call_wall_ms":(time.perf_counter()-call_wall_started)*1000,
                     "real_model_qkv":True,
                     "full_model_denoise_or_video_complete":False,
@@ -356,6 +371,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
             if observer is not None:
                 observer("htrc_directflow_graph", {
                     "backend":"htrc_flat_gpu_directflow_graph",
+                    "vb_mode":vb_mode,
                     "heads":total_heads,"tokens":s,
                     "graph_cache_group_sizes":sorted(x[0] for x in _SESSIONS),
                     "first_call_parity_verified":bool(_STATE["verified"]),
@@ -373,6 +389,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                 _write_report({
                     "experiment":"h3_directflow_real_model_live_first_call_v1",
                     "completed":False,"mode":mode,"dispatch":"graph",
+                    "vb_mode":vb_mode,
                     "status":"FAIL_CLOSED",
                     "real_model_qkv":True,
                     "heads":total_heads, "tokens":s,

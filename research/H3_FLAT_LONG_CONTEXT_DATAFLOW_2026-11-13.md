@@ -175,3 +175,14 @@ No repeated full-video tests requested; first decide by measured GPU
 kernel/attention scaling on fixed 40k/82k inputs when the new
 streaming-score candidate exists. Preserve the original eager and
 Graph paths as controls.
+
+
+## Subsequent split-stream VB implementation (2026-11-13)
+
+The isolated four-split VB producer/consumer, explicitly controlled by
+APL_HTRC_DIRECTFLOW_VB_MODE=split_stream, is implemented on the follow-up
+research branch experiment/flat-long-context-streamed-vb-20261113.
+See H3_FLAT_SPLIT_STREAMED_VB_2026-11-13.md there. Old eager and
+materialized Graph modes remain defaults and are untouched. GPU numerical
+and speed tests for streamed mode remain UNRUN; this follow-up changes
+peak VB scratch use, not total quadratic work or Full HD QKV materialization.
