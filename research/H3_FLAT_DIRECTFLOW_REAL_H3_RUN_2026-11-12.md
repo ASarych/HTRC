@@ -13,7 +13,9 @@ run_h3_baseline.ps1 -Length 39 -Steps 2 -AttentionMode htrc_flat_gpu
 ```
 
 - Checkpoint: `minimax_h3_ref2va_hyperflow_flash_14b-nvfp4_from_int8.safetensors`.
-- Scene: bear fight from the same reference-conditioned prompt used in the previous baseline; seed `424242`; 39 frames; 1344×768; 2 denoising steps.
+- Scene/prompt: bear fight, `bear_fight_reference.txt`, same reference-conditioned setup as the previous baseline; seed `424242`; 39 frames; 1344×768; 2 denoising steps.
+- Sampler conditions from the invoked runner: Euler + Simple, 24 fps, denoise 1.0; BasicGuider is used, with no separate CFG scalar in the run report.
+- The run log does not preserve the resolved reference-image path/hash or full prompt text; the scene/prompt label above is the available run context, not a content fingerprint.
 - The run log reports HTRC Flat active at `tau=0.00`, 56 heads, 15,275 attention tokens, `exact_kv=false`; attention memory plan 2.32 GiB, driver free memory 5.58 GiB before and 5.10 GiB after the call.
 - Direct-Flow first-call gate: fast mode, 16 tiles, workspace enabled, native BF16 QKV, 256 exact leaves, center group 1, group cap 11, no quality coefficient. Graph geometry cache used group sizes 1 and 11.
 - Prompt filename is recorded as `bear_fight_reference.txt`; the full prompt body and reference-image hash were not captured in the JSON. No source image or generated video is included here.
