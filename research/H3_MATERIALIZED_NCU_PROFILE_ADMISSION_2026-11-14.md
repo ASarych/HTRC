@@ -248,3 +248,28 @@ not a GPU bandwidth result. Previous failed report is
 retained as evidence (may be overwritten by next opt-in
 test). New CPU and GPU acceptance tests UNRUN until
 explicitly executed; no DRAM/L2 results claimed.
+
+
+## 2026-11-14 — CPU test-only stale assertion repair
+
+User's exact-HEAD Windows test run at
+ef3e63f246ee50f979dc4fabfc4e72e75e53decd:
+FAILED (failures=1); fail-closed PowerShell wrapper reports
+"NCU CPU parser/source contracts failed; no GPU profile started".
+The full traceback was not supplied; source inspection found
+one guaranteed obsolete source-string assertion in
+test_one_output_and_no_fake_success. The test was still searching
+for the older completed=bool(parsed) and strict marker expression,
+which the previous commit intentionally replaced with a stricter
+condition:
+
+    result["completed"] = bool(
+        result["status"] == "PROFILE_COUNTERS_COLLECTED" and
+        result["strict_child_parity_marker"]
+    )
+
+The source test now asserts this actual strict condition and
+hardware_profile = completed, without changing the production,
+profiling or CSV parser code. No evidence of a new CUDA failure.
+The updated test suite and new Nsight run remain UNRUN until
+explicitly executed; no GPU counter result is claimed.

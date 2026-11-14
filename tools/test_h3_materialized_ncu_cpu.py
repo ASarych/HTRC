@@ -207,7 +207,10 @@ lts__t_sectors_op_read.sum
         source=SRC.read_text(encoding="utf-8")
         self.assertIn('args.output.write_text(',source)
         self.assertIn('result["strict_child_parity_marker"]',source)
-        self.assertIn('result["completed"] = bool(parsed) and result["strict_child_parity_marker"]',source)
+        self.assertIn('result["completed"] = bool(',source)
+        self.assertIn('result["status"] == "PROFILE_COUNTERS_COLLECTED" and',source)
+        self.assertIn('result["strict_child_parity_marker"]',source)
+        self.assertIn('result["hardware_profile"] = result["completed"]',source)
         self.assertIn('return 0 if result["status"] == "PROFILE_COUNTERS_COLLECTED" else 2',source)
 
 
