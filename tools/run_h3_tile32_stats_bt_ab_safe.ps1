@@ -25,6 +25,9 @@ if (-not (Test-Path -LiteralPath $py -PathType Leaf)) {
 if (Get-NetTCPConnection -LocalPort 8188 -State Listen -ErrorAction SilentlyContinue) {
     throw "Close ComfyUI before measuring GPU kernel A/B"
 }
+if (Get-Process -Name blender -ErrorAction SilentlyContinue) {
+    throw "Close Blender before GPU kernel A/B to avoid external VRAM/compute interference"
+}
 if (Test-Path -LiteralPath $clean) {
     throw "Temporary HTRC checkout already exists: $clean"
 }
