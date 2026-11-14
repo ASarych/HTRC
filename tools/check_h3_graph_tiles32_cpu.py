@@ -77,7 +77,7 @@ def check():
         "free < required + 1024 * _MIB",
         "raise MemoryError(",
         "extra_reserved > max_extra*_MIB or free < min_free*_MIB",
-        "graph.replay()",
+        'item["graph"].replay()',
     )
     for marker in required_flow:
         assert marker in flow, "Missing 32-tile safety: " + marker
