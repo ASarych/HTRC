@@ -50,6 +50,7 @@ def emit(stage, tokens, heads, rounds):
     marker = torch.zeros((1, 1, 1, 1), device=device, dtype=torch.bfloat16)
     placeholder = marker.expand(shape)
     best = {}
+    stage["partial_arms"] = best
     outputs = {}
     run_flags = (
         "APL_HTRC_TILE32_STATS_BT",
@@ -242,6 +243,7 @@ def emit(stage, tokens, heads, rounds):
                     max(a.float().norm().item(),1e-20)*100
                 ),
             }
+        stage["partial_parity"] = comparisons
         if not all(v["bit_exact"] for v in comparisons.values()):
             raise AssertionError(
                 "Stats BT32 must be BIT EXACT to BT16 for BOTH full outputs"
@@ -303,6 +305,8 @@ def main():
     except BaseException as exc:
         report["error"]=f"{type(exc).__name__}: {exc}"
         report["failed_phase"]=phase["phase"]
+        report["partial_arms"]=phase.get("partial_arms",{})
+        report["partial_parity"]=phase.get("partial_parity",{})
         report["traceback_tail"]=traceback.format_exc(limit=8)
         raise
     finally:
