@@ -72,6 +72,15 @@ class CompactAllHeadsQKV:
         self.total_projection_rows = 0
         self.build_gpu_ms = None
         self.build_wall_seconds = None
+        # Normally the compact builder waits for its GPU event before returning.
+        # In an explicitly opted-in real denoise experiment, defer that wait
+        # until the end of the 49-block transformer cycle. This does NOT
+        # retain QKV across blocks or denoise steps.
+        self.defer_gpu_sync = (
+            x.is_cuda and
+            os.environ.get("APL_HTRC_COMPACT_DEFER_GPU_SYNC", "0") == "1"
+        )
+        self._build_gpu_events = None
         self._build(attn, x, rope_freqs, normalize_chunk=normalize_chunk)
 
     @property
@@ -165,8 +174,15 @@ class CompactAllHeadsQKV:
             del fused, q, k, v
         if end is not None:
             end.record()
-            end.synchronize()
-            self.build_gpu_ms = float(start.elapsed_time(end))
+            if self.defer_gpu_sync:
+                # Keep events alive for the parent H3 live adapter. The
+                # last-block barrier guarantees completed CUDA timings and
+                # surfaces asynchronous kernel failures before a cycle is
+                # reported successful.
+                self._build_gpu_events = (start, end)
+            else:
+                end.synchronize()
+                self.build_gpu_ms = float(start.elapsed_time(end))
         self.build_wall_seconds = time.perf_counter() - wall
 
     def _decode(self, part, begin, end, start, stop, destination):
@@ -198,7 +214,12 @@ class CompactAllHeadsQKV:
             "persistent_fp32_scale_bytes": self.scales.numel()*self.scales.element_size(),
             "persistent_total_bytes": self.persistent_bytes,
             "build_gpu_ms": self.build_gpu_ms,
+            "build_gpu_timing_deferred": self._build_gpu_events is not None,
             "build_wall_seconds": self.build_wall_seconds,
+            "build_wall_semantics": (
+                "CPU_SUBMIT_NO_CUDA_SYNC" if self.defer_gpu_sync
+                else "CPU_WALL_INCLUDING_CUDA_SYNC"
+            ),
             "activation_quantization": "signed_int8_per_head_per_token_fp32_scale",
             "activation_packing_backend": self.pack_backend,
             "fused_pack_without_fp32_activation_staging": self.pack_backend == "triton",
