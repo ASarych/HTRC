@@ -93,7 +93,13 @@ CUDA in the isolated script
 It uses an exact pinned checkout cloned from the
 user's HTRC source, checks the exact SHA and never
 moves the installed ComfyNodes directory. It rejects
-an open ComfyUI port 8188.
+an open ComfyUI port 8188 **and active Blender**,
+so external GPU/VRAM use does not trivially confound
+the paired kernel benchmark. PyTorch's per-arm peak
+allocator delta is recorded; absolute memory peaks
+still carry allocator-cache and previous-output
+retention effects across arms. Do not treat those
+as independent whole-model VRAM measurements.
 
 ### Decision after GPU result
 
