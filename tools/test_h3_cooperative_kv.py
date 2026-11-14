@@ -52,6 +52,26 @@ class CooperativeKVAdmission(unittest.TestCase):
         self.assertIn("not a measured",c["note"])
         self.assertGreater(c["far_fraction"], 0.79)
 
+    def test_l2_hit_crossover_with_four_query_row_groups(self):
+        c = model.estimate(tokens=82000, centres_per_cta=8,
+                           query_row_groups=4)
+        hit = c["optimistic_min_cache_hit_fraction_for_source_hbm_advantage"]
+        self.assertEqual(hit["fp32_weight_staging"]["worst_union_all_leaves"],
+                         0.78125)
+        self.assertEqual(hit["direct_recompute"]["worst_union_all_leaves"],
+                         0.8125)
+        self.assertTrue(c["source_cache_crossover_assumes_all_reference_bytes_miss"])
+        self.assertTrue(c["source_cache_crossover_is_not_a_gpu_speed_or_hbm_measurement"])
+
+    def test_hbm_threshold_zero_and_impossible_without_speed_claim(self):
+        c = model.estimate(tokens=82000, centres_per_cta=8,
+                           query_row_groups=1)
+        hit = c["optimistic_min_cache_hit_fraction_for_source_hbm_advantage"]
+        self.assertEqual(hit["fp32_weight_staging"]["worst_union_all_leaves"], 0.0)
+        self.assertIsNone(model.idealized_min_source_cache_hit(1024, 300))
+        with self.assertRaises(ValueError):
+            model.idealized_min_source_cache_hit(float("nan"), 100)
+
     def test_invalid_shapes_rejected(self):
         for kwargs in (
             {"tokens": 15}, {"tokens": 82000, "heads": 0},

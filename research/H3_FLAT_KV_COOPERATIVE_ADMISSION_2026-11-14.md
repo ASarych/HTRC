@@ -190,3 +190,39 @@ promotion on this design document.
 For now, retain materialized/Tile32/STATS_BT=16 and
 the original eager fallback. No new GPU experiment
 was run by this architecture slice.
+
+
+## 2026-11-14 addendum — SM120 transport feasibility cross-check
+
+Independent NVIDIA/CUDA/Triton source review: GeForce RTX 5070 Ti
+is SM120; official NVIDIA CUTLASS GeForce SM120 examples explicitly
+say TMA load **multicast is not supported** and use a 1x1x1
+cluster shape. PTX cluster operations and TMA generally exist on
+SM90+; that is NOT equivalent to hardware TMA multicast. Triton
+issue #10973 (OPEN on 2026-11-14) reports SM120 cluster-op
+lowering failures; the earlier #10963 is closed and superseded.
+Neither parsing num_ctas=2 nor importing Triton establishes a
+working producer/consumer cluster.
+
+Therefore **NO_GO for CTA-cluster TMA multicast on RTX 5070 Ti**.
+The prior possible cluster-multicast design above is retained
+as a historical hypothesis, but is NOT an admissible local
+engineering route. A non-multicast distributed-SMEM experiment
+would need a separate working compiler/runtime and measured
+transport cost; it is NOT implemented or admitted.
+
+The remaining non-cluster possibility is independent CTAs with
+L2 reuse of V, but cache hits are NOT guaranteed and cannot be
+inferred from source loads. For B=8/R=4, the source-only traffic
+model gives optimistic minimum variable-source cache hit
+fractions of 78.125% for FP32 W staging and 81.25% for direct
+K/V recomputation, under the deliberately favorable assumption
+that the original materialized reference incurs all its
+1024 B/pair as external-memory traffic. Actual reference L2
+hits and kernel/Graph overhead make this only a best-case
+necessary crossover, NOT an expected speedup. No model or
+video result, profiler counters, or CUDA transport test exists.
+
+See H3_SM120_TRANSPORT_ADMISSION_2026-11-14.md and the read-only
+tools/probe_h3_sm120_transport.py inventory. No CUDA kernel or
+production routing changes occurred.

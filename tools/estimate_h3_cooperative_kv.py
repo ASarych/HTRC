@@ -23,6 +23,28 @@ REFERENCE_LOGICAL_BYTES_PER_PAIR = (
 )
 
 
+def idealized_min_source_cache_hit(fixed_bytes: float,
+                                  variable_bytes: float) -> float | None:
+    """Best-case source reuse to beat 1024 logical B/pair.
+
+    Assumes ALL reference source/VB bytes reach HBM, all fixed candidate
+    bytes reach HBM, and ONLY the variable candidate leaf loads can hit L2.
+    None of these are GPU measurements or guaranteed cache semantics.
+    None means a strict HBM byte advantage is impossible even with
+    100 percent reuse of variable bytes.
+    """
+    if not (math.isfinite(fixed_bytes) and math.isfinite(variable_bytes)
+            and fixed_bytes >= 0 and variable_bytes >= 0):
+        raise ValueError("Invalid traffic model input")
+    baseline = REFERENCE_LOGICAL_BYTES_PER_PAIR
+    if fixed_bytes >= baseline:
+        return None
+    if variable_bytes == 0:
+        return 0.0
+    max_miss = (baseline - fixed_bytes) / variable_bytes
+    return round(max(0.0, 1.0 - max_miss), 9)
+
+
 def estimate(*, tokens: int, heads: int = 4, tiles: int = 32,
              mode: str = "balanced", centres_per_cta: int = 8,
              query_row_groups: int = 1) -> dict:
@@ -58,6 +80,18 @@ def estimate(*, tokens: int, heads: int = 4, tiles: int = 32,
                 + W_FP32_BYTES_PER_PAIR * (1 + r)
                 + union * K_OR_V_LEAF_BYTES * r / b)
 
+    # Optimistic HBM source-byte crossover against a reference whose
+    # entire 1024 B/pair is assumed to miss caches. Real CUDA L2 behavior,
+    # baseline cache hits, replay ordering and execution cost are UNKNOWN.
+    direct_fixed = K_OR_V_LEAF_BYTES / STATS_BT
+    staged_fixed = direct_fixed + W_FP32_BYTES_PER_PAIR * (1 + r)
+    def cache_threshold(leaf_union: float, weight_staged: bool):
+        fixed = staged_fixed if weight_staged else direct_fixed
+        variable = (leaf_union * K_OR_V_LEAF_BYTES * r / b
+                    if weight_staged else
+                    leaf_union * 2 * K_OR_V_LEAF_BYTES * r / b)
+        return idealized_min_source_cache_hit(fixed, variable)
+
     accum_bytes = b * (Q_ROWS // r) * DIM * 4
     pairs = heads * tiles * leaves   # one FULL graph window; not whole video
     return {
@@ -87,6 +121,20 @@ def estimate(*, tokens: int, heads: int = 4, tiles: int = 32,
             "illustrative_independent_far_sets": round(w_staged(union_far_fraction_independent), 3),
             "worst_union_all_leaves": round(w_staged(upper_union), 3),
         },
+        "optimistic_min_cache_hit_fraction_for_source_hbm_advantage": {
+            "direct_recompute": {
+                "illustrative_independent_far_sets": cache_threshold(
+                    union_far_fraction_independent, False),
+                "worst_union_all_leaves": cache_threshold(upper_union, False),
+            },
+            "fp32_weight_staging": {
+                "illustrative_independent_far_sets": cache_threshold(
+                    union_far_fraction_independent, True),
+                "worst_union_all_leaves": cache_threshold(upper_union, True),
+            },
+        },
+        "source_cache_crossover_assumes_all_reference_bytes_miss": True,
+        "source_cache_crossover_is_not_a_gpu_speed_or_hbm_measurement": True,
         "reference_vb_window_mib": round(pairs * VB_BYTES_PER_PAIR / (1024**2), 3),
         "fp32_weights_window_mib": round(pairs * W_FP32_BYTES_PER_PAIR / (1024**2), 3),
         "independent_traffic_below_reference": {
