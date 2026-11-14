@@ -265,6 +265,12 @@ def graph_attention_native_h3(attn, x, rope_freqs, *, group_heads=8,
             else sum(item["projection_chunks"] for item in summary)
         ),
         "compact_stage": compact.summary() if compact is not None else None,
+        # Internal, non-JSON events: only the all-block live adapter may read
+        # them after the final CUDA barrier of a transformer cycle. Ordinary
+        # callers see None and retain their previous eager synchronization.
+        "_deferred_qkv_cuda_events": (
+            compact._build_gpu_events if compact is not None else None
+        ),
         "compact_activation_lossy": compact is not None,
         "selective_quantized_weight_slicing": "UNIMPLEMENTED",
         "real_model_graph_math": "HTRC Flat balanced or fast, not stock dense/Sol",
