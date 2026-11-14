@@ -9,7 +9,9 @@ import argparse
 import csv
 import io
 import json
+import math
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -20,26 +22,89 @@ NVTX_RANGE = "HTRC_MATERIALIZED_REPLAY/"
 # ncu.BAT is parsed by cmd.exe on Windows even if subprocess shell=False.
 # Do not pass metacharacters such as | or parentheses via this .BAT wrapper.
 # The bracket class matches stats, rowmax and tile without shell alternation.
-KERNEL_FILTER = "regex:_[srt][a-z]*_kernel"
+# Match only st*, ro*, ti* kernel families; this also excludes
+# _merge_tail_kernel, which matched the previous suffix-only pattern.
+KERNEL_FILTER = "regex:_[srt][iot][a-z]*_kernel"
 WINDOWS_BATCH_META = "|&<>^()%!"
+# For NVIDIA SM120, DRAM counter names may contain an op_read/op_write
+# infix. Query this exact installed ncu version BEFORE executing any GPU work.
+METRIC_ALTERNATIVES = {
+    "dram_read_bytes": (
+        "dram__bytes_op_read.sum", "dram__bytes_read.sum",
+    ),
+    "dram_write_bytes": (
+        "dram__bytes_op_write.sum", "dram__bytes_write.sum",
+    ),
+    "l2_read_sectors": (
+        "lts__t_sectors_srcunit_tex_op_read.sum",
+        "lts__t_sectors_op_read.sum",
+    ),
+}
+# CPU parser fixture defaults, not an assumption of runtime availability.
 METRICS = (
-    "dram__bytes_read.sum",
-    "dram__bytes_write.sum",
+    "dram__bytes_op_read.sum",
+    "dram__bytes_op_write.sum",
     "lts__t_sectors_srcunit_tex_op_read.sum",
     "launch__registers_per_thread",
 )
 
 
-def command(ncu: str, py: str, self_path: str, count: int = 12) -> list[str]:
+def select_available_metrics(query_output: str) -> tuple[str, ...]:
+    """Select full, advertised metric names; no unsupported silent fallback."""
+    # --query-metrics-mode all prints full names in the Metric Name column.
+    names = set(re.findall(r"(?<![a-zA-Z0-9_.])"
+                           r"([a-zA-Z][a-zA-Z0-9_]*__"
+                           r"[a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)"
+                           r"(?![a-zA-Z0-9_.])", query_output))
+    selected = []
+    for family, options in METRIC_ALTERNATIVES.items():
+        exact = next((name for name in options if name in names), None)
+        if exact is None:
+            raise ValueError(f"Unsupported NCU metric family: {family}")
+        selected.append(exact)
+    # Device attribute is optional; available in raw output on many GPUs.
+    if re.search(r"(?<![a-zA-Z0-9_.])launch__registers_per_thread"
+                 r"(?![a-zA-Z0-9_.])", query_output):
+        selected.append("launch__registers_per_thread")
+    return tuple(selected)
+
+
+def query_metrics(ncu: str) -> tuple[tuple[str, ...], dict]:
+    """CPU-only installed-NCU metric discovery, prior to CUDA launch."""
+    proc = subprocess.run(
+        [ncu, "--query-metrics-mode", "all"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90,
+    )
+    content = decode_profiler_output(proc.stdout or b"")
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "Nsight metric query failed (exit "
+            + str(proc.returncode) + "): " + content[-350:]
+        )
+    chosen = select_available_metrics(content)
+    return chosen, {
+        "query_exit_code": proc.returncode,
+        "query_preflight": "PASS_ADVERTISED_METRIC_NAMES",
+        "verified_metric_names": list(chosen),
+    }
+
+
+def command(ncu: str, py: str, self_path: str, count: int = 12,
+            metrics: tuple[str, ...] | None = None) -> list[str]:
     if not 1 <= count <= 16:
         raise ValueError("Profiled launches must be 1..16")
     if any(ch in KERNEL_FILTER for ch in WINDOWS_BATCH_META):
         raise ValueError("ncu.BAT filter contains unsafe Windows cmd metacharacters")
+    selected = tuple(metrics or METRICS)
+    if len(selected) < 3 or any(not re.fullmatch(
+        r"[a-zA-Z0-9_.]+", metric) for metric in selected
+    ):
+        raise ValueError("Invalid selected metric names")
     return [
         ncu, "--nvtx", "--nvtx-include", NVTX_RANGE,
         "--graph-profiling", "node",
         "--kernel-name-base", "function", "--kernel-name", KERNEL_FILTER,
-        "--launch-count", str(count), "--metrics", ",".join(METRICS),
+        "--launch-count", str(count), "--metrics", ",".join(selected),
         "--csv", "--page", "raw", "--print-units", "base",
         py, "-B", self_path, "--child",
     ]
@@ -57,14 +122,83 @@ def decode_profiler_output(raw: bytes) -> str:
         return raw.decode("oem" if os.name == "nt" else "cp866", errors="replace")
 
 
-def parse_csv(output: str) -> list[dict]:
+def parse_counter(value: str) -> float | None:
+    """Numeric NCU counters under en-US or ru-RU Windows formatting.
+
+    In the observed NCU 2026.1.1 output, cp1251 NBSP (0xA0) was
+    decoded using cp866 and appeared as Cyrillic 'а' between digits.
+    Never invent a zero for absent, n/a, fraction, or malformed values.
+    Requested DRAM bytes and L2 sector counts must be integers.
+    """
+    v = str(value).strip()
+    if not v or v.lower() in ("n/a", "nan", "inf", "-inf"):
+        return None
+    v = re.sub(r"(?<=\d)[\u00a0\u202f\u2009\u0430 ](?=\d)", "", v)
+    v = v.strip().replace("\u00a0", "")
+    if re.fullmatch(r"[+-]?\d{1,3}(?:,\d{3})+", v):
+        v = v.replace(",", "")
+    elif "," in v and "." not in v:
+        v = v.replace(",", ".")
+    elif "," in v:
+        # Decimal comma and dot thousands separators; do not guess.
+        return None
+    if not re.fullmatch(r"[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", v):
+        return None
+    number = float(v)
+    if not math.isfinite(number) or number < 0 or not number.is_integer():
+        return None
+    return number
+
+
+def inspect_csv(output: str, selected: tuple[str, ...]) -> dict:
+    """Diagnostic-only CSV census, never claims unparsed values are valid."""
+    headers = []
+    by_kernel = {}
+    malformed = 0
+    for row in csv.reader(io.StringIO(output)):
+        if not row:
+            continue
+        row = [x.lstrip("\ufeff").strip() for x in row]
+        if "Kernel Name" in row and "ID" in row:
+            headers.append(row)
+        elif any("_stats_kernel" in x or "_tile_kernel" in x or
+                 "_rowmax_kernel" in x for x in row):
+            name = next((x for x in row if x in
+                         ("_stats_kernel", "_rowmax_kernel",
+                          "_tile_kernel", "_merge_tail_kernel")), None)
+            if name:
+                by_kernel[name] = by_kernel.get(name, 0) + 1
+            else:
+                malformed += 1
+    best = max(headers, key=lambda h: sum(m in h for m in selected),
+               default=[])
+    return {
+        "csv_headers_found": len(headers),
+        "csv_total_columns": len(best),
+        "csv_metric_columns": [m for m in best if m.startswith(
+            ("dram__", "lts__", "launch__"))][:40],
+        "csv_missing_requested_metric_columns": [
+            m for m in selected[:3] if m not in best
+        ],
+        "csv_named_kernel_rows": by_kernel,
+        "csv_other_kernel_like_rows": malformed,
+        "csv_header_is_complete_for_required_metrics": (
+            bool(best) and all(m in best for m in selected[:3])
+        ),
+    }
+
+
+def parse_csv(output: str, metrics: tuple[str, ...] | None = None) -> list[dict]:
     """Nsight raw CSV: header row, units row, then launch rows."""
+    selected = tuple(metrics or METRICS)
     header = None
     rows = []
     for row in csv.reader(io.StringIO(output)):
         if not row:
             continue
-        if "Kernel Name" in row and METRICS[0] in row:
+        row = [x.lstrip("\ufeff").strip() for x in row]
+        if ("Kernel Name" in row and "ID" in row and
+            all(m in row for m in selected[:3])):
             header = row
             continue
         if header is None or len(row) != len(header):
@@ -75,15 +209,11 @@ def parse_csv(output: str) -> list[dict]:
                                        "_tile_kernel")):
             continue
         metrics = {}
-        for metric in METRICS:
-            v = item.get(metric, "").replace(",", "").strip()
-            if not v or v.lower() in ("n/a", "nan", "inf", "-inf"):
-                continue
-            try:
-                metrics[metric] = float(v)
-            except ValueError:
-                continue
-        if METRICS[0] in metrics and METRICS[2] in metrics:
+        for metric in selected:
+            number = parse_counter(item.get(metric, ""))
+            if number is not None:
+                metrics[metric] = number
+        if selected[0] in metrics and selected[1] in metrics and selected[2] in metrics:
             rows.append({
                 "kernel": "stats" if "_stats_kernel" in name
                           else "rowmax" if "_rowmax_kernel" in name
@@ -207,8 +337,12 @@ def run_parent(ncu: str, count: int) -> dict:
         "production_promotion": "PROHIBITED_PROFILER_ONLY",
     }
     try:
+        chosen, preflight = query_metrics(ncu)
+        result.update(preflight)
+        result["metric_names"] = list(chosen)
         proc = subprocess.run(
-            command(ncu, sys.executable, str(Path(__file__).resolve()), count),
+            command(ncu, sys.executable, str(Path(__file__).resolve()),
+                    count, metrics=chosen),
             cwd=str(ROOT), stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, timeout=600,
         )
@@ -223,16 +357,25 @@ def run_parent(ncu: str, count: int) -> dict:
         elif proc.returncode != 0:
             result["error"] = "Nsight run failed; see diagnostic_output_tail"
         else:
-            parsed = parse_csv(output)
+            parsed = parse_csv(output, chosen)
             result.update(summary(parsed))
+            result["csv_diagnostics"] = inspect_csv(output, chosen)
             result["kernel_samples"] = parsed
-            result["completed"] = bool(parsed) and result["strict_child_parity_marker"]
+            result["completed"] = bool(
+                result["status"] == "PROFILE_COUNTERS_COLLECTED" and
+                result["strict_child_parity_marker"]
+            )
             result["hardware_profile"] = result["completed"]
             if not result["completed"]:
                 result["status"] = "FAIL_CLOSED_NO_VALID_COUNTERS_OR_PARITY"
         result["diagnostic_output_tail"] = output[-6000:]
     except Exception as exc:
-        result["error"] = f"{type(exc).__name__}: {exc}"[:1000]
+        message = f"{type(exc).__name__}: {exc}"[:1000]
+        result["error"] = message
+        if "Unsupported NCU metric family" in message:
+            result["status"] = "BLOCKED_UNSUPPORTED_NCU_COUNTERS"
+        elif "Nsight metric query failed" in message:
+            result["status"] = "FAIL_CLOSED_NCU_METRIC_QUERY"
     return result
 
 

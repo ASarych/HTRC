@@ -169,3 +169,82 @@ will collect valid hardware counters. CPU regression
 tests and the new GPU profiling run are UNRUN until
 executed; if the next run fails, inspect the one JSON
 for the next distinct error rather than guessing.
+
+
+## 2026-11-14 — Nsight real CSV obtained but 0 parsed launches
+
+Second user-run at ec410f3be7bcd0342a00e6762734bcc122032e50
+after fixing the Windows cmd pipe reported:
+
+    status=FAIL_CLOSED_NO_VALID_COUNTERS_OR_PARITY
+    ncu_exit_code=0
+    strict_child_parity_marker=true
+    completed=false
+    profiled_launches=0
+    has_stats_and_tile=false
+
+The diagnostic tail contains genuine NVIDIA Nsight 2026.1.1
+raw-page CSV lines for _rowmax_kernel, _tile_kernel and
+_merge_tail_kernel. The CUDA Graph ran successfully and the
+existing eager output parity marker passed. No performance
+measurements have yet been VALIDATED because the old parser
+rejected every counter row. Its mandatory DRAM metric names
+are not necessarily valid on this SM120 card: newer SM120
+documentation notes dram__bytes_op_read.sum and
+dram__bytes_op_write.sum, whereas the old tool requested
+the legacy dram__bytes_read.sum and dram__bytes_write.sum
+only. Some local CSV values contain non-breaking-space
+thousands separators misdecoded as Cyrillic a, and some
+localized decimals use commas, e.g. 2a572a000 and 4,55.
+The old float(value.replace(",", "")) is invalid for both.
+The precise per-column cause cannot be established from the
+last 6000 characters of the prior JSON because the CSV HEADER
+was not retained there; do not claim one cause as proven.
+
+Repair to the research-only tool:
+1. Query exact installed NCU with --query-metrics-mode all
+   BEFORE launching CUDA. Select verified, supported DRAM
+   read/write metric names; prefer SM120 op_read/op_write,
+   fall back to legacy only if present. Also query a supported
+   L2 read-sector metric (TEX source preferred; broader
+   all-read count explicitly labeled if used).
+   If any mandatory family is unavailable, FAIL_CLOSED
+   before launching the child process, and record the reason
+   in the same JSON. No GPU counter value is synthesized.
+2. Parse raw CSV with explicit metric-name columns and handle
+   Russian grouping separators (NBSP or their CP866-decoded
+   Cyrillic small a) and decimal comma. All three required
+   counter values must parse as finite nonnegative INTEGERS.
+   n/a, invalid or fractional values are rejected, never
+   zeroed. Only real stats and Tile rows can satisfy the
+   accepted profile; partial samples remain FAIL_CLOSED.
+3. Narrow the safe regex to regex:_[srt][iot][a-z]*_kernel
+   which covers stats/rowmax/tile and avoids accidentally
+   matching _merge_tail_kernel through its _tail_kernel
+   suffix; still no Windows cmd metacharacters.
+4. Add compact JSON csv_diagnostics: total header columns,
+   names of discovered DRAM/L2 metric columns, missing
+   required columns and a count of kernel rows. This lets
+   future parse failures be diagnosed without copying
+   enormous Unicode-corrupted numeric rows.
+5. Add CPU-only tests for SM120 and legacy metric discovery,
+   raw wide CSV, localized integers, fail-closed preflight
+   and the kernel filter.
+
+External context:
+- NVIDIA CLI exposes --query-metrics-mode all and says that
+  an unsupported or mistyped metric may return n/a.
+  https://docs.nvidia.com/nsight-compute/NsightComputeCli/
+  https://docs.nvidia.com/nsight-compute/ProfilingGuide/
+- RTX 5070 SM120 practitioner evidence lists the op_read
+  and op_write DRAM metric names for Nsight 2026.2.1;
+  this is NOT confirmation on the user's installed 2026.1.1.
+  https://github.com/Olajide-Badejo/GPU-Roofline-Profiler/blob/main/docs/profiling_guide.md
+
+No change to Stats/Tile/graph math, exact selection, H3
+model, fallback, CUDA kernels or production. Existing
+sm120_transport_inventory.json remains CAPABILITY_ONLY,
+not a GPU bandwidth result. Previous failed report is
+retained as evidence (may be overwritten by next opt-in
+test). New CPU and GPU acceptance tests UNRUN until
+explicitly executed; no DRAM/L2 results claimed.
