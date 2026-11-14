@@ -6,7 +6,8 @@ param(
     [string]$Candidate = "split_stream",
     [ValidateRange(2,12)]
     [int]$Rounds = 5,
-    [switch]$DiagnoseNumeric
+    [switch]$DiagnoseNumeric,
+    [switch]$PairedABBA
 )
 
 # One isolated exact-HEAD CUDA A/B. No installed ComfyNodes edits,
@@ -20,6 +21,9 @@ $clean = "D:\HTRC-vb-probe-$tag"
 if ($DiagnoseNumeric -and $Candidate -ne "fused_vb") {
     throw "Numeric diagnostic is restricted to fused_vb"
 }
+if ($PairedABBA -and ($Candidate -ne "fused_vb" -or $DiagnoseNumeric -or $Rounds -lt 5)) {
+    throw "PairedABBA requires fused_vb, no DiagnoseNumeric, and Rounds >= 5"
+}
 
 if ($Candidate -eq "split_stream") {
     $bench = "benchmark_h3_flat_streamed_vb_ab.py"
@@ -30,7 +34,11 @@ if ($Candidate -eq "split_stream") {
 } else {
     $bench = "benchmark_h3_flat_fused_vb_ab.py"
     $test = "test_h3_flat_fused_vb_contract.py"
-    $report = "D:\ComfyOutput\H3\math_probe\flat_fused_vb_ab.json"
+    $report = if ($PairedABBA) {
+        "D:\ComfyOutput\H3\math_probe\flat_fused_vb_abba.json"
+    } else {
+        "D:\ComfyOutput\H3\math_probe\flat_fused_vb_ab.json"
+    }
     $numericKeyA = "bank_0_materialized_vs_fused_vb"
     $numericKeyB = "bank_1_materialized_vs_fused_vb"
 }
@@ -111,6 +119,9 @@ try {
     if ($DiagnoseNumeric) {
         $gpuArgs += "--diagnose-numeric"
     }
+    if ($PairedABBA) {
+        $gpuArgs += "--paired-abba"
+    }
     & $py -B (Join-Path $clean ("tools\" + $bench)) @gpuArgs
     if ($LASTEXITCODE -ne 0) {
         throw "GPU candidate failed closed; inspect ONE JSON at $report"
@@ -135,6 +146,34 @@ try {
         Write-Host "HTRC fused_vb DIAGNOSTIC ONLY; no numerical PASS"
         Write-Host "Fused-vs-eager maximum absolute error: $($result.comparisons.fused_vb_vs_eager.max_abs)"
         Write-Host "Fused-vs-eager mismatched elements: $($result.comparisons.fused_vb_vs_eager.mismatch_count)"
+        Write-Host "One JSON: $report"
+    } elseif ($PairedABBA) {
+        if ($result.completed -ne $true -or $result.status -ne "PASS_NUMERIC" -or
+            $result.paired_abba -ne $true -or
+            (@($result.capture_order) -join ",") -ne "materialized,fused_vb,fused_vb,materialized" -or
+            @($result.per_block).Count -ne 4 -or
+            @($result.block_gpu_event_medians_ms.materialized).Count -ne 2 -or
+            @($result.block_gpu_event_medians_ms.fused_vb).Count -ne 2 -or
+            $result.numeric.bank_0_materialized_vs_fused_vb -ne $true -or
+            $result.numeric.bank_1_materialized_vs_fused_vb -ne $true -or
+            $result.candidate_promotion -ne "NOT_AUTHORIZED_SYNTHETIC_ONLY" -or
+            $result.mode -ne "balanced" -or $result.window_tiles -ne 32 -or
+            $result.tokens -ne 15275 -or $result.heads -ne 4) {
+            throw "Paired ABBA numerical/capture gate incomplete"
+        }
+        foreach ($block in @($result.per_block)) {
+            if ($block.first_call_gate -ne "PASS_FIRST_REAL_CALL" -or
+                $block.bank_a_bit_exact_to_eager -ne $true -or
+                $block.bank_b_bit_exact_to_eager -ne $true -or
+                $block.bank_b_replay_bit_exact -ne $true -or
+                @($block.gpu_event_samples_ms).Count -ne $Rounds -or
+                @($block.sync_wall_samples_ms).Count -ne $Rounds) {
+                throw "Paired ABBA block gate incomplete"
+            }
+        }
+        Write-Host "HTRC fused_vb ABBA PASS_NUMERIC (NOT promoted)"
+        Write-Host "Block GPU medians: $(@($result.per_block | ForEach-Object { $_.gpu_event_median_ms }) -join ', ')"
+        Write-Host "Consistent speed signal: $($result.candidate_speed_signal)"
         Write-Host "One JSON: $report"
     } else {
         if ($result.completed -ne $true -or $result.status -ne "PASS_NUMERIC" -or

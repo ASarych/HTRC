@@ -242,3 +242,81 @@ fused_vb A/B; if the strict gate fails again, do NOT automatically
 relax parity or rerun indefinitely. Close this naive in-Tile
 candidate and prioritize centre-cooperative K/V reuse only
 after independent architecture/traffic review. Do not run video.
+
+
+## 2026-11-14 — corrected fused VB strict numeric PASS; performance baseline drift
+
+User-provided flat_fused_vb_ab(1).json from the strict, output-producing
+A/B on 86ca5ec2e05e140fa59164d4b52e2eeb36ae8b41.
+Report status=PASS_NUMERIC, completed=true. Exact same synthetic geometry
+as the previous failed/diagnostic gate: 15,275 tokens, four distinct
+BF16 heads, Balanced (512 exact leaves), Tile32, five timed full-call
+replays, two independent Q/K/V banks, RTX 5070 Ti. No H3 checkpoint,
+VAE/video, or Sol comparison.
+
+Both output banks are **bit-exact** between materialized Graph and
+fused_vb Graph; each mode's first-bank first-call Graph output
+and second-bank Graph output also independently match the native
+unchanged eager Flat reference. The per-centre rowwise
+max/sum/exp/divide correction therefore passes this shape's
+strict numerical gate. No quality tolerance was relaxed.
+
+| Metric | materialized | fused_vb |
+|---|---:|---:|
+| Full attention GPU events / call | 25.462938 ms | 14.105049 ms |
+| Synchronized call wall / call | 25.854340 ms | 14.534740 ms |
+| First-call extra reserved MiB (NOT isolated) | 320 | 0 |
+| Capture + eager parity wall (cold/uncalibrated) | 19,649 ms | 5,997 ms |
+
+This single fixed-order run reports **1.805x GPU-event** and
+**1.7788x wall** materialized/fused speed ratios. But the separate
+earlier split_stream experiment (same 15,275/4/Balanced/Tile32
+control) measured materialized at **5.658144 ms GPU**. The current
+materialized control is thus about **4.50x slower** than that earlier
+independent run, despite unchanged materialized math and same
+nominal geometry. Do not interpret the current 1.8x as reliable
+speedup or attribute drift to one cause. All two-mode trials
+ran materialized FIRST, then experimental variant, with only one
+averaged block of five timed replays per mode.
+
+The report's first-call 320/0 MiB is NOT independently measured
+whole-model memory savings: allocator caches and private CUDA Graph
+pools persist across arms. The fast candidate may still regress
+on an ordinary/faster materialized baseline. The cold capture
+wall values also cannot be interpreted as warmed speed.
+
+**Numerical gate: PASS for this synthetic 4-head shape.**
+**Speed benefit: UNCONFIRMED.** Do not promote fused_vb or
+run model/video on the basis of these timings alone.
+
+### Opt-in independent-capture ABBA confirmation
+
+tools/benchmark_h3_flat_fused_vb_ab.py now supports
+--paired-abba to compare 4 independent strict Graph captures
+in materialized/fused_vb/fused_vb/materialized order.
+All use the SAME two distinct BF16 Q/K/V banks. For each
+capture, normal first-call eager/Graph parity remains REQUIRED,
+as does independent bank-B eager equality. Full output for
+both banks is checked across variants AND repeated captures.
+Only CPU copies of reference outputs persist across blocks;
+the GPU session cache is cleared between captures.
+
+After each first-call parity gate, 5 additional untimed
+full-attention replays warm the captured Graph, then 7
+individual GPU-event and synchronized wall samples are
+recorded per block. One JSON records all 28 samples,
+four block medians and the speed-decision contract.
+An exploratory candidate speed signal requires BOTH:
+at least 5% faster median of block medians and BOTH fused_vb
+block medians below BOTH materialized block medians.
+Even a positive signal is NOT authorization to promote to H3.
+
+The safe runner supports -Candidate fused_vb -PairedABBA
+-Rounds 7; it writes exactly ONE separate report:
+D:\ComfyOutput\H3\math_probe\flat_fused_vb_abba.json.
+The old flat_fused_vb_ab.json is preserved. Default
+two-mode A/B and numeric-diagnostic paths are unchanged.
+Model-resident GPU and independent-process VRAM are UNRUN.
+
+The new ABBA CPU source contracts, CUDA benchmark and
+speed confirmation are UNRUN until executed on RTX 5070 Ti.

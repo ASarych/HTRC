@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import math
+import statistics
 from pathlib import Path
 import sys
 import tempfile
@@ -293,6 +295,205 @@ def run_ab(tokens, heads, mode, tiles, rounds, budget_mib, reserve_mib, output):
     }
 
 
+def _abba_speed_verdict(materialized_ms, fused_ms):
+    """Pure, CPU-testable speed signal. Never authorizes production."""
+    if len(materialized_ms) != 2 or len(fused_ms) != 2:
+        raise ValueError("ABBA requires two independent block medians per variant")
+    if any(not math.isfinite(v) or v <= 0
+           for v in materialized_ms + fused_ms):
+        raise ValueError("ABBA GPU event medians must be finite and positive")
+    materialized = float(statistics.median(materialized_ms))
+    fused = float(statistics.median(fused_ms))
+    ratio = materialized / fused
+    all_faster = max(fused_ms) < min(materialized_ms)
+    return ratio, all_faster, bool(ratio >= 1.05 and all_faster)
+
+
+@torch.inference_mode()
+def run_abba(tokens, heads, mode, tiles, rounds, budget_mib, reserve_mib):
+    """Four strict, independent Graph captures on identical Q/K/V banks.
+
+    Only a research stability gate: not a real-H3 or VRAM comparison.
+    """
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA GPU unavailable")
+    if (tokens, heads, mode, tiles, budget_mib, reserve_mib) != (
+        15275, 4, "balanced", 32, 1024, 256
+    ) or rounds < 5 or rounds > 12:
+        raise ValueError("ABBA requires pinned 15275/4/balanced/32/1024/256, rounds 5..12")
+    order = ("materialized", "fused_vb", "fused_vb", "materialized")
+    torch.manual_seed(42026)
+    shape = (1, heads, tokens, 128)
+    banks = [
+        tuple(torch.randn(shape, device="cuda", dtype=torch.bfloat16)
+              for _ in range(3))
+        for _ in range(2)
+    ]
+    baseline_outputs = {}  # CPU copies, not persistent GPU allocations
+    blocks = []
+    env_keys = ("APL_HTRC_DIRECTFLOW_REPORT",
+                "APL_HTRC_DIRECTFLOW_GROUP",
+                "APL_HTRC_DIRECTFLOW_WARMUPS",
+                "APL_HTRC_DIRECTFLOW_VB_MODE")
+    old = {name: os.environ.get(name) for name in env_keys}
+    device = banks[0][0].device
+    try:
+        with tempfile.TemporaryDirectory(prefix="htrc-fused-abba-") as temp:
+            os.environ["APL_HTRC_DIRECTFLOW_REPORT"] = str(Path(temp)/"gate.json")
+            os.environ["APL_HTRC_DIRECTFLOW_GROUP"] = "11"
+            os.environ["APL_HTRC_DIRECTFLOW_WARMUPS"] = "4"
+            for block_index, variant in enumerate(order, start=1):
+                flow.clear_session_cache()
+                os.environ["APL_HTRC_DIRECTFLOW_VB_MODE"] = variant
+
+                def calculate(bank):
+                    return flow.graph_attention_bthd(
+                        *bank, heads=heads, mode=mode, tiles=tiles,
+                        budget_mib=budget_mib, reserve_mib=reserve_mib,
+                        workspace=True,
+                    )
+
+                first = calculate(banks[0])
+                torch.cuda.synchronize(device)
+                gate = json.loads((Path(temp)/"gate.json").read_text(encoding="utf-8"))
+                if (gate.get("status") != "PASS_FIRST_REAL_CALL" or
+                    gate.get("all_groups_bit_exact") is not True):
+                    raise AssertionError(
+                        f"{variant} block{block_index}: strict eager Graph gate FAIL"
+                    )
+                first_cpu = first.detach().cpu()
+                second = calculate(banks[1])
+                torch.cuda.synchronize(device)
+                second_cpu = second.detach().cpu()
+                if torch.equal(first_cpu, second_cpu):
+                    raise AssertionError("QKV bank A/B outputs must differ")
+                eager_b = live.flat_attention_bthd(
+                    *banks[1], heads=heads, mode=mode, tiles=tiles,
+                    budget_mib=budget_mib, reserve_mib=reserve_mib,
+                    workspace=True, query_staging="native_torch_mu",
+                    kv_staging="native_direct", dispatch="eager",
+                )
+                if not torch.equal(second, eager_b):
+                    raise AssertionError(
+                        f"{variant} block{block_index}: bank B eager parity failed"
+                    )
+                del eager_b
+                for bank_index, value in enumerate((first_cpu, second_cpu)):
+                    key = (variant, bank_index)
+                    if key not in baseline_outputs:
+                        baseline_outputs[key] = value.clone()
+                    elif not torch.equal(baseline_outputs[key], value):
+                        raise AssertionError(
+                            f"{variant} block{block_index}: repeat capture output changed"
+                        )
+                # An independent materialized/fused comparison is made
+                # after all four blocks, on both complete CPU output banks.
+                del first, first_cpu, second_cpu
+
+                # Five extra FULL attention replays after capture and eager
+                # parity, before the first timed GPU event.
+                warmed = None
+                for _ in range(5):
+                    warmed = calculate(banks[1])
+                torch.cuda.synchronize(device)
+                if not torch.equal(warmed, second):
+                    raise AssertionError(
+                        f"{variant} block{block_index}: post-capture replay changed"
+                    )
+                del warmed
+                gpu_samples = []
+                wall_samples = []
+                last = None
+                for _ in range(rounds):
+                    start = torch.cuda.Event(enable_timing=True)
+                    stop = torch.cuda.Event(enable_timing=True)
+                    start.record()
+                    wall_started = time.perf_counter()
+                    last = calculate(banks[1])
+                    stop.record()
+                    stop.synchronize()
+                    gpu_samples.append(float(start.elapsed_time(stop)))
+                    wall_samples.append((time.perf_counter() - wall_started) * 1000.0)
+                if not torch.equal(last, second):
+                    raise AssertionError(
+                        f"{variant} block{block_index}: timed replay changed"
+                    )
+                blocks.append({
+                    "capture_block": block_index,
+                    "variant": variant,
+                    "first_call_gate": gate["status"],
+                    "bank_a_bit_exact_to_eager": True,
+                    "bank_b_bit_exact_to_eager": True,
+                    "bank_b_replay_bit_exact": True,
+                    "post_capture_warmup_replays": 5,
+                    "gpu_event_samples_ms": gpu_samples,
+                    "sync_wall_samples_ms": wall_samples,
+                    "gpu_event_median_ms": float(statistics.median(gpu_samples)),
+                    "sync_wall_median_ms": float(statistics.median(wall_samples)),
+                    "first_call_extra_reserved_mib_non_isolated": gate.get("extra_reserved_mib"),
+                })
+                del last, second
+                flow.clear_session_cache()
+        parity = {}
+        for bank_index in (0,1):
+            parity[f"bank_{bank_index}_materialized_vs_fused_vb"] = bool(
+                torch.equal(
+                    baseline_outputs[("materialized",bank_index)],
+                    baseline_outputs[("fused_vb",bank_index)],
+                )
+            )
+        if not all(parity.values()):
+            raise AssertionError("ABBA full-output cross-variant bit-exact failure")
+        by_variant = {
+            name: [row["gpu_event_median_ms"] for row in blocks
+                   if row["variant"] == name]
+            for name in ("materialized", "fused_vb")
+        }
+        old_ms = float(statistics.median(by_variant["materialized"]))
+        fused_ms = float(statistics.median(by_variant["fused_vb"]))
+        ratio, faster_every_block, signal = _abba_speed_verdict(
+            by_variant["materialized"], by_variant["fused_vb"]
+        )
+        return {
+            "experiment": "h3_fused_vb_materialized_independent_capture_abba_v1",
+            "status": "PASS_NUMERIC",
+            "completed": True,
+            "paired_abba": True,
+            "capture_order": list(order),
+            "tokens": tokens, "heads": heads, "mode": mode,
+            "window_tiles": tiles, "near_leaves": 512,
+            "rounds_per_block": rounds,
+            "extra_post_capture_warmups_per_block": 5,
+            "qkv_banks": 2,
+            "scope": "synthetic complete Graph attention; no model/VAE/video",
+            "numeric": parity,
+            "per_block": blocks,
+            "block_gpu_event_medians_ms": by_variant,
+            "median_of_block_gpu_event_medians_ms": {
+                "materialized": old_ms,
+                "fused_vb": fused_ms,
+            },
+            "gpu_speed_ratio_materialized_over_fused_vb": ratio,
+            "consistent_faster_across_capture_blocks": faster_every_block,
+            "candidate_speed_signal": signal,
+            "speed_signal_criterion": (
+                ">=5% faster median of block medians AND both fused block "
+                "medians strictly below both materialized block medians"
+            ),
+            "candidate_promotion": "NOT_AUTHORIZED_SYNTHETIC_ONLY",
+            "gpu": torch.cuda.get_device_name(0),
+            "memory_comparison": "NOT_ISOLATED: one-process allocator and Graph pools",
+            "real_h3_or_video": "UNRUN",
+        }
+    finally:
+        flow.clear_session_cache()
+        for key in env_keys:
+            if old[key] is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old[key]
+
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tokens",type=int,default=15275)
@@ -302,6 +503,8 @@ def main():
     ap.add_argument("--rounds",type=int,default=3)
     ap.add_argument("--budget-mib",type=int,default=1024)
     ap.add_argument("--reserve-mib",type=int,default=256)
+    ap.add_argument("--paired-abba",action="store_true",
+                    help="four independent strict captures, separate GPU events")
     ap.add_argument("--diagnose-numeric",action="store_true",
                     help="strict-failure analysis only; never PASS_NUMERIC")
     ap.add_argument("--output",type=Path,default=Path(
@@ -312,7 +515,13 @@ def main():
         "status":"FAIL_CLOSED","completed":False,
     }
     try:
-        if args.diagnose_numeric:
+        if args.diagnose_numeric and args.paired_abba:
+            raise ValueError("Choose either diagnostic or strict ABBA")
+        if args.paired_abba:
+            result.update(run_abba(
+                args.tokens,args.heads,args.mode,args.tiles,args.rounds,
+                args.budget_mib,args.reserve_mib))
+        elif args.diagnose_numeric:
             result.update(diagnose_numeric(
                 args.tokens,args.heads,args.mode,args.tiles,
                 args.budget_mib,args.reserve_mib))

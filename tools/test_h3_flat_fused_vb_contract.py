@@ -5,6 +5,8 @@ Triton, prove bitwise CUDA parity, or establish speedup.
 """
 from __future__ import annotations
 import ast
+import math
+import statistics
 from pathlib import Path
 import unittest
 
@@ -155,6 +157,70 @@ class TestFusedVBContracts(unittest.TestCase):
         self.assertIn('materialized_vs_eager.bit_exact',wrapper)
         self.assertIn('PROHIBITED_DIAGNOSTIC_ONLY',wrapper)
         self.assertIn('if ($result.completed -ne $true -or $result.status -ne "PASS_NUMERIC"',wrapper)
+
+    def test_strict_fused_abba_source_and_speed_decision(self):
+        source=PATHS["benchmark"].read_text(encoding="utf-8")
+        tree=ast.parse(source)
+        matches=[x for x in tree.body
+                 if isinstance(x,ast.FunctionDef)
+                 and x.name=="_abba_speed_verdict"]
+        self.assertEqual(len(matches),1)
+        namespace={"math":math,"statistics":statistics}
+        exec(compile(ast.Module(body=matches,type_ignores=[]),
+                     str(PATHS["benchmark"]),"exec"),namespace)
+        decide=namespace["_abba_speed_verdict"]
+        good=decide([25.0,24.0],[13.0,14.0])
+        self.assertTrue(good[2])
+        self.assertTrue(good[1])
+        # Large apparent ratio alone is NOT enough when blocks overlap.
+        self.assertFalse(decide([5.5,26.0],[8.0,10.0])[2])
+        self.assertFalse(decide([38.2,38.6],[38.0,38.4])[2])
+        for m, f in (([10.0],[9.0]),([10.0,20.0],[float("nan"),8.0])):
+            with self.assertRaises(ValueError):
+                decide(m,f)
+        abba=read_fn("benchmark","run_abba")
+        for literal in (
+            '("materialized", "fused_vb", "fused_vb", "materialized")',
+            'flow.clear_session_cache()',
+            'gate.get("status") != "PASS_FIRST_REAL_CALL"',
+            'gate.get("all_groups_bit_exact") is not True',
+            'kv_staging="native_direct", dispatch="eager"',
+            'torch.equal(second, eager_b)',
+            'baseline_outputs[key] = value.clone()',
+            'if not torch.equal(last, second):',
+            'for _ in range(5):',
+            'start = torch.cuda.Event(enable_timing=True)',
+            'stop.synchronize()',
+            'gpu_event_median_ms',
+            'consistent_faster_across_capture_blocks',
+            '"candidate_speed_signal": signal',
+            '"candidate_promotion": "NOT_AUTHORIZED_SYNTHETIC_ONLY"',
+            '"real_h3_or_video": "UNRUN"',
+        ):
+            self.assertIn(literal,abba)
+        funcs=[x for x in tree.body if isinstance(x,ast.FunctionDef)
+               and x.name=="run_abba"]
+        self.assertEqual(len(funcs),1)
+        self.assertEqual(len(funcs[0].decorator_list),1)
+        self.assertEqual(
+            ast.unparse(funcs[0].decorator_list[0]),"torch.inference_mode()"
+        )
+        self.assertIn('ap.add_argument("--paired-abba"',source)
+        # Original benchmark's two-bank strict admission stays available.
+        original=read_fn("benchmark","run_ab")
+        self.assertIn('for variant in ("materialized","fused_vb"):',original)
+        self.assertIn('if gate.get("status")!="PASS_FIRST_REAL_CALL"',original)
+        safe=(ROOT/"tools"/"run_h3_vb_candidate_ab_safe.ps1").read_text(
+            encoding="utf-8")
+        for marker in (
+            '[switch]$PairedABBA',
+            'if ($PairedABBA -and (',
+            'flat_fused_vb_abba.json',
+            '$gpuArgs += "--paired-abba"',
+            'Paired ABBA numerical/capture gate incomplete',
+            '$result.candidate_promotion -ne "NOT_AUTHORIZED_SYNTHETIC_ONLY"',
+        ):
+            self.assertIn(marker,safe)
 
     def test_no_hidden_q_coefficient(self):
         src=read_fn("graph","graph_attention_bthd")
