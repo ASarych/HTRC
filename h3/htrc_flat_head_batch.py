@@ -131,7 +131,7 @@ def iter_head_groups(total_heads: int, heads_per_group: int) -> Iterator[tuple[i
 
 
 def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
-                               fused_vb=False):
+                               fused_vb=False, research_resource_variant=None):
     """One _tile_kernel call for arbitrary H prepared, same-shape native heads.
 
     The call uses existing BEST math with TAIL=0. Tail-in-Merge must be
@@ -202,6 +202,27 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
     near_bn=int(kern.get("tile_near_bn") or bn)
     warps=int(kern.get("tile_warps",4))
     stages=int(kern.get("tile_stages",1))
+    resource_late_near_q=0
+    if research_resource_variant is not None:
+        # Explicit, one-knob, non-production Tile32 register/SMEM research.
+        # Graph/eager callers omit this keyword and compile the original
+        # identical specialization (LATE_NEAR_Q=0, default num_stages).
+        if type(research_resource_variant) is not str or research_resource_variant not in (
+            "late_q", "stage1"
+        ):
+            raise ValueError("Only separately admitted Tile resource variants allowed")
+        if (fused_vb or states.get("_vb_mode") != "materialized"
+            or (heads,tiles,tile,dim,keys,kx) != (4,32,64,128,15264,512)
+            or (int(config["exact_leaves"]),splits,group,bn,near_bn,warps,stages)
+               != (512,4,1,64,64,4,2)
+            or states["G"].dtype != torch.int8):
+            raise ValueError(
+                "Tile resource research requires pinned 15,275-token "
+                "four-head materialized Balanced/512 Tile32 input"
+            )
+        resource_late_near_q = int(research_resource_variant == "late_q")
+        if research_resource_variant == "stage1":
+            stages=1
     if splits<1:
         raise ValueError("Split count must be positive")
     partial_shape=(heads,tiles,splits,tile)
@@ -249,7 +270,7 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
         0,1.0/math.sqrt(dim),
         T=tile,D=dim,BN=bn,BN_NEAR=near_bn,LEAF=16,
         PREC="tf32",DOT=1,GR=group,FP8=0,TAIL=0,RB=1,I8=1,
-        PASS=0,LATE_NEAR_Q=0,FAR_PREFETCH_LZ=0,
+        PASS=0,LATE_NEAR_Q=resource_late_near_q,FAR_PREFETCH_LZ=0,
         FAR_PV_ACC=0,NEAR_PV_ACC=0,
         BATCH_TILES_PER_HEAD=tiles,BATCH_KEY_ROWS=keys,
         Q_DIRECT=int(direct),Q_SH=qstrides[0],Q_ST=qstrides[1],
