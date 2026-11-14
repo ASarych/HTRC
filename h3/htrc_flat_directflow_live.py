@@ -123,8 +123,11 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups,
         free, _ = torch.cuda.mem_get_info(bank[0].device)
         if h != 8 or free < required + 1024 * _MIB:
             raise MemoryError(
-                "Tile32 Graph preflight: insufficient free memory for "
-                "persistent 8-head stage plus 1024 MiB pool/headroom"
+                "Tile32 Graph preflight refused before capture: "
+                f"heads={h}, free={free/_MIB:.1f} MiB, "
+                f"estimated_stage={required/_MIB:.1f} MiB, "
+                "unmeasured_cuda_graph_pool_and_free_floor=1024 MiB. "
+                "Private CUDA Graph pools are not predicted by this estimate"
             )
     def note(phase, geom=None):
         if memory_trace is None:
