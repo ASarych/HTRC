@@ -162,3 +162,61 @@ needs 40,759-token GPU confirmation and model-resident VRAM
 verification before any production adoption.
 
 Current CPU test execution and CUDA candidate A/B remain UNRUN.
+
+
+## 2026-11-14 — Completed RTX 5070 Ti Balanced Tile32 split_stream GPU A/B
+
+Evidence: user-uploaded \`flat_streamed_vb_ab.json\` produced by
+the single-JSON exact-HEAD research runner at
+\`349fdf294687cd6e7e9fdfac274d1eff4116c94d\`.
+The uploaded artifact reports \`status=PASS_NUMERIC\` and
+\`completed=true\`. Scope: **synthetic** two distinct BF16 Q/K/V
+banks, 4 distinct heads, 15,275 tokens, Balanced (512 exact
+near leaves), Tile32, 5 timed complete-attention repetitions;
+no H3 checkpoint, no denoise, no VAE, no video, no Sol.
+
+| Metric | materialized | split_stream |
+|---|---:|---:|
+| Warm GPU event per full attention | 5.658144 ms | 8.031245 ms |
+| Synchronized wall time per attention | 6.255900 ms | 8.383780 ms |
+| First-call Graph/eager output parity | bit-exact | bit-exact |
+| Second-bank Graph/eager output parity | bit-exact | bit-exact |
+| First-call extra reserved (not isolated) | 320 MiB | 0 MiB |
+| Capture + parity wall (cold effects included) | 18,474 ms | 33,433 ms |
+
+Full Graph materialized-vs-stream outputs matched bit-for-bit
+for **both** banks. Candidate is **41.94% slower on warmed GPU
+events** and **34.01% slower on synced wall time** relative
+to the materialized control. The report's
+\`wall_ratio_materialized_over_split_stream=0.746190859\`
+confirms no wall-time speed benefit.
+
+Do **not** interpret 320 MiB vs 0 MiB first-call
+\`extra_reserved_mib\` as 320 MiB memory savings. The modes
+run sequentially in one PyTorch process with allocator caching,
+prior Q/K/V/output retention and private Graph-pool reuse;
+both numbers are per-call allocator reservation deltas, not
+isolated whole-model peak memory. Similarly first-call
+capture + eager oracle can include cold compilation and
+different cache states; those durations are not a warmed
+throughput comparison.
+
+**Decision for speed: NO_GO.** Keep the materialized
+Tile32/BT16 backend and stock fallback. Do not run longer
+video or 40k/82k throughput benchmarks for this implementation
+on the basis of this short result. Retain split_stream
+as a research option: actual independent-process/model-resident
+VRAM advantages remain **UNPROVEN**, not rejected. No
+production kernel, quality policy, ComfyNodes integration,
+or source arithmetic changed by this evidence commit.
+
+**Next research gate, only if desired:** already-implemented
+\`fused_vb\` in-Tile candidate, using the same short four-head
+Balanced/Tile32 two-bank fail-closed runner with
+\`-Candidate fused_vb\`. It may be substantially slower due
+to repeated native K/V reads per centre/leaf; numerical
+parity and real GPU timing remain UNRUN until local
+measurement. If that also loses, stop experimenting with
+the existing direct recomputation geometries and design a
+cooperative multi-centre reuse strategy before another kernel
+implementation.
