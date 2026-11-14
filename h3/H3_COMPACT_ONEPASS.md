@@ -392,3 +392,91 @@ and KV staging, not blind further QKV quantization.
 Any proposed tiles/window/group experiment needs
 an independent model-free memory gate before an
 expensive six-step video.
+
+## 2026-11-14 — research 32-tile full-Graph replay slice
+
+The validated output-producing H3 path is still
+`balanced / tile=64 / tiles=16 / 8-head group / per-block
+CUDA sync`. The preceding batched-sync experiment
+was **41.6% slower** and remains opt-in only.
+This slice changes **only** the query-window batch
+size for a separately selected **single real denoise
+step**, without changing HTRC Flat math, exact leaf
+count, real NVFP4 model QKV, RoPE, INT8 packing,
+out_proj, or production backend.
+
+The actual 40,759-token reference has 56 heads in
+seven groups of eight. Fixed 64-query-row tiles:
+
+| Research geometry | tiles16 control | tiles32 candidate |
+|---|---:|---:|
+| Windows per 8-head group | 40 | 20 |
+| CUDAGraph replays per attention | 280 | 140 |
+| Replays for 294 full-video attentions (illustrative) | 82,320 | 41,160 |
+| Estimated 8-head persistent staged memory | 464.79 MiB | 756.65 MiB |
+| Estimated stage increase | — | +291.86 MiB |
+
+These are geometry and **analytical stage estimates**,
+not measured kernel throughput or full VRAM peaks.
+The private CUDA Graph capture pool is unmeasured,
+so more expensive/worse GPU dispatches or VRAM pressure
+remain possible. Fewer Graph replays do not imply
+halved compute or doubled model performance.
+
+The opt-in
+`APL_HTRC_DIRECTFLOW_TILES32_ADMISSION=1`
+performs a **pre-capture** check for exactly one
+8-head Graph session using the existing
+`graph_stage_head_bytes` model and actual
+`torch.cuda.mem_get_info`. It requires
+`free >= estimated_8_head_persistent_stage +
+1024 MiB` before creating any graph-owned K/V
+buffers and prints the actual free/stage estimates
+on refusal. The downstream post-capture actual
+allocator gate remains mandatory. The separate
+ComfyNodes launcher sets
+`APL_HTRC_DIRECTFLOW_MAX_EXTRA_MIB=1152` and
+`APL_HTRC_DIRECTFLOW_MIN_FREE_MIB=768`
+for the Tile32 research arm (Tile16 retains
+768/256 MiB). The 1024-MiB early margin is
+only an engineering guard, **not** a proof
+of adequate physical VRAM on Windows.
+
+Preflight layers, with **NO H3 model load first**:
+
+1. Import-free
+   `tools/check_h3_graph_tiles32_cpu.py` asserts
+   true 40-vs-20 windows, 280-vs-140 replay count,
+   persistent memory delta, CUDA-capture admission
+   and fail-closed logic.
+2. Previous real small CUDA Graph smoke for the
+   currently selected branch remains unchanged.
+3. New `tools/smoke_h3_graph_tiles_ab_gpu.py`
+   runs genuine CUDA Flat graphs on identical
+   random BF16 Q/K/V with 8319 tokens, 8 heads,
+   **including the short padded tail**.
+   Each geometry captures and replays twice.
+   Same-mode replay and 16-vs-32 output must be
+   **bit-exact**; otherwise it aborts the test
+   before loading any HyperFlow weights.
+   No production quality claim from synthetic QKV.
+4. The ComfyNodes script
+   `run_h3_native_qkv_canary_safe.ps1`
+   requires explicit `-LiveGraph -Tile32`,
+   refuses `-FullVideo` and `-BatchTiming`
+   together with Tile32, and performs just
+   one complete **49-block** H3 denoise forward
+   after all preflights pass. It uses unique
+   recovery paths and restores the original
+   local ComfyNodes directory.
+
+The live JSON reports the selected tile geometry
+and calculated replay count per attention; per-block
+real GPU times still include first Graph capture
+where relevant. Compare warmed blocks 1–48 with
+the old synchronized 16-tile control before
+deciding whether a full six-step A/B is warranted.
+
+**Execution status on RTX 5070 Ti:** CPU/GPU and
+model Tile32 tests **UNRUN**. No optimization,
+speedup, video parity or memory-fit claim.
