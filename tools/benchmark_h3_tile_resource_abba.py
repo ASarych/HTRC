@@ -19,7 +19,7 @@ import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = (15275, 4, "balanced", 32, 512)
-CANDIDATES = ("late_q", "stage1")
+CANDIDATES = ("late_q", "stage1", "rb2")
 ENV_KEYS = (
     "APL_HTRC_TILE32_STATS_BT", "APL_HTRC_DIRECTFLOW_GROUP",
     "APL_HTRC_DIRECTFLOW_WARMUPS", "APL_HTRC_DIRECTFLOW_VB_MODE",
@@ -33,7 +33,7 @@ ENV_KEYS = (
 def validate_request(candidate: str, tokens: int, heads: int,
                      rounds: int, warmups: int) -> None:
     if candidate not in CANDIDATES:
-        raise ValueError("Only late_q and stage1 are admitted independently")
+        raise ValueError("Only late_q, stage1, and rb2 are admitted independently")
     if (tokens, heads) != PIN[:2]:
         raise ValueError("Pinned 15275 tokens and 4 distinct heads only")
     if not (7 <= rounds <= 12 and 5 <= warmups <= 12):
@@ -251,6 +251,20 @@ def run_gpu(args) -> dict:
                                         shared_sm, thread_sm)
                 for name in ("control", args.candidate)
             }
+            # RB2 deliberately doubles the CTA grid, not the memory footprint
+            # of PM/PL/PACC: each CTA owns disjoint 32-query-row slices.
+            splits = int(cfg["splits"])
+            if splits != 4:
+                raise AssertionError("Pinned research requires four leaf splits")
+            rb = 2 if args.candidate == "rb2" else 1
+            report["tile_launch_geometry"] = {
+                "control_grid": [128, splits, 1],
+                "candidate_grid": [128, splits, rb],
+                "control_ctas": 128 * splits,
+                "candidate_ctas": 128 * splits * rb,
+                "candidate_rows_per_cta": 64 // rb,
+                "accounting": "One 2048-query-row window, four heads; CTA count is not measured occupancy",
+            }
             report["sm120_limits"] = {"registers_per_sm": reg_sm,
                                       "shared_bytes_per_sm": shared_sm,
                                       "threads_per_sm": thread_sm}
@@ -274,7 +288,7 @@ def run_gpu(args) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate", choices=CANDIDATES, default="late_q")
+    parser.add_argument("--candidate", choices=CANDIDATES, default="rb2")
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--warmups", type=int, default=5)
     parser.add_argument("--expect-head", required=True)

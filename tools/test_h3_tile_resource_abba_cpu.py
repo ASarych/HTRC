@@ -16,7 +16,7 @@ class ResearchTileABBA(unittest.TestCase):
     def test_exact_candidate_whitelist(self):
         for item in mod.CANDIDATES:
             mod.validate_request(item, 15275, 4, 7, 5)
-        for bad in ("none", "rb2", "late_q_stage1", "fused_vb", ""):
+        for bad in ("none", "rb4", "late_q_stage1", "fused_vb", ""):
             with self.assertRaises(ValueError):
                 mod.validate_request(bad, 15275, 4, 7, 5)
 
@@ -94,6 +94,37 @@ class ResearchTileABBA(unittest.TestCase):
         self.assertIn('"production_promotion": "PROHIBITED_RESEARCH_ONLY"',s)
         self.assertIn('torch.set_grad_enabled(False)',s)
 
+    def test_rb2_independent_row_ownership(self):
+        # The existing _tile_kernel uses RT=T//RB and program_id(2)*RT
+        # as each CTA's row offset. Each split's 64 output rows must
+        # have precisely one writer for control and RB2.
+        for rb in (1, 2):
+            owners={}
+            for tile in range(128):
+                for sp in range(4):
+                    for plane in range(rb):
+                        rt=64//rb
+                        for row in range(plane*rt,(plane+1)*rt):
+                            name=(tile,sp,row)
+                            self.assertNotIn(name,owners)
+                            owners[name]=plane
+            self.assertEqual(len(owners),128*4*64)
+            for tile in (0,31,32,127):
+                for sp in range(4):
+                    self.assertEqual(set(r for (t,p,r) in owners if t==tile and p==sp),set(range(64)))
+
+    def test_rb2_geometry_and_both_resource_gate(self):
+        self.assertIn("rb2",mod.CANDIDATES)
+        mod.validate_request("rb2",15275,4,7,5)
+        src=SRC.read_text(encoding="utf-8")
+        self.assertIn('"candidate_grid": [128, splits, rb]',src)
+        self.assertIn('"candidate_rows_per_cta": 64 // rb',src)
+        self.assertIn('rb = 2 if args.candidate == "rb2" else 1',src)
+        # Prevent falsely claiming three blocks with shared still >34KiB
+        over=mod.resource_estimate({"registers_per_thread":170,
+                                     "shared_bytes_per_cta":40960},65536,102400,1536)
+        self.assertFalse(over["meets_both_3cta_necessary_bounds"])
+
     def test_optional_source_gate_exact_research_variant_only(self):
         source=Path(__file__).parents[1] / 'h3' / 'htrc_flat_head_batch.py'
         if not source.exists():
@@ -103,7 +134,11 @@ class ResearchTileABBA(unittest.TestCase):
         self.assertIn('research_resource_variant=None',s)
         self.assertIn('LATE_NEAR_Q=resource_late_near_q',s)
         self.assertIn('num_stages=stages,**vb_kernel_kwargs',s)
-        self.assertIn('"late_q", "stage1"',s)
+        self.assertIn('"late_q", "stage1", "rb2"',s)
+        self.assertIn('resource_rb=1',s)
+        self.assertIn('resource_rb=2',s)
+        self.assertIn('[(heads*tiles,splits,resource_rb)]',s)
+        self.assertIn('TAIL=0,RB=resource_rb,I8=1',s)
         self.assertIn('if research_resource_variant is not None:',s)
 
 

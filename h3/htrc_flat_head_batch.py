@@ -203,12 +203,13 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
     warps=int(kern.get("tile_warps",4))
     stages=int(kern.get("tile_stages",1))
     resource_late_near_q=0
+    resource_rb=1
     if research_resource_variant is not None:
         # Explicit, one-knob, non-production Tile32 register/SMEM research.
         # Graph/eager callers omit this keyword and compile the original
         # identical specialization (LATE_NEAR_Q=0, default num_stages).
         if type(research_resource_variant) is not str or research_resource_variant not in (
-            "late_q", "stage1"
+            "late_q", "stage1", "rb2"
         ):
             raise ValueError("Only separately admitted Tile resource variants allowed")
         if (fused_vb or states.get("_vb_mode") != "materialized"
@@ -223,6 +224,10 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
         resource_late_near_q = int(research_resource_variant == "late_q")
         if research_resource_variant == "stage1":
             stages=1
+        if research_resource_variant == "rb2":
+            # Two independent 32-row CTAs write disjoint rows of the SAME
+            # PM/PL/PACC tensors. Keep far/near online softmax and pipeline.
+            resource_rb=2
     if splits<1:
         raise ValueError("Split count must be positive")
     partial_shape=(heads,tiles,splits,tile)
@@ -255,7 +260,7 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
             "KB_SS":int(kbf.stride(1)),
             "KB_SD":int(kbf.stride(2)),
         }
-    compiled=triton_module._tile_kernel[(heads*tiles,splits,1)](
+    compiled=triton_module._tile_kernel[(heads*tiles,splits,resource_rb)](
         qptr,flat("MU"),flat("G"),lz,flat("VB"),
         flat("EXCL"),flat("IDX"),
         states["K"].view(heads*keys,dim),
@@ -269,7 +274,7 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
         triton_module._split(kx*16,splits,bn),
         0,1.0/math.sqrt(dim),
         T=tile,D=dim,BN=bn,BN_NEAR=near_bn,LEAF=16,
-        PREC="tf32",DOT=1,GR=group,FP8=0,TAIL=0,RB=1,I8=1,
+        PREC="tf32",DOT=1,GR=group,FP8=0,TAIL=0,RB=resource_rb,I8=1,
         PASS=0,LATE_NEAR_Q=resource_late_near_q,FAR_PREFETCH_LZ=0,
         FAR_PV_ACC=0,NEAR_PV_ACC=0,
         BATCH_TILES_PER_HEAD=tiles,BATCH_KEY_ROWS=keys,
