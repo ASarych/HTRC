@@ -237,3 +237,80 @@ and `launch_prepared_merge_batch` calls within the
 benchmark `emit` body. This is source-level verification,
 not a CUDA result. New CPU script and CUDA ABBA remain
 **UNRUN**; the existing BT16 default stands.
+
+## 2026-11-14 — completed independent-capture ABBA on RTX 5070 Ti: NO_GO
+
+Evidence: user-provided `flat_tile32_stats_bt_abba.json` from the
+guarded exact-HEAD local runner at
+`bb55714e9fa66c6bffa9ac448aa3219a33c027d0`.
+`status=PASS_NUMERIC`, `completed=true`,
+`paired_abba=true`, 40,759 tokens, 8 distinct BF16 heads,
+balanced/512 exact leaves, Tile32, four independent captures in
+order 16/32/32/16, five additional post-capture warmups and
+seven timed GPU events per capture. The benchmark loaded no
+checkpoint and ran no video, denoise or VAE.
+
+| Capture order | Stats BT | Seven-sample warmed GPU-event median |
+|---|---:|---:|
+| 1 | 16 | 38.239487 ms |
+| 2 | 32 | 38.079582 ms |
+| 3 | 32 | 38.417057 ms |
+| 4 | 16 | 38.627167 ms |
+
+Median of block medians: **BT16 38.433327 ms** and
+**BT32 38.248320 ms**; BT16/BT32=**1.004836999x**.
+The apparent BT32 saving is **0.185007 ms** / **0.4814%**
+by the ratio metric. It is below the pre-registered 5%
+exploratory requirement. Moreover the slower BT32 block
+(38.4171 ms) is NOT below the faster BT16 block
+(38.2395 ms). The built-in speed decision correctly reports
+`candidate_faster_on_gpu=false` and
+`bt32_strictly_faster_across_all_captures=false`.
+
+Both Q/K/V banks are bitwise identical across BT variants,
+`max_abs=0` and `relative_l2_percent=0`. The replay
+and repeated-capture consistency checks are required by
+the harness. Eager single-window stage profiling was
+intentionally SKIPPED in ABBA; `null` stage and
+eager-vs-Graph window parity fields are **not** failures
+and MUST NOT be treated as independently measured PASSes.
+The full output numerical parity does PASS.
+
+The earlier three-sample unpaired run had a BT32 median
+53.61 ms and extreme initial BT32 samples 58.40/53.61 ms.
+That large slowdown did NOT persist in isolated warm ABBA.
+Because the follow-up changed both replay warmups and eager
+diagnostic isolation, the root cause is **not established**.
+BT16's fourth block had two high samples (42.49/44.19 ms),
+so do not attribute sub-percent median shifts to kernel speed
+or assume a measured temperature/clock mechanism.
+
+ABBA allocator peaks cannot compare standalone BT16/BT32
+VRAM: all arms share one process, output copies persist, and
+CUDA Graph allocator reuse/caches cross captures. For example
+absolute peak allocated rose from 1603.2 MiB at block 1
+to 1843.2 MiB at block 4, with no independent total-VRAM
+interpretation. No model-resident memory data were measured.
+
+**FINAL BT32 STATS DECISION: NO_GO / CLOSED.**
+Retain Tile32 with its original stats kernel `BT=16, BL=4`.
+Do not promote stats BT32 to the default, launch a real H3
+49-block/six-step test for this variant, or increase its
+benchmark rounds without a new distinct hypothesis.
+
+Next useful speed investigation should focus on expensive
+quadratic state materialization/Tile work and avoid redoing
+existing variants. In this same repository
+`split_stream` and `fused_vb` already have separately
+guarded kernels and A/B tools; their reports still describe
+GPU numeric/performance gates as UNRUN. Any future work
+must first recover those exact implementation/results and
+then use one opt-in full-output numerical + full-attention
+GPU/VRAM A/B before considering a model-resident H3 test.
+Do not imply those paths are proven faster.
+
+This closure is documentation only: no runtime/kernel
+change; model-resident H3 and new VB GPU tests remain
+UNRUN. Earlier paragraphs recording UNRUN state refer
+to the status at the time of those commits, superseded
+for the ABBA test by this evidence.
