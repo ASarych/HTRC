@@ -166,3 +166,98 @@ but **UNRUN**; evaluate it independently via the
 same exact-HEAD safe runner with -Candidate stage1.
 Do not blend late_q+stage1, alter exact near leaves,
 or infer full-model speed from this single kernel.
+
+
+## 2026-11-14 — completed local stage1 A/B/B/A: NO_GO
+
+User-uploaded flat_tile_resource_abba(1).json from actual
+NVIDIA GeForce RTX 5070 Ti. Source EXACT HEAD:
+b9a71eb7b9f749278156baec7c9cb546f5011196.
+SHA-256 of the 4,224-byte JSON:
+8ac39ffe9414acae656b65f3dec51377b7a9b5aeed8ad6275abe677ef23e2a8c.
+This repo stores only this summary, not raw user data.
+
+Strict acceptance, from the uploaded JSON:
+- schema=htrc-tile32-research-resource-abba-v1.
+- status=PASS_NUMERIC_TILE_ONLY, completed=true;
+  candidate=stage1, source_head matches, 15,275
+  tokens, 4 independent heads, 32-tile balanced/512,
+  one 2,048-query-row Tile window.
+- PM, PL, PACC are **bit-exact** for BOTH independent
+  BF16 QKV banks, compared with unchanged control.
+  First full-call eager/Graph parity and bank-B eager
+  parity both PASS. Distinct banks confirmed.
+- Four separate Tile-only CUDA Graph captures:
+  control, stage1, stage1, control. Each collected
+  seven warmed CUDA-event timings; NOT Nsight timing.
+- No real H3 checkpoint, complete attention timing,
+  video, model-resident VRAM or production promotion.
+
+| Measurement | Control (2 stages) | stage1 (1 stage) |
+|---|---:|---:|
+| Compiled registers per thread | 255 | 219 |
+| Shared memory per CTA | 49,664 B | 40,960 B |
+| Compiler-reported spills | 0 | 0 |
+| Optimistic CTA residency per SM | 2 | 2 |
+| Median-of-two-block medians | 0.388048008 ms | 0.467199996 ms |
+
+Independent A/B/B/A block medians in ms:
+- Block 1 control: 0.388864011
+- Block 2 stage1: 0.467231989
+- Block 3 stage1: 0.467168003
+- Block 4 control: 0.387232006
+
+Stage1 decreased registers by 36/thread (14.12%)
+and allocated shared memory by 8,704 B/CTA (17.53%)
+relative to this run's compiled control. Both register
+and shared-memory limits remained **2 resident CTAs/SM**.
+The lowered resources did not gain residency. Compiler
+spills remained zero in both specializations.
+
+Timing: control/candidate ratio = 0.830582216; stage1
+is 20.40% SLOWER than control, and both candidate
+capture medians are slower than both control captures.
+The >=5%-faster and both-captures consistency gate
+fails. **Final stage1: NO_GO_TILE_ONLY**.
+This is a negative *speed* result with successful
+numerical parity, not a numerical failure.
+
+Caution: the lower number of Triton stages may diminish
+load/compute overlap, but this is a hypothesis, not
+validated by stall reasons, tensor-core counters or
+unprofiled full-operator traces. Do not describe stage1
+as proof that pipeline stages caused all lost performance.
+
+### Resource-pressure experiment closeout
+
+Both isolated one-knob variants have now been rejected:
+- late_q: registers 255, shared memory 41,472 B;
+  Tile +1.05% time, 2 CTA/SM. NO_GO.
+- stage1: registers 219, shared memory 40,960 B;
+  Tile +20.40% time, 2 CTA/SM. NO_GO.
+
+The two experiments used separate control GPU samples;
+compare ratios *within* each paired A/B/B/A, not absolute
+control timings across runs. Do not combine late_q+stage1
+without a fresh structural reason: neither isolated change
+proved useful.
+
+The existing materialized Tile32/STATS_BT16,
+LATE_NEAR_Q=0, two Triton stages, RB=1 remains the
+unchanged reference. No default kernel, dispatch or
+ComfyUI code change. No additional GPU test is necessary
+to close these two simple compiler-knob hypotheses.
+
+A next engineering question is whether **reorganizing
+Tile's far/near computation** can shorten the accumulator
+and operand live ranges *without* discarding the working
+pipeline and without duplicating near work. Previous
+split/fused-VB experiments were already negative; do not
+blindly repeat them. Before implementing a new kernel,
+examine existing Tile compiled resources and current
+specializations, then form a single falsifiable, numerically
+exact opt-in experiment with independent-capture control.
+The hardware gate for 3 CTAs/SM would still require both
+<=170 registers/thread and <=34,133 B shared/CTA
+before allocation granularity. That threshold is a
+necessary constraint, NOT a speedup forecast.
