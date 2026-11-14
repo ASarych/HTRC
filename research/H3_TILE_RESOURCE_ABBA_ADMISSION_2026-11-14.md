@@ -261,3 +261,44 @@ The hardware gate for 3 CTAs/SM would still require both
 <=170 registers/thread and <=34,133 B shared/CTA
 before allocation granularity. That threshold is a
 necessary constraint, NOT a speedup forecast.
+
+
+## 2026-11-14 — repeated stage1 result confirms NO_GO
+
+Independent *execution* with the same deterministic QKV seed:
+user-uploaded flat_tile_resource_abba(2).json, source HEAD
+b9a71eb7b9f749278156baec7c9cb546f5011196,
+4,230 bytes, SHA-256:
+6356fca8a1b171de7d1a83bcf680cc0c1597064ccfa42dac79531c4e357718a2.
+Do not count as new independent QKV contents; both programs
+used the same fixed random seed and source revision.
+
+Verified gates: PASS_NUMERIC_TILE_ONLY, completed=true,
+bank0/bank1 PM/PL/PACC bit-exact, full first-call and bank-B
+eager/Graph parity true, 4 independent captures, 7 samples
+each. No Nsight, H3 checkpoint, full-model or video claim.
+
+| A/B/B/A comparison | First stage1 test | Repeat stage1 test |
+|---|---:|---:|
+| Control medians average, ms | 0.388048008 | 0.390048012 |
+| Stage1 medians average, ms | 0.467199996 | 0.469071999 |
+| Stage1 slowdown vs paired control | +20.3975% | +20.2601% |
+| Registers/thread: control -> stage1 | 255 -> 219 | 255 -> 219 |
+| Shared bytes/CTA: control -> stage1 | 49,664 -> 40,960 | 49,664 -> 40,960 |
+| Compiler spills: control/stage1 | 0 / 0 | 0 / 0 |
+| Resource upper bound: CTA/SM | 2 / 2 | 2 / 2 |
+
+Repeat individual medians in capture order:
+control 0.391104013 ms; stage1 0.469087988 ms;
+stage1 0.469056010 ms; control 0.388992012 ms.
+Both candidate captures slower than both controls.
+Previous timing run also had this ordering.
+
+The repeat supports the original stage1 NO_GO conclusion:
+no benefit from lowering stages at this shape despite
+lower compiler resources. Do NOT re-run stage1 or combine
+it blindly with late_q; the two negative compiler-knob
+hypotheses are CLOSED. Any future candidate needs a distinct
+structural mechanism and full correctness/resource gates.
+No new code or GPU experiment was run in this documentation
+slice. Baseline remains untouched.
