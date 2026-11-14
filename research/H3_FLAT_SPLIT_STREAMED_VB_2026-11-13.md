@@ -123,3 +123,42 @@ materialized Graph as the active best.
   consumer eliminating total global VB traffic: NOT IMPLEMENTED.
 - Sol crossover (40k/82k/full HD): still UNKNOWN.
 - Default eager and old materialized Graph: unchanged.
+
+## 2026-11-14 — guarded Balanced Tile32 VB candidate GPU triage
+
+The old split_stream source contract predated the merged fused_vb
+mode and had stale literal assertions on the Graph dispatcher,
+SCORE_ONLY and session-key shape. These assertions now match the
+existing three-mode implementation. No HTRC runtime math changed.
+
+New tools/run_h3_vb_candidate_ab_safe.ps1 reuses the existing
+full-output GPU A/B tools; a temporary exact-HEAD checkout
+runs the selected CPU source contract before any GPU allocation.
+It rejects active ComfyUI port 8188 and Blender. Only one
+candidate is measured per invocation, and only one persistent
+JSON is saved. Installed ComfyNodes and models are untouched.
+
+The FIRST candidate is split_stream. The separate fused_vb
+candidate is available later but is not implicitly tested.
+Initial geometry: 15,275 tokens, 4 distinct BF16 heads,
+Balanced with 512 exact leaves, Tiles32, five warmed full
+attention rounds, 1024 MiB budget and 256 MiB reserve.
+Both independent banks must be bit-exact to the old eager Flat
+control and bit-exact between Graph variants.
+
+Runner pins STATS_BT=16, legacy grouping, 768 MiB actual
+extra-reserved Graph cap, 256 MiB minimum free memory.
+Only the unrelated eight-head Tile32 statistics preflight is
+disabled, since it requires eight heads while this gate uses four.
+No change to default backend and no general capacity cap raise.
+
+The single report is:
+D:\ComfyOutput\H3\math_probe\flat_streamed_vb_ab.json
+
+The existing first-call eager parity diagnostic is retained,
+so its memory counters are NOT isolated Graph-pool or true
+whole-model VRAM comparisons. A positive short-context result
+needs 40,759-token GPU confirmation and model-resident VRAM
+verification before any production adoption.
+
+Current CPU test execution and CUDA candidate A/B remain UNRUN.
