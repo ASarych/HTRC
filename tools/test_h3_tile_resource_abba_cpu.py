@@ -16,7 +16,7 @@ class ResearchTileABBA(unittest.TestCase):
     def test_exact_candidate_whitelist(self):
         for item in mod.CANDIDATES:
             mod.validate_request(item, 15275, 4, 7, 5)
-        for bad in ("none", "rb4", "late_q_stage1", "fused_vb", ""):
+        for bad in ("none", "rb4", "late_q_stage1", "rb2_stage1", "fused_vb", ""):
             with self.assertRaises(ValueError):
                 mod.validate_request(bad, 15275, 4, 7, 5)
 
@@ -119,11 +119,64 @@ class ResearchTileABBA(unittest.TestCase):
         src=SRC.read_text(encoding="utf-8")
         self.assertIn('"candidate_grid": [128, splits, rb]',src)
         self.assertIn('"candidate_rows_per_cta": 64 // rb',src)
-        self.assertIn('rb = 2 if args.candidate == "rb2" else 1',src)
+        self.assertIn('rb = 2 if args.candidate in ("rb2", "rb2_late_q") else 1',src)
         # Prevent falsely claiming three blocks with shared still >34KiB
         over=mod.resource_estimate({"registers_per_thread":170,
                                      "shared_bytes_per_cta":40960},65536,102400,1536)
         self.assertFalse(over["meets_both_3cta_necessary_bounds"])
+
+    def test_combined_gate_accepts_only_positive_three_cta_resources(self):
+        prepared = mod.resource_estimate(
+            {"registers_per_thread":140,"shared_bytes_per_cta":32768},
+            65536, 102400, 1536)
+        result = mod.combined_resource_gate(
+            {"registers_per_thread":140,"shared_bytes_per_cta":32768,
+             "compiler_spills":0}, prepared,
+            registers_per_sm=65536, shared_bytes_per_sm=102400)
+        self.assertTrue(result["admitted_for_tile_timing"])
+        self.assertEqual(result["status"],"ADMIT_TILE_TIMING_ONLY")
+        self.assertEqual(result["required_shared_bytes_per_cta_at_most"],34133)
+        self.assertEqual(result["required_registers_per_thread_at_most"],170)
+
+    def test_combined_gate_rejects_previous_rb2_resource_result(self):
+        previous = mod.resource_estimate(
+            {"registers_per_thread":140,"shared_bytes_per_cta":37376},
+            65536, 102400, 1536)
+        result = mod.combined_resource_gate(
+            {"registers_per_thread":140,"shared_bytes_per_cta":37376,
+             "compiler_spills":0}, previous,
+            registers_per_sm=65536, shared_bytes_per_sm=102400)
+        self.assertEqual(result["status"],"NO_GO_RESOURCE_GATE")
+        self.assertEqual(result["shared_bytes_excess"],3243)
+        self.assertFalse(result["admitted_for_tile_timing"])
+
+    def test_combined_gate_rejects_registers_and_spills(self):
+        for regs,shared,spills in (
+            (171,32768,0), (140,34134,0),
+            (140,32768,1), (140,32768,None),
+        ):
+            with self.subTest(regs=regs,shared=shared,spills=spills):
+                estimates=mod.resource_estimate(
+                    {"registers_per_thread":regs,"shared_bytes_per_cta":shared},
+                    65536,102400,1536)
+                result=mod.combined_resource_gate(
+                    {"registers_per_thread":regs,"shared_bytes_per_cta":shared,
+                     "compiler_spills":spills}, estimates,
+                    registers_per_sm=65536,shared_bytes_per_sm=102400)
+                self.assertEqual(result["status"],"NO_GO_RESOURCE_GATE")
+                self.assertFalse(result["admitted_for_tile_timing"])
+
+    def test_no_tile_timing_when_combined_resource_gate_fails(self):
+        src=SRC.read_text(encoding="utf-8")
+        self.assertLess(src.index('if args.candidate == "rb2_late_q":'),
+                        src.index('for block_idx, arm in enumerate('))
+        self.assertLess(src.index('if not gate["admitted_for_tile_timing"]:'),
+                        src.index('for block_idx, arm in enumerate('))
+        self.assertIn('"admission": "UNRUN_RESOURCE_GATE"',src)
+        self.assertIn('"samples_collected": 0',src)
+        self.assertIn('return report\n            states = item_b["states"]',src)
+        self.assertIn('return 0 if report["status"] in ("PASS_NUMERIC_TILE_ONLY", "NO_GO_RESOURCE_GATE") else 2',src)
+        self.assertIn('rb = 2 if args.candidate in ("rb2", "rb2_late_q") else 1',src)
 
     def test_optional_source_gate_exact_research_variant_only(self):
         source=Path(__file__).parents[1] / 'h3' / 'htrc_flat_head_batch.py'
@@ -134,7 +187,9 @@ class ResearchTileABBA(unittest.TestCase):
         self.assertIn('research_resource_variant=None',s)
         self.assertIn('LATE_NEAR_Q=resource_late_near_q',s)
         self.assertIn('num_stages=stages,**vb_kernel_kwargs',s)
-        self.assertIn('"late_q", "stage1", "rb2"',s)
+        self.assertIn('"late_q", "stage1", "rb2", "rb2_late_q"',s)
+        self.assertIn('research_resource_variant in ("late_q", "rb2_late_q")',s)
+        self.assertIn('research_resource_variant in ("rb2", "rb2_late_q")',s)
         self.assertIn('resource_rb=1',s)
         self.assertIn('resource_rb=2',s)
         self.assertIn('[(heads*tiles,splits,resource_rb)]',s)

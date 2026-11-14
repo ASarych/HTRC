@@ -19,7 +19,7 @@ import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = (15275, 4, "balanced", 32, 512)
-CANDIDATES = ("late_q", "stage1", "rb2")
+CANDIDATES = ("late_q", "stage1", "rb2", "rb2_late_q")
 ENV_KEYS = (
     "APL_HTRC_TILE32_STATS_BT", "APL_HTRC_DIRECTFLOW_GROUP",
     "APL_HTRC_DIRECTFLOW_WARMUPS", "APL_HTRC_DIRECTFLOW_VB_MODE",
@@ -33,7 +33,7 @@ ENV_KEYS = (
 def validate_request(candidate: str, tokens: int, heads: int,
                      rounds: int, warmups: int) -> None:
     if candidate not in CANDIDATES:
-        raise ValueError("Only late_q, stage1, and rb2 are admitted independently")
+        raise ValueError("Only late_q, stage1, rb2, and rb2_late_q are admitted")
     if (tokens, heads) != PIN[:2]:
         raise ValueError("Pinned 15275 tokens and 4 distinct heads only")
     if not (7 <= rounds <= 12 and 5 <= warmups <= 12):
@@ -89,6 +89,42 @@ def abba_decision(control: list[float], candidate: list[float]) -> dict:
             "candidate_faster_in_both_independent_captures": consistent,
             "at_least_5pct_faster_and_consistent": signal,
             "admission": "PROMISING_TILE_ONLY" if signal else "NO_GO_TILE_ONLY"}
+
+
+def combined_resource_gate(compiled: dict, estimate: dict, *,
+                           registers_per_sm: int, shared_bytes_per_sm: int) -> dict:
+    """Necessary only: compiler resources permit >=3 CTAs; not a measured occupancy/speedup.
+
+    No timing is admitted when either resource ceiling fails or compiler spill
+    metadata is missing/nonzero. The installed GPU's actual SM limits are used.
+    """
+    regs = compiled["registers_per_thread"]
+    shared = compiled["shared_bytes_per_cta"]
+    spills = compiled.get("compiler_spills")
+    if min(regs, shared, registers_per_sm, shared_bytes_per_sm) <= 0:
+        raise ValueError("Invalid compiler or hardware resources")
+    max_regs = registers_per_sm // (3 * 128)
+    max_shared = shared_bytes_per_sm // 3
+    both = (regs <= max_regs and shared <= max_shared
+            and estimate["meets_both_3cta_necessary_bounds"]
+            and estimate["optimistic_resident_ctas_per_sm"] >= 3)
+    no_spills = (spills == 0)
+    admitted = bool(both and no_spills)
+    return {
+        "status": "ADMIT_TILE_TIMING_ONLY" if admitted else "NO_GO_RESOURCE_GATE",
+        "admitted_for_tile_timing": admitted,
+        "necessary_3cta_resource_bounds_met": bool(both),
+        "compiler_spills_zero": no_spills,
+        "registers_per_thread": regs,
+        "shared_bytes_per_cta": shared,
+        "compiler_spills": spills,
+        "required_registers_per_thread_at_most": max_regs,
+        "required_shared_bytes_per_cta_at_most": max_shared,
+        "registers_excess": max(0, regs - max_regs),
+        "shared_bytes_excess": max(0, shared - max_shared),
+        "optimistic_ctas_per_sm": estimate["optimistic_resident_ctas_per_sm"],
+        "note": "Necessary allocation bounds only; not measured achieved residency, occupancy or speedup",
+    }
 
 
 def _alloc_partials(torch, item) -> dict:
@@ -209,6 +245,49 @@ def run_gpu(args) -> dict:
                 raise AssertionError("Existing bank B full eager/Graph parity failed")
             del eager_b, outputs
             torch.cuda.synchronize(device)
+            # Compile/bit-exact resource admission happens BEFORE ANY
+            # independently captured Tile timing of the combined candidate.
+            # All two-bank PM/PL/PACC and full eager/Graph parity gates have
+            # completed before this point, including the separate bank-B eager check.
+            if args.candidate == "rb2_late_q":
+                report["resource_estimates"] = {
+                    name: resource_estimate(report["compiled"][name], reg_sm,
+                                            shared_sm, thread_sm)
+                    for name in ("control", args.candidate)
+                }
+                gate = combined_resource_gate(
+                    report["compiled"][args.candidate],
+                    report["resource_estimates"][args.candidate],
+                    registers_per_sm=reg_sm, shared_bytes_per_sm=shared_sm)
+                report["resource_gate"] = gate
+                report["sm120_limits"] = {
+                    "registers_per_sm": reg_sm,
+                    "shared_bytes_per_sm": shared_sm,
+                    "threads_per_sm": thread_sm,
+                }
+                report["tile_launch_geometry"] = {
+                    "control_grid": [128, 4, 1],
+                    "candidate_grid": [128, 4, 2],
+                    "control_ctas": 512,
+                    "candidate_ctas": 1024,
+                    "candidate_rows_per_cta": 32,
+                    "accounting": "One 2048-query-row window; CTA count is not achieved occupancy",
+                }
+                if not gate["admitted_for_tile_timing"]:
+                    report["status"] = "NO_GO_RESOURCE_GATE"
+                    report["completed"] = True  # Complete resource gate, NO benchmark.
+                    report["tile_only_speed"] = {
+                        "admission": "UNRUN_RESOURCE_GATE",
+                        "samples_collected": 0,
+                        "reason": "Candidate not admitted for Tile timing",
+                    }
+                    report["full_graph_first_call_eager_bit_exact"] = True
+                    report["full_graph_bank_b_eager_bit_exact"] = True
+                    report["distinct_qkv_banks"] = True
+                    report["source_bank_used_for_abba"] = None
+                    # abba_blocks remains []; never substitute profiler
+                    # timing or invent GPU-event results in this branch.
+                    return report
             states = item_b["states"]
             for block_idx, arm in enumerate(("control", args.candidate,
                                              args.candidate, "control"), 1):
@@ -256,7 +335,7 @@ def run_gpu(args) -> dict:
             splits = int(cfg["splits"])
             if splits != 4:
                 raise AssertionError("Pinned research requires four leaf splits")
-            rb = 2 if args.candidate == "rb2" else 1
+            rb = 2 if args.candidate in ("rb2", "rb2_late_q") else 1
             report["tile_launch_geometry"] = {
                 "control_grid": [128, splits, 1],
                 "candidate_grid": [128, splits, rb],
@@ -288,7 +367,7 @@ def run_gpu(args) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate", choices=CANDIDATES, default="rb2")
+    parser.add_argument("--candidate", choices=CANDIDATES, default="rb2_late_q")
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--warmups", type=int, default=5)
     parser.add_argument("--expect-head", required=True)
@@ -320,7 +399,7 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"one_json={args.output} status={report['status']}")
-    return 0 if report["status"] == "PASS_NUMERIC_TILE_ONLY" else 2
+    return 0 if report["status"] in ("PASS_NUMERIC_TILE_ONLY", "NO_GO_RESOURCE_GATE") else 2
 
 
 if __name__ == "__main__":

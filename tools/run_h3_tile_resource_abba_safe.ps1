@@ -2,8 +2,8 @@ param(
     [Parameter(Mandatory=$true)]
     [ValidatePattern('^[0-9a-f]{40}$')]
     [string]$ExactHead,
-    [ValidateSet('late_q','stage1','rb2')]
-    [string]$Candidate = 'rb2',
+    [ValidateSet('late_q','stage1','rb2','rb2_late_q')]
+    [string]$Candidate = 'rb2_late_q',
     [ValidateRange(7,12)]
     [int]$Rounds = 7
 )
@@ -62,17 +62,42 @@ try {
         throw 'Experiment did not produce a new ONE JSON'
     }
     $report = Get-Content -LiteralPath $output -Raw | ConvertFrom-Json
-    if ($report.status -ne 'PASS_NUMERIC_TILE_ONLY' -or
-        $report.completed -ne $true -or
+    if ($report.completed -ne $true -or
         $report.candidate -ne $Candidate -or
         $report.source_head -ne $ExactHead -or
         $report.production_promotion -ne 'PROHIBITED_RESEARCH_ONLY' -or
-        $report.abba_blocks.Count -ne 4 -or
         $report.bank_partial_parity.Count -ne 2) {
-        throw 'Experimental JSON invalid, partial, or missing strict gates'
+        throw 'Experimental JSON invalid, partial, or missing numeric gates'
     }
-    Write-Host "HTRC Tile32 research admitted: $($report.status)"
+    if ($Candidate -eq 'rb2_late_q') {
+        if ($report.status -eq 'NO_GO_RESOURCE_GATE') {
+            if ($report.resource_gate.admitted_for_tile_timing -ne $false -or
+                $report.abba_blocks.Count -ne 0 -or
+                $report.tile_only_speed.admission -ne 'UNRUN_RESOURCE_GATE') {
+                throw 'Blocked resource gate unexpectedly included timing'
+            }
+        }
+        elseif ($report.status -eq 'PASS_NUMERIC_TILE_ONLY') {
+            if ($report.resource_gate.admitted_for_tile_timing -ne $true -or
+                $report.abba_blocks.Count -ne 4) {
+                throw 'Combined candidate timed without approved compiler resources'
+            }
+        }
+        else { throw 'Unexpected combined experiment status' }
+    }
+    elseif ($report.status -ne 'PASS_NUMERIC_TILE_ONLY' -or
+            $report.abba_blocks.Count -ne 4) {
+        throw 'Existing one-knob variant must complete four-block ABBA'
+    }
+    if ($report.full_graph_first_call_eager_bit_exact -ne $true -or
+        $report.full_graph_bank_b_eager_bit_exact -ne $true) {
+        throw 'Missing full Graph/eager parity confirmation'
+    }
+    Write-Host "HTRC Tile32 research completed: $($report.status)"
     Write-Host "Kernel-only decision: $($report.tile_only_speed.admission)"
+    if ($Candidate -eq 'rb2_late_q') {
+        Write-Host "Compiler resource gate: $($report.resource_gate.status)"
+    }
     Write-Host "ONE JSON: $output"
 }
 finally {

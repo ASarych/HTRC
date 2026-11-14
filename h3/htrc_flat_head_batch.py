@@ -205,11 +205,11 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
     resource_late_near_q=0
     resource_rb=1
     if research_resource_variant is not None:
-        # Explicit, one-knob, non-production Tile32 register/SMEM research.
+        # Explicit non-production Tile32 register/SMEM research only.
         # Graph/eager callers omit this keyword and compile the original
         # identical specialization (LATE_NEAR_Q=0, default num_stages).
         if type(research_resource_variant) is not str or research_resource_variant not in (
-            "late_q", "stage1", "rb2"
+            "late_q", "stage1", "rb2", "rb2_late_q"
         ):
             raise ValueError("Only separately admitted Tile resource variants allowed")
         if (fused_vb or states.get("_vb_mode") != "materialized"
@@ -221,10 +221,10 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
                 "Tile resource research requires pinned 15,275-token "
                 "four-head materialized Balanced/512 Tile32 input"
             )
-        resource_late_near_q = int(research_resource_variant == "late_q")
+        resource_late_near_q = int(research_resource_variant in ("late_q", "rb2_late_q"))
         if research_resource_variant == "stage1":
             stages=1
-        if research_resource_variant == "rb2":
+        if research_resource_variant in ("rb2", "rb2_late_q"):
             # Two independent 32-row CTAs write disjoint rows of the SAME
             # PM/PL/PACC tensors. Keep far/near online softmax and pipeline.
             resource_rb=2
