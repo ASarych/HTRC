@@ -172,6 +172,32 @@ class CompactAllHeadsTests(unittest.TestCase):
         self.assertIn('APL_HTRC_QKV_PACK_BACKEND", "torch"',native)
         self.assertIn("if pack_normalized_fused is None:",native)
 
+    def test_cycle_batched_gpu_timing_optin_preserves_cpu_and_stock_sync(self):
+        # Execute the actual CompactAllHeadsQKV constructor on CPU, even
+        # with the GPU-only opt-in enabled: it must not require CUDA events.
+        m=_load()
+        model=FakeH3()
+        x=torch.ones((16,512),dtype=torch.bfloat16)
+        with torch.no_grad(),patch.dict(
+            os.environ,{"APL_HTRC_COMPACT_DEFER_GPU_SYNC":"1"}):
+            stage=m.CompactAllHeadsQKV(
+                model,x,None,chunk_rows=8,
+                normalize_chunk=_normalizer(model))
+        self.assertFalse(stage.defer_gpu_sync)
+        self.assertIsNone(stage._build_gpu_events)
+        self.assertIsNone(stage.summary()["build_gpu_ms"])
+        self.assertFalse(stage.summary()["build_gpu_timing_deferred"])
+        source=MODULE.read_text(encoding="utf-8")
+        native_file=ROOT/"h3"/"htrc_flat_h3_native_projection.py"
+        projection=native_file.read_text(encoding="utf-8")
+        self.assertIn('APL_HTRC_COMPACT_DEFER_GPU_SYNC", "0"',source)
+        self.assertIn("self._build_gpu_events = (start, end)",source)
+        self.assertIn("if self.defer_gpu_sync:",source)
+        self.assertIn("else:\n                end.synchronize()",source)
+        self.assertIn('"_deferred_qkv_cuda_events": (',projection)
+        self.assertIn('compact._build_gpu_events if compact is not None',projection)
+        self.assertIn('"build_wall_semantics": (',source)
+
     def test_admission_and_structure_fail_closed_before_projection(self):
         m=_load()
         model=FakeH3()
