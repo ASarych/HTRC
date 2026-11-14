@@ -85,6 +85,12 @@ def emit(stage, tokens, heads, rounds):
                 stage["phase"] = f"BT{bt}_capture"
                 flow.clear_session_cache()
                 os.environ["APL_HTRC_TILE32_STATS_BT"] = str(bt)
+                # Capture a per-arm memory delta. The second arm retains
+                # its predecessor's output copies and allocator cache:
+                # absolute peaks are NOT a perfectly isolated VRAM A/B.
+                baseline_allocated = torch.cuda.memory_allocated(device)
+                baseline_reserved = torch.cuda.memory_reserved(device)
+                torch.cuda.reset_peak_memory_stats(device)
                 selected = {"index": 0}
 
                 def fill_q(start, end, destination):
@@ -223,6 +229,19 @@ def emit(stage, tokens, heads, rounds):
                     ),
                     "cuda_peak_reserved_mib": round(
                         torch.cuda.max_memory_reserved(device) / (1 << 20), 2
+                    ),
+                    "cuda_peak_allocated_delta_from_arm_baseline_mib": round(
+                        (torch.cuda.max_memory_allocated(device)
+                         - baseline_allocated) / (1 << 20), 2
+                    ),
+                    "cuda_peak_reserved_delta_from_arm_baseline_mib": round(
+                        (torch.cuda.max_memory_reserved(device)
+                         - baseline_reserved) / (1 << 20), 2
+                    ),
+                    "memory_scope": (
+                        "per-arm reset_peak; prior bank outputs persist, "
+                        "private Graph pool and allocator cache are not "
+                        "independently isolated"
                     ),
                 }
                 if best[str(bt)]["first_call_graph_report_stats_bt"] != bt:
