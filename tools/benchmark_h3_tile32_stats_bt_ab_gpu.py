@@ -185,6 +185,16 @@ def emit(stage, tokens, heads, rounds):
                 stages_ms["merge_kernel"] = float(
                     tile_end.elapsed_time(merge_end)
                 )
+                expected_stages = {
+                    "query_gather_gpu_mu", "kv_cache_hit",
+                    "leaf_stats", "rowmax_topk_exclusion",
+                    "tile_kernel", "merge_kernel",
+                }
+                if expected_stages - stages_ms.keys():
+                    raise RuntimeError(
+                        f"BT{bt}: incomplete GPU kernel-stage event attribution: "
+                        f"{sorted(expected_stages - stages_ms.keys())}"
+                    )
                 selected_window = merged.reshape(
                     heads, geometry.padded_rows, 128
                 )[:, :geometry.valid_rows, :].permute(1,0,2).to(
