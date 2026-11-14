@@ -266,17 +266,18 @@ def _fused_vbar_one_leaf(MU_VEC, KBF, VBF, head, leaf, scale,
               + rd[None,:]*KB_SD).to(tl.float32)
     v=tl.load(VBF + head*V_SH + (leaf*LEAF+token)[:,None]*V_SS
               + rd[None,:]*V_SD).to(tl.float32)
+    # Match the original _stats_kernel's per-centre 2D rowwise
+    # softmax and dot reduction, not a separate 1D reduction for row 0.
+    # Still compute all 16 duplicate MU rows for tensor-core geometry.
+    # Numerical and performance equivalence remain GPU-UNRUN.
     mu_matrix=tl.broadcast_to(MU_VEC[None,:],(LEAF,D))
-    logits=tl.dot(mu_matrix,tl.trans(k),input_precision=PREC)*scale
-    # Row 0 is computed by the same 16x16 x 16x128 dot geometry as
-    # the original stats kernel. The other broadcast rows are discarded.
-    scores=tl.sum(tl.where(lane[:,None]==0,logits,0.0),axis=0)
-    maximum=tl.max(scores,axis=0)
-    weights=tl.exp(scores-maximum)
-    weights=weights/tl.sum(weights,axis=0)
-    w_matrix=tl.broadcast_to(weights[None,:],(LEAF,LEAF))
-    weighted_v=tl.dot(w_matrix,v,input_precision=PREC)
-    result=tl.sum(tl.where(lane[:,None]==0,weighted_v,0.0),axis=0)
+    a=tl.dot(mu_matrix,tl.trans(k),input_precision=PREC)*scale
+    m=tl.max(a,axis=1)
+    w=tl.exp(a-m[:,None])
+    z=tl.sum(w,axis=1)
+    w=w/z[:,None]
+    vb=tl.dot(w,v,input_precision=PREC)
+    result=tl.sum(tl.where(lane[:,None]==0,vb,0.0),axis=0)
     return result.to(tl.bfloat16)
 
 

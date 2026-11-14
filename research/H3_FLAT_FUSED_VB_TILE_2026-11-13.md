@@ -193,3 +193,52 @@ Current status: strict GPU gate **FAIL_NUMERIC**, GPU speed
 **UNRUN**, new diagnostic GPU **UNRUN**, diagnostic source
 contract **UNRUN**. Do not rerun the previous strict A/B
 until mismatch is diagnosed. Do not promote or run H3 video.
+
+
+## 2026-11-14 — completed numeric diagnostics; first bounded reduction-geometry correction
+
+User-provided flat_fused_vb_ab.json from the diagnostic tool at
+d0494448b374d42581c50883a31ceb4521f9fdbc:
+DIAG_NUMERIC_MISMATCH, completed=true, numerical_gate=FAIL.
+Synthetic four native BF16 heads, 15,275 tokens, balanced/512,
+Tile32. Materialized Graph vs eager Flat: **7,820,800 / 7,820,800
+bit-exact**, 0 differences. Fused-vs-eager AND fused-vs-materialized:
+**622 / 7,820,800** differing final BF16 elements (**0.00795315%**).
+Maximum |delta|=0.000244140625, relative L2=0.002056845%.
+Mismatches per head: 151, 84, 223, 164. This is a narrow
+output-level difference, NOT proof that output is acceptable or
+that the error originates from BF16 rounding. GPU speed and
+independent peak-VRAM were NOT measured. The ordinary strict
+eager/Graph gate remains FAIL_CLOSED.
+
+Source-level candidate explanation: _fused_vbar_one_leaf reduced
+the first row of the [16,16] MU.K score tile into a 1D vector,
+then used axis=0 softmax, whereas the original _stats_kernel
+uses 2D per-row axis=1 max/sum/softmax and 16x16 W.V dot.
+Both implement the same conceptual formula, but reduction layout
+and compiler schedules differ and are not guaranteed bit-exact.
+
+This single experimental kernel-only change replaces that 1D
+softmax with the original per-row 2D sequence:
+
+    a=tl.dot(mu_matrix,tl.trans(k),input_precision=PREC)*scale
+    m=tl.max(a,axis=1)
+    w=tl.exp(a-m[:,None])
+    z=tl.sum(w,axis=1)
+    w=w/z[:,None]
+    vb=tl.dot(w,v,input_precision=PREC)
+
+It still extracts row zero after the same 16-duplicate-MU
+dot geometry. There is NO change to Tile far/near, exact
+selection, quantization, G/LZ/SG, Graph routing, memory guards,
+model or default materialized mode. The CPU source contract is
+updated to check the rowwise operations and to reject the
+former first-row 1D reduction.
+
+This is a **hypothesis test**, NOT a proven fix. CUDA compile,
+output bit-exactness and warmed performance of this particular
+version are UNRUN. First run the existing strict full-output
+fused_vb A/B; if the strict gate fails again, do NOT automatically
+relax parity or rerun indefinitely. Close this naive in-Tile
+candidate and prioritize centre-cooperative K/V reuse only
+after independent architecture/traffic review. Do not run video.
