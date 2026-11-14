@@ -106,3 +106,63 @@ Nsight DRAM/resource reports remain untouched.
 **At commit:** local CPU helper tests PASS; exact-repo source
 gate and all GPU tests UNRUN until the user's Windows run.
 Do not report speedup before the resulting JSON is inspected.
+
+
+## 2026-11-14 — completed local late_q A/B/B/A: NO_GO
+
+User-uploaded flat_tile_resource_abba.json produced on RTX 5070 Ti.
+Source HEAD 8e491e2af6f46f2d849270c593f011274198470c.
+SHA-256 of the uploaded JSON bytes:
+a4b7d5d86a605660901d37304c07f6a058b1efe3fee1efc0f726256817812b98
+(4,224 bytes). Raw JSON is not committed to GitHub; this is
+an auditable summary of the user-provided artifact.
+
+Acceptance gates from the actual JSON:
+- status=PASS_NUMERIC_TILE_ONLY, completed=true.
+- candidate=late_q, source_head exact; 15,275 tokens,
+  four independent BF16 heads, 32-tile windows, 512 near leaves.
+- Both independent Q/K/V banks: PM/PL/PACC **bit-exact** to
+  default materialized control. Bank A/B output differs.
+- First-call complete Graph-vs-eager gate PASS and additional
+  bank-B eager parity PASS.
+- Four separately captured Tile-only CUDA Graph blocks
+  in control, late_q, late_q, control order, seven warmed
+  timings per block and five extra warmups.
+
+Measured (compiled Triton kernel metadata; no Nsight in this run):
+
+| Field | Control | late_q |
+|---|---:|---:|
+| Registers/thread | 255 | 255 |
+| Shared bytes/CTA | 49,664 | 41,472 |
+| Compiler spills | 0 | 0 |
+| Optimistic CTA residency per SM | 2 | 2 |
+| Per-variant block median-of-medians, ms | 0.391184002 | 0.395295992 |
+
+Independent block medians, ms:
+- Block 1 control: 0.391328007
+- Block 2 late_q: 0.395231992
+- Block 3 late_q: 0.395359993
+- Block 4 control: 0.391039997
+
+Shared decreased **8,192 bytes/CTA (16.50%)**, but
+register count remains **255/thread**. Both register and
+shared-memory limits independently remain at two CTAs/SM.
+No occupancy increase was measured or admitted.
+
+control_over_candidate_ratio=0.9895976928: the
+candidate took ~1.051% longer in the Tile-only test,
+and both independent candidate captures were slower
+than either control capture. Neither the at-least-5%
+speed criterion nor its both-captures consistency gate
+passed. **Final late_q = NO_GO_TILE_ONLY**.
+This is a negative performance result, NOT a failed
+numerical test and NOT a change in output quality.
+
+Keep existing LATE_NEAR_Q=0 default and do not
+re-run late_q or promote it into production. The
+standalone stage1 opt-in is already implemented
+but **UNRUN**; evaluate it independently via the
+same exact-HEAD safe runner with -Candidate stage1.
+Do not blend late_q+stage1, alter exact near leaves,
+or infer full-model speed from this single kernel.
