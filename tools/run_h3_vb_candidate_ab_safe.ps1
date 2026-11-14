@@ -5,7 +5,8 @@ param(
     [ValidateSet("split_stream","fused_vb")]
     [string]$Candidate = "split_stream",
     [ValidateRange(2,12)]
-    [int]$Rounds = 5
+    [int]$Rounds = 5,
+    [switch]$DiagnoseNumeric
 )
 
 # One isolated exact-HEAD CUDA A/B. No installed ComfyNodes edits,
@@ -16,6 +17,9 @@ $branch = "experiment/flat-memory-to-speed-balanced-20261113"
 $py = "C:\Users\Misya\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\.venv\Scripts\python.exe"
 $tag = [guid]::NewGuid().ToString("N").Substring(0,10)
 $clean = "D:\HTRC-vb-probe-$tag"
+if ($DiagnoseNumeric -and $Candidate -ne "fused_vb") {
+    throw "Numeric diagnostic is restricted to fused_vb"
+}
 
 if ($Candidate -eq "split_stream") {
     $bench = "benchmark_h3_flat_streamed_vb_ab.py"
@@ -104,6 +108,9 @@ try {
         "--budget-mib", "1024", "--reserve-mib", "256",
         "--output", $report
     )
+    if ($DiagnoseNumeric) {
+        $gpuArgs += "--diagnose-numeric"
+    }
     & $py -B (Join-Path $clean ("tools\" + $bench)) @gpuArgs
     if ($LASTEXITCODE -ne 0) {
         throw "GPU candidate failed closed; inspect ONE JSON at $report"
@@ -113,21 +120,39 @@ try {
         throw "No fresh CUDA report written"
     }
     $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
-    if ($result.completed -ne $true -or $result.status -ne "PASS_NUMERIC" -or
-        $result.numeric.$numericKeyA -ne $true -or
-        $result.numeric.$numericKeyB -ne $true -or
-        $result.eager_graph_first_call_gates.materialized.first_call_bit_exact -ne $true -or
-        $result.eager_graph_first_call_gates.$Candidate.first_call_bit_exact -ne $true -or
-        $result.eager_graph_first_call_gates.materialized.bank_b_eager_bit_exact -ne $true -or
-        $result.eager_graph_first_call_gates.$Candidate.bank_b_eager_bit_exact -ne $true -or
-        $result.mode -ne "balanced" -or $result.window_tiles -ne 32 -or
-        $result.tokens -ne 15275 -or $result.heads -ne 4) {
-        throw "CUDA numeric gate or requested fixed geometry failed"
+    if ($DiagnoseNumeric) {
+        if ($result.completed -ne $true -or
+            $result.status -notin @("DIAG_NUMERIC_MISMATCH","DIAG_MATCH_NOT_ACCEPTED") -or
+            $result.comparisons.materialized_vs_eager.bit_exact -ne $true -or
+            $result.compare_only_for_diagnosis -ne $true -or
+            $result.strict_first_call_gate_changed -ne $false -or
+            $result.performance_measured -ne $false -or
+            $result.promotion_to_real_h3 -ne "PROHIBITED_DIAGNOSTIC_ONLY" -or
+            $result.mode -ne "balanced" -or $result.tiles -ne 32 -or
+            $result.tokens -ne 15275 -or $result.heads -ne 4) {
+            throw "Diagnostic invalid or materialized control failed"
+        }
+        Write-Host "HTRC fused_vb DIAGNOSTIC ONLY; no numerical PASS"
+        Write-Host "Fused-vs-eager maximum absolute error: $($result.comparisons.fused_vb_vs_eager.max_abs)"
+        Write-Host "Fused-vs-eager mismatched elements: $($result.comparisons.fused_vb_vs_eager.mismatch_count)"
+        Write-Host "One JSON: $report"
+    } else {
+        if ($result.completed -ne $true -or $result.status -ne "PASS_NUMERIC" -or
+            $result.numeric.$numericKeyA -ne $true -or
+            $result.numeric.$numericKeyB -ne $true -or
+            $result.eager_graph_first_call_gates.materialized.first_call_bit_exact -ne $true -or
+            $result.eager_graph_first_call_gates.$Candidate.first_call_bit_exact -ne $true -or
+            $result.eager_graph_first_call_gates.materialized.bank_b_eager_bit_exact -ne $true -or
+            $result.eager_graph_first_call_gates.$Candidate.bank_b_eager_bit_exact -ne $true -or
+            $result.mode -ne "balanced" -or $result.window_tiles -ne 32 -or
+            $result.tokens -ne 15275 -or $result.heads -ne 4) {
+            throw "CUDA numeric gate or requested fixed geometry failed"
+        }
+        Write-Host "HTRC $Candidate full attention A/B: PASS_NUMERIC"
+        Write-Host "Materialized Graph GPU ms: $($result.warm_graph_timings.materialized.gpu_event_ms_per_call)"
+        Write-Host "Candidate Graph GPU ms: $($result.warm_graph_timings.$Candidate.gpu_event_ms_per_call)"
+        Write-Host "One JSON: $report"
     }
-    Write-Host "HTRC $Candidate full attention A/B: PASS_NUMERIC"
-    Write-Host "Materialized Graph GPU ms: $($result.warm_graph_timings.materialized.gpu_event_ms_per_call)"
-    Write-Host "Candidate Graph GPU ms: $($result.warm_graph_timings.$Candidate.gpu_event_ms_per_call)"
-    Write-Host "One JSON: $report"
 }
 finally {
     foreach ($name in $envNames) {

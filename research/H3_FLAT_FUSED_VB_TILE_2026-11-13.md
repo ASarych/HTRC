@@ -127,3 +127,69 @@ multi-centre cooperative far producer/consumer that reuses K/V across
 centres (or a score+far fused kernel with cache-aware tiling), preserving
 selection and exact softmax reductions. Evaluate the 40k/82k shape
 before a Full HD 223k attempt. Keep original BEST intact.
+
+
+## 2026-11-14 — RTX 5070 Ti strict GPU failure and diagnostic-only follow-up
+
+The user executed the existing exact-HEAD fused_vb short A/B at
+05de218c1e70ecec93b091fc572494d4ba1c7da2:
+15,275 tokens, four distinct BF16 heads, Balanced/512, Tile32.
+All **13 CPU source contracts passed**. The Graph eager/strict numerical
+gate then stopped before any warmed performance measurement:
+
+    AssertionError: Direct-Flow real H3 mismatch at heads [0,4):
+    max_abs=0.00024414062
+
+The benchmark wrote ONE flat_fused_vb_ab.json with
+status=FAIL_CLOSED. The user supplied the terminal traceback,
+not the full JSON payload. The observed maximum difference is
+exactly 2^-12 in BF16 output units, but its distribution,
+source stage, fraction of affected elements and actual runtime
+speed are **NOT measured**. No tolerance or production behavior
+has been relaxed. Do not treat a small maximum difference as
+an acceptable quality change.
+
+The existing _fused_vbar_one_leaf duplicates the centre MU into
+16 rows to match the reference stats tensor-core geometry, then
+reduces to one row. Even though the intended equations match
+_stats_kernel, identical final BF16 rounding is not guaranteed
+by source similarity; neither a rounding-only explanation nor
+a kernel bug has yet been established.
+
+### New single-JSON opt-in numeric diagnostic
+
+tools/benchmark_h3_flat_fused_vb_ab.py --diagnose-numeric runs
+the EXACT SAME first synthetic Q/K/V bank and fixed short geometry.
+It uses Graph compare_only=True **only inside the isolated
+diagnostic** for materialized and fused_vb, then independently
+computes the untouched eager Flat output. Complete final BF16
+tensors are compared: materialized vs eager, fused vs eager,
+fused vs materialized. Record total/mismatched elements,
+fraction mismatched, max-absolute error, relative L2,
+per-head mismatch counts and the eight largest mismatching
+token/head/feature values.
+
+A materialized-vs-eager mismatch is an immediate error and
+FAIL_CLOSED. Otherwise a fused-vs-eager mismatch yields
+DIAG_NUMERIC_MISMATCH, numerical_gate=FAIL; an exact
+match yields DIAG_MATCH_NOT_ACCEPTED, not PASS_NUMERIC.
+The mode records performance_measured=false,
+promotion_to_real_h3=PROHIBITED_DIAGNOSTIC_ONLY.
+No model, VAE or video. No stage-local kernel oracle yet:
+this diagnostic localizes the **output** error and whether
+the original control is stable, not a specific tensor-core
+operation.
+
+The same safe PowerShell exact-HEAD runner supports
+-Candidate fused_vb -DiagnoseNumeric -Rounds 5. It saves
+ONE report at
+D:\ComfyOutput\H3\math_probe\flat_fused_vb_ab.json,
+overwriting the prior fail-only JSON. CPU source contracts
+run before the GPU probe. Only the diagnostic call itself
+uses compare_only; real/ordinary first-call bit-exact parity
+and fixed STATS_BT=16 remain unchanged.
+
+Current status: strict GPU gate **FAIL_NUMERIC**, GPU speed
+**UNRUN**, new diagnostic GPU **UNRUN**, diagnostic source
+contract **UNRUN**. Do not rerun the previous strict A/B
+until mismatch is diagnosed. Do not promote or run H3 video.
