@@ -103,3 +103,124 @@ References:
   https://docs.nvidia.com/nsight-compute/ComputeTriage/
 - NVIDIA Nsight Compute CLI:
   https://docs.nvidia.com/nsight-compute/NsightComputeCli/
+
+
+## 2026-11-14 — accepted resource/time counter result
+
+Source: user-uploaded flat_materialized_resource_ncu.json.
+Exact SHA-256:
+233476a568b0a61f7c3d35428179b060ed909fba696047aaaff1bf25a5875dfc
+Source git HEAD: 01996061cec72ba252a3634892c9c642ab90c78c.
+The JSON bytes are NOT checked into HTRC; these derived facts
+can be rechecked against the user-provided file.
+
+All gates PASS:
+status=PROFILE_RESOURCE_COUNTERS_COLLECTED, completed=true,
+hardware_profile=true, metric_preflight=PASS_ADVERTISED_MANDATORY_METRICS,
+ncu_exit_code=0, strict_child_parity_marker=true,
+has_stats_and_tile=true, parsed_launches=12, timing unit ns,
+no missing metric columns, rejected_required_metric_rows=0.
+Four separate CUDA Graph kernel nodes each of Stats, Rowmax and Tile.
+Synthetic input 15,275 tokens, 4 BF16 heads, balanced/512, Tile32,
+STATS_BT=16, materialized. Real H3/video UNRUN.
+
+| Measured value (median of 4 kernel nodes) | Stats | Rowmax | Tile |
+|---|---:|---:|---:|
+| Nsight-replayed kernel duration, microseconds | 91.920 | 31.568 | 422.960 |
+| Achieved occupancy, % | 46.160 | 52.345 | 15.570 |
+| Launch registers / thread | 80 | 70 | 255 |
+| Launch allocated shared memory / CTA, bytes | 15,360 | 11,264 | 50,688 |
+| Register-limited resident CTAs / SM | 6 | 7 | 2 |
+| SMEM-limited resident CTAs / SM | 6 | 9 | 2 |
+| DRAM throughput, % sustained elapsed peak | 69.97 | 68.41 | 21.73 |
+| SM throughput, % sustained elapsed peak | 55.53 | 31.32 | 64.54 |
+| Local-memory load sectors median | 0 | 0 | 0 |
+| Local-memory store sectors median | 0 | 0 | 0 |
+
+Individual Nsight kernel duration values (microseconds):
+- Stats: 91.712, 93.376, 90.752, 92.128.
+- Rowmax: 33.664, 31.200, 31.936, 31.136.
+- Tile: 425.312, 422.592, 423.328, 420.928.
+
+Interpretation from NVIDIA launch metadata plus the same-user
+SM120 hardware inventory:
+- 128 threads (4 warps) per Tile CTA, 255 registers/thread,
+  50,688 bytes of shared memory/CTA.
+- 65,536 registers/SM and 102,400 shared bytes/SM.
+  Two resident Tile CTAs require 65,280 registers and
+  101,376 shared bytes: both resources independently allow
+  only 2 CTAs, and the measured launch limits confirm 2.
+- 48 possible resident warps/SM (from device limit 1,536
+  threads/SM); 2 * 4 = 8 warps, 16.67% theoretical warp
+  occupancy. Measured achieved 15.57% is consistent.
+  Resource pressure, not exclusively DRAM throughput,
+  is a credible next optimization target.
+- With 3 Tile CTAs at the SAME 128 threads/CTA the
+  necessary resource ceilings (before allocator granularity)
+  are at most 170 registers/thread AND at most
+  floor(102400/3)=34,133 shared bytes/CTA.
+  Merely reducing one of those will leave the other
+  at the 2-CTA limit. Even achieving 3 CTAs gives
+  no guaranteed speedup and may increase work or launches.
+
+IMPORTANT no false bottleneck labels:
+- Tile was ~4.60x Stats in the separately profiled
+  kernel replay medians. Do NOT extrapolate this to a
+  whole-attention latency ratio or compare it with the
+  4.285-ms warmed unprofiled whole-call control.
+- GPU DRAM saturation for Tile median 21.73%, versus
+  SM throughput 64.54% and low warp residency. This
+  weakens the hypothesis of a solely HBM-bandwidth-bound
+  Tile, but does not establish that specific FP/INT/Tensor
+  cores are saturated or classify warp stall reasons.
+- Local-memory sector counters were exactly zero in all
+  twelve samples. There is no positive measured local
+  traffic in this profile, but absence of these sectors
+  cannot prove no compiler spills in every specialization.
+- The 2026-11-11 flattened 56-head Tile proxy had
+  ALREADY reported 255 registers and about 49.7 KiB
+  shared. Current data independently confirms the
+  resource bottleneck for the NEW four-distinct-head
+  balanced/512 materialized graph shape; don't claim
+  first-ever discovery of 255 registers.
+
+## Next engineering admission (no GPU candidate yet)
+
+The current h3/htrc_flat_head_batch.launch_prepared_tile_batch
+hardcodes Tile grid (heads*tiles,splits,1), RB=1 and
+LATE_NEAR_Q=0. The underlying _tile_kernel already has
+compile-time RB (query-row ownership) and LATE_NEAR_Q
+(later production of near Q operands); kernel math is
+not being rewritten here. Existing default near/far
+block BN is 64 and PROD tile_stages=2.
+
+A reasonable MINIMAL opt-in experiment, not yet implemented:
+1. Preserve exact-head materialized control, unchanged
+   Stats, Rowmax, topk, key quantization and Merge.
+2. First separately examine compiler resources for
+   LATE_NEAR_Q=1 (reduce far-loop Q live ranges)
+   and tile_stages=1 (possible SMEM change).
+   Test each separately before considering their
+   combination, so the reason for any resource change
+   is identifiable. These settings still require
+   independent numerical admission: altered compiler
+   scheduling can affect BF16/FP32 reduction.
+3. Do NOT blindly force maxnreg=128 or treat it as
+   increased occupancy; local spilling could be worse.
+4. Only if individual candidates plausibly reach
+   BOTH resource ceilings, or demonstrate another
+   substantive register/stall improvement, admit an
+   opt-in RB=2 row-ownership variant. RB changes
+   CTA grid shape and can change reduction geometry.
+5. For any candidate that reaches GPU testing: full
+   outputs BIT-EXACT on two distinct QKV banks,
+   first-call vs eager parity, independent-capture
+   warmed four-block A/B/B/A timing with at least
+   seven per-block rounds, no unrun-as-pass, no
+   model/video before a reproducible micro win.
+   Track real compiled register/SMEM/local sectors
+   and allocator budget, not just theoretical counts.
+
+No new GPU, register-pressure optimization kernel,
+production switch, model, or video test was performed
+in this evidence-closing documentation slice.
