@@ -32,6 +32,7 @@ from h3 import htrc_flat_live_backend as live
 from h3 import htrc_flat_windows as windows
 
 
+@torch.inference_mode()
 def emit(stage, tokens, heads, rounds):
     if not torch.cuda.is_available():
         raise RuntimeError("NVIDIA CUDA GPU required; no CPU approximation")
