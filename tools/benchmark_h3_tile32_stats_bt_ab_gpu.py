@@ -194,84 +194,95 @@ def emit(stage, tokens, heads, rounds, paired_abba=False, warmup_replays=0):
                     timings.append(float(start.elapsed_time(stop)))
                     del warmed
 
-                # Attribute the GPU kernels of a SAME-INPUT full query
-                # window. This is an EAGER invocation of the EXACT kernels
-                # used inside the captured Graph, not Graph-replay timing.
-                state = flow._SESSIONS.get((8,))
-                if state is None:
-                    raise RuntimeError(f"BT{bt}: missing 8-head capture session")
-                geometry = next(
-                    g for g in windows.iter_query_windows(tokens, 32)
-                    if g.tile_count == 32
-                )
-                item = state["graphs"][(geometry.tile_count, geometry.valid_rows)]
-                fill_q(geometry.start, geometry.end, item["q"])
-                tr = live._triton()
-                cfg = shared.flat_config("balanced", 32)
-                event_intervals = []
-                states, _, _, _, _ = batch.prepare_batched_head_states(
-                    item["win"], state["ids"], cfg, tr,
-                    tile_count=geometry.tile_count,
-                    quant_backend="triton", input_cast="gpu",
-                    kv_cache=state["cache"], query_workspace=item["ws"],
-                    valid_query_rows=geometry.valid_rows,
-                    query_staging="native_direct",
-                    vb_mode="materialized",
-                    stage_gpu_events=event_intervals,
-                )
-                tile_begin = torch.cuda.Event(enable_timing=True)
-                tile_end = torch.cuda.Event(enable_timing=True)
-                merge_end = torch.cuda.Event(enable_timing=True)
-                tile_begin.record()
-                partial, _ = batch.launch_prepared_tile_batch(
-                    states, cfg, tr, buffers=item["ws"]["_partials"]
-                )
-                tile_end.record()
-                merged, _ = batch.launch_prepared_merge_batch(
-                    states, cfg, tr, partial, tails=state["tail"],
-                    output=item["ws"]["_out"], merge_rows=32
-                )
-                merge_end.record()
-                merge_end.synchronize()
-                stages_ms = {
-                    name: float(a.elapsed_time(b))
-                    for name,a,b in event_intervals
-                }
-                stages_ms["tile_kernel"] = float(
-                    tile_begin.elapsed_time(tile_end)
-                )
-                stages_ms["merge_kernel"] = float(
-                    tile_end.elapsed_time(merge_end)
-                )
-                expected_stages = {
-                    "query_gather_gpu_mu", "kv_cache_hit",
-                    "leaf_stats", "rowmax_topk_exclusion",
-                    "tile_kernel", "merge_kernel",
-                }
-                if expected_stages - stages_ms.keys():
-                    raise RuntimeError(
-                        f"BT{bt}: incomplete GPU kernel-stage event attribution: "
-                        f"{sorted(expected_stages - stages_ms.keys())}"
+                # The paired timing probe must not allocate eager diagnostics
+                # between fresh captures: those allocations changed Graph
+                # allocator reservation in earlier HTRC experiments.
+                stages_ms = None
+                stage_output_parity = None
+                if not paired_abba:
+                    # Attribute the GPU kernels of a SAME-INPUT full query
+                    # window. This is an EAGER invocation of the EXACT kernels
+                    # used inside the captured Graph, not Graph-replay timing.
+                    state = flow._SESSIONS.get((8,))
+                    if state is None:
+                        raise RuntimeError(f"BT{bt}: missing 8-head capture session")
+                    geometry = next(
+                        g for g in windows.iter_query_windows(tokens, 32)
+                        if g.tile_count == 32
                     )
-                selected_window = merged.reshape(
-                    heads, geometry.padded_rows, 128
-                )[:, :geometry.valid_rows, :].permute(1,0,2).to(
-                    torch.bfloat16
-                )
-                if not torch.equal(
-                    selected_window,
-                    outputs[(bt,1)][0,geometry.start:geometry.end]
-                ):
-                    raise AssertionError(
-                        f"BT{bt}: eager stage kernels differ from captured Graph output"
+                    item = state["graphs"][(geometry.tile_count, geometry.valid_rows)]
+                    fill_q(geometry.start, geometry.end, item["q"])
+                    tr = live._triton()
+                    cfg = shared.flat_config("balanced", 32)
+                    event_intervals = []
+                    states, _, _, _, _ = batch.prepare_batched_head_states(
+                        item["win"], state["ids"], cfg, tr,
+                        tile_count=geometry.tile_count,
+                        quant_backend="triton", input_cast="gpu",
+                        kv_cache=state["cache"], query_workspace=item["ws"],
+                        valid_query_rows=geometry.valid_rows,
+                        query_staging="native_direct",
+                        vb_mode="materialized",
+                        stage_gpu_events=event_intervals,
                     )
+                    tile_begin = torch.cuda.Event(enable_timing=True)
+                    tile_end = torch.cuda.Event(enable_timing=True)
+                    merge_end = torch.cuda.Event(enable_timing=True)
+                    tile_begin.record()
+                    partial, _ = batch.launch_prepared_tile_batch(
+                        states, cfg, tr, buffers=item["ws"]["_partials"]
+                    )
+                    tile_end.record()
+                    merged, _ = batch.launch_prepared_merge_batch(
+                        states, cfg, tr, partial, tails=state["tail"],
+                        output=item["ws"]["_out"], merge_rows=32
+                    )
+                    merge_end.record()
+                    merge_end.synchronize()
+                    stages_ms = {
+                        name: float(a.elapsed_time(b))
+                        for name,a,b in event_intervals
+                    }
+                    stages_ms["tile_kernel"] = float(
+                        tile_begin.elapsed_time(tile_end)
+                    )
+                    stages_ms["merge_kernel"] = float(
+                        tile_end.elapsed_time(merge_end)
+                    )
+                    expected_stages = {
+                        "query_gather_gpu_mu", "kv_cache_hit",
+                        "leaf_stats", "rowmax_topk_exclusion",
+                        "tile_kernel", "merge_kernel",
+                    }
+                    if expected_stages - stages_ms.keys():
+                        raise RuntimeError(
+                            f"BT{bt}: incomplete GPU kernel-stage event attribution: "
+                            f"{sorted(expected_stages - stages_ms.keys())}"
+                        )
+                    selected_window = merged.reshape(
+                        heads, geometry.padded_rows, 128
+                    )[:, :geometry.valid_rows, :].permute(1,0,2).to(
+                        torch.bfloat16
+                    )
+                    if not torch.equal(
+                        selected_window,
+                        outputs[(bt,1)][0,geometry.start:geometry.end]
+                    ):
+                        raise AssertionError(
+                            f"BT{bt}: eager stage kernels differ from captured Graph output"
+                        )
+                    stage_output_parity = True
                 record = {
                     "capture_block_index": block_index + 1,
                     "post_capture_warmup_replays": warmup_replays,
                     "gpu_event_ms_warmed_full_attention": timings,
                     "median_gpu_event_ms": statistics.median(timings),
                     "one_full_window_eager_kernel_stages_gpu_ms": stages_ms,
-                    "one_full_window_bit_exact_to_captured_graph": True,
+                    "one_full_window_bit_exact_to_captured_graph": stage_output_parity,
+                    "eager_stage_attribution_status": (
+                        "SKIPPED_ABBA_ISOLATION" if paired_abba else
+                        "EXECUTED_AND_BIT_EXACT"
+                    ),
                     "first_call_graph_report_stats_bt": json.loads(
                         (Path(temp) / "private_first_call.json").read_text(
                             encoding="utf-8"
@@ -300,7 +311,8 @@ def emit(stage, tokens, heads, rounds, paired_abba=False, warmup_replays=0):
                 if record["first_call_graph_report_stats_bt"] != bt:
                     raise RuntimeError("Graph report mislabeled stats BT")
                 blocks[str(bt)].append(record)
-                del states, partial, merged, selected_window, item, state
+                if not paired_abba:
+                    del states, partial, merged, selected_window, item, state
                 flow.clear_session_cache()
         for bt in (16, 32):
             per_block = blocks[str(bt)]
@@ -346,7 +358,11 @@ def emit(stage, tokens, heads, rounds, paired_abba=False, warmup_replays=0):
             "status":"PASS_NUMERIC",
             "model_checkpoint_loaded":False,
             "video_or_vae_executed":False,
-            "scope":"CUDA Graph full attention + eager component GPU attribution",
+            "scope":(
+                "CUDA Graph full attention isolated ABBA"
+                if paired_abba else
+                "CUDA Graph full attention + eager component GPU attribution"
+            ),
             "tokens":tokens,"heads":heads,"head_dim":128,
             "mode":"balanced","tiles":32,"exact_leaves":512,
             "rounds":rounds,

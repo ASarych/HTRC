@@ -93,6 +93,46 @@ def check():
         pass
     else:
         raise AssertionError("Incomplete ABBA decision must reject")
+    # All eager GPU stage kernels must live behind the ABBA isolation
+    # guard. Source text alone could conceal an unguarded diagnostic call.
+    guarded = [
+        n for n in ast.walk(emit_defs[0])
+        if isinstance(n, ast.If)
+        and isinstance(n.test, ast.UnaryOp)
+        and isinstance(n.test.op, ast.Not)
+        and isinstance(n.test.operand, ast.Name)
+        and n.test.operand.id == "paired_abba"
+    ]
+    assert len(guarded) == 2, (
+        "Expected paired-ABBA guard for eager profiling and its cleanup"
+    )
+    eager_guard = next(
+        (n for n in guarded if any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "prepare_batched_head_states"
+            for call in ast.walk(n)
+        )), None
+    )
+    assert eager_guard is not None, "Eager kernel profiling not ABBA-isolated"
+    must_guard = {
+        "prepare_batched_head_states",
+        "launch_prepared_tile_batch",
+        "launch_prepared_merge_batch",
+    }
+    in_guard = {
+        call.func.attr for call in ast.walk(eager_guard)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+    }
+    assert must_guard <= in_guard, "Stage attribution escaped isolation guard"
+    for call in ast.walk(emit_defs[0]):
+        if (isinstance(call, ast.Call) and
+            isinstance(call.func, ast.Attribute) and
+            call.func.attr in must_guard):
+            assert any(call is child for child in ast.walk(eager_guard)), (
+                "ABBA must never execute eager stage kernels"
+            )
     for marker in (
         'order = (16, 32, 32, 16) if paired_abba else (16, 32)',
         'for _ in range(warmup_replays):',
@@ -101,6 +141,7 @@ def check():
         '"speed_decision":decision',
         '--paired-abba',
         '--warmup-replays',
+        '"SKIPPED_ABBA_ISOLATION" if paired_abba else',
     ):
         assert marker in gpu, "Broken ABBA source admission: " + marker
     for marker in (

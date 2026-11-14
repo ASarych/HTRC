@@ -185,9 +185,10 @@ process with **fresh CUDAGraph captures each block**, two
 independent input banks and bit-exact full outputs both
 across BT variants and repeat captures. Each block gets five
 additional untimed full-attention replays AFTER capture,
-then seven warmed timed replays. No timing includes capture
-or eager stage attribution; the eager stage measurement is
-reported separately for each block.
+then seven warmed timed replays. No timing includes capture.
+ABBA skips eager kernel-stage attribution entirely, so the
+four capture blocks do not inherit extra diagnostic allocations.
+The ordinary two-mode A/B still reports separate eager stages.
 
 The single JSON includes capture order, raw GPU-event
 samples, block medians, and a speed decision. An
@@ -212,3 +213,27 @@ runner behavior remains unchanged.
 New Python CPU/source gate, actual CUDA ABBA, and real H3
 are **UNRUN** as of this commit. No kernel/default/runtime
 math or installed ComfyNodes source was modified.
+
+## 2026-11-14 — ABBA methodology correction (pre-GPU run)
+
+Review of the new ABBA harness found that the old eager
+per-window stage attribution still ran **between capture
+blocks**, after the GPU timings. Though not directly timed,
+it could retain allocator buffers and alter subsequent
+capture/Graph-cache conditions. Prior HTRC group-policy
+research measured precisely this kind of contamination.
+
+ABBA now **skips the eager attribution entirely**, returning
+`eager_stage_attribution_status=SKIPPED_ABBA_ISOLATION`,
+and JSON `null` for stage intervals and eager/Graph
+window parity. Full attention parity for two banks,
+cross-variant bit-exactness and repeated-capture parity
+remain mandatory. The previous non-ABBA benchmark still
+runs its eager stage attribution unchanged.
+
+An AST CPU source admission now rejects unguarded
+`prepare_batched_head_states`, `launch_prepared_tile_batch`,
+and `launch_prepared_merge_batch` calls within the
+benchmark `emit` body. This is source-level verification,
+not a CUDA result. New CPU script and CUDA ABBA remain
+**UNRUN**; the existing BT16 default stands.
