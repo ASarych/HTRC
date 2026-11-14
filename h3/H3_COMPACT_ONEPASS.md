@@ -263,3 +263,72 @@ may expose other independent capture issues. If that happens,
 report the next exact traceback rather than declaring the entire
 live path tested. CPU/real GPU execution on this new HEAD remains
 **UNRUN**; the unchanged fallback policy is fail-closed.
+
+## Next live denoise speed slice: eliminate per-block CUDA waits (2026-11-14)
+
+The first completed six-step H3 Graph result in the user's
+`h3_native_graph_live.json` is the new functional baseline:
+**294/294 HTRC attention calls, 49/49 blocks, 6/6 cycles**,
+`stock_attention_output_used=false`, no error, one video.
+Cumulative attention CUDA events: **130,478.51 ms**;
+per-block synchronization wall: **145,799.46 ms**.
+First block's CUDA capture-heavy event: **9,769.74 ms**,
+first-block wall: **16,030.95 ms**.
+Observed CUDA allocated peak: **13,472.34 MiB**,
+reserved peak: **14,368 MiB**.
+Video quality is provisionally sufficient for continuing
+speed research; exact dense parity has not been proven.
+
+Two *independent* CPU/GPU barriers occurred for every one
+of the 294 real attention calls:
+- `CompactAllHeadsQKV._build` recorded an ending CUDA event
+  and called `end.synchronize()` before Graph staging.
+- The ComfyNodes live adapter recorded the entire attention
+  call and called `stop.synchronize()` before returning
+  the tensor to the next transformer operation.
+
+This is **588 explicit barriers** in the prior full-video
+integration; GPU can also have other barriers inside initial
+HTRC Graph capture and verification. The difference between
+145.8s CPU wall summed across attention calls and 130.48s GPU
+events is **not** purely attributable to synchronization:
+first capture, scheduling, allocations and Python work differ.
+
+### New strict opt-in `APL_HTRC_COMPACT_DEFER_GPU_SYNC=1`
+
+The genuine original NVFP4 `qkv_proj`, RMSNorm/RoPE,
+per-token/head INT8 packed activations, Graph window
+geometry and GPU dataflow remain unchanged.
+
+`CompactAllHeadsQKV` now holds a `(start,end)` CUDA event
+pair instead of synchronizing the end event **only** when
+explicitly opted in. The internal native Graph return
+has a private `_deferred_qkv_cuda_events` pair so the
+ComfyNodes live adapter can read the genuine QKV GPU time
+at the *end* of the 49-block transformer cycle.
+No CUDA event or tensor is held across cycles after the
+report is committed; the same pack buffer is refreshed
+for every attention forward as before.
+
+The default path still executes `end.synchronize()`,
+returns immediate `build_gpu_ms`, and works as an
+independent read-only GPU canary. The deferred path
+returns `build_gpu_ms=None` until the owning live adapter
+finalizes the events; report semantics explicitly distinguish
+CPU submit wall time from wall including synchronization.
+
+The paired ComfyNodes opt-in
+`APL_H3_NATIVE_GRAPH_BATCH_TIMING=1` verifies the
+all-49-block cycle and performs a single CUDA barrier
+at its final block, with per-cycle GPU sums for QKV
+and Graph+out_proj. Failure, missing events or partial
+cycles reject success and must never fall back to stock.
+The safe launcher sets both knobs together and runs CPU
+functional/source gates before model loading.
+
+**Measured speedup on RTX 5070 Ti: UNRUN.**
+Previous ~415-ms warmed GPU attention per block is
+a control, not a promised result. The new latency
+comparison must use full six-step denoise and preferably
+a matched stock backend; isolated QKV numbers alone
+cannot justify an end-to-end speedup.
