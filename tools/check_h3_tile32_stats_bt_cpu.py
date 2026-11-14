@@ -49,6 +49,27 @@ def check():
         '"stats_kernel_bt":stats_bt',
     ):
         assert marker in flow,"Broken Tile32 session safety: "+marker
+    # The 2026-11-14 first GPU run failed at BT16_capture before
+    # launching a kernel: DirectFlow requires inference-only tensors.
+    # Enforce the actual AST decorator on the benchmark's GPU entry point,
+    # not a loose string match or a global grad-mode state mutation.
+    gpu_tree=ast.parse(gpu,filename=str(GPU))
+    emit_defs=[
+        node for node in gpu_tree.body
+        if isinstance(node,ast.FunctionDef) and node.name=="emit"
+    ]
+    assert len(emit_defs)==1, "Expected exactly one GPU benchmark entry"
+    decorators=emit_defs[0].decorator_list
+    assert len(decorators)==1, "GPU entry requires one scoped decorator"
+    d=decorators[0]
+    assert (
+        isinstance(d,ast.Call)
+        and isinstance(d.func,ast.Attribute)
+        and isinstance(d.func.value,ast.Name)
+        and d.func.value.id=="torch"
+        and d.func.attr=="inference_mode"
+        and not d.args and not d.keywords
+    ), "GPU benchmark must enter torch.inference_mode() before DirectFlow"
     for marker in (
         'for bt in (16, 32):',
         'for bank_index in (0, 1):',
