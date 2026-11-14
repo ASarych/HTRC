@@ -332,3 +332,63 @@ a control, not a promised result. The new latency
 comparison must use full six-step denoise and preferably
 a matched stock backend; isolated QKV numbers alone
 cannot justify an end-to-end speedup.
+
+## 2026-11-14 04:19 — real six-step batched-sync A/B: REGRESSION
+
+Actual user's `h3_native_graph_live(1).json` completed all
+**294** output-producing HTRC attention calls with
+`stock_attention_output_used=false` and `error=null`.
+The new `BATCHED_49_BLOCK_GPU_EVENTS_WITH_ONE_SYNC_PER_CYCLE`
+mode, however, did **not** accelerate the real pipeline.
+
+| Measurement | Prior per-block sync | New per-cycle sync |
+|---|---:|---:|
+| 294 HTRC attention GPU-event sum | 130,478.511 ms | 184,781.478 ms |
+| Mean GPU-event sum of warmed cycles 2–6 | 20,334.022 ms | 32,378.528 ms |
+| CUDA max allocated | 13,472.342 MiB | 13,472.342 MiB |
+| CUDA max reserved | 14,368 MiB | 16,384 MiB |
+
+Regression is **+41.62%** in summed GPU-event time;
+warmed steps are **+59.23%** slower. This is an
+end-to-end *attention* measurement across all real
+denoise blocks, not a QKV-only benchmark. It is NOT
+a direct complete-video wall-time A/B because the
+second run lacks an attached run-controller wall log.
+
+New GPU event decomposition:
+`QKV+INT8 pack 47,398.711 ms` (**25.65%**),
+`Graph + native out_proj 137,382.766 ms` (**74.35%**).
+By cycle, HTRC GPU-event totals are
+22.889s, 28.244s, 19.874s, **50.961s**, 28.299s,
+34.515s. The per-cycle first-to-last attention wall
+spans sum to **609.430s** and include intervening model
+work; they are NOT additive to denoise time.
+Reserved memory reaches the entire 16,384 MiB card
+reported by PyTorch by the second cycle. GPU allocator
+pressure/offload and host/GPU pipeline interactions are
+plausible contributors, but this JSON alone cannot
+identify the unique cause. Do NOT claim that removing
+CPU waits is always faster or that VRAM paging is proven.
+
+**Decision:** Do not use cycle-batched synchronization
+as the default on 16-GiB RTX 5070 Ti.
+Keep `APL_HTRC_COMPACT_DEFER_GPU_SYNC=0` as the
+known-working HTRC behavior. Its live ComfyNodes
+launcher now also defaults to synchronous
+`Attention.forward`, with optional telemetry collected
+from the same already-synchronized CUDA events.
+The full-cycle batch experiment requires a **separate**
+explicit `-BatchTiming` flag and fails closed if
+the PyTorch reserved-memory peak exceeds 15,360 MiB,
+before propagating a partial result. No production
+promotion or new performance claim. Exact dense parity
+remains UNTESTED; video quality was provisionally
+accepted on the prior synchronized path.
+
+Next substantive target is the **Graph+out_proj** hot
+path (three quarters of measured HTRC GPU time),
+especially the cost of per-query-window Graph replay
+and KV staging, not blind further QKV quantization.
+Any proposed tiles/window/group experiment needs
+an independent model-free memory gate before an
+expensive six-step video.
