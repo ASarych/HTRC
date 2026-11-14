@@ -273,3 +273,106 @@ hardware_profile = completed, without changing the production,
 profiling or CSV parser code. No evidence of a new CUDA failure.
 The updated test suite and new Nsight run remain UNRUN until
 explicitly executed; no GPU counter result is claimed.
+
+
+## 2026-11-14 — first accepted SM120 materialized NCU counters
+
+Source evidence: user-supplied flat_materialized_ncu.json (16,594 bytes,
+SHA-256 9d98d9aff1037e706cc7dde19782b747d193305a7a730a594e5b046d58fa83bd)
+from EXACT HEAD 629c0bb00b7a6985f7a394c093b80afd6e4e295c.
+The file is NOT committed to this repository; its verified summary is below.
+
+Gate: status=PROFILE_COUNTERS_COLLECTED, completed=true,
+hardware_profile=true, query_preflight=PASS_ADVERTISED_METRIC_NAMES,
+query_exit_code=0, ncu_exit_code=0, strict_child_parity_marker=true,
+has_stats_and_tile=true; three verified installed NCU counter names:
+
+    dram__bytes_op_read.sum
+    dram__bytes_op_write.sum
+    lts__t_sectors_srcunit_tex_op_read.sum
+
+Pinned test: RTX 5070 Ti SM120, 15,275 tokens, four distinct BF16
+heads, balanced 512 exact leaves, Tile32, STATS_BT16, materialized
+CUDA Graph with native K/V and unchanged eager parity gate. Exactly
+12 graph nodes were sampled: four stats, four rowmax and four tile.
+CSV had one valid header and 285 columns; no requested metric was
+missing. No model/video was run. These are NCU kernel samples,
+NOT full-call bandwidth or durations.
+
+Measured counters (per-stage 4 sample sums):
+
+| Stage | Graph nodes | DRAM read bytes | DRAM write bytes | L2 TEX read sectors |
+|---|---:|---:|---:|---:|
+| Stats | 4 | 126,117,376 | 123,636,992 | 9,711,410 |
+| Rowmax | 4 | 75,555,328 | 0 | 3,171,608 |
+| Tile | 4 | 302,623,488 | 32,213,760 | 57,970,466 |
+| Sum of 12 sampled nodes | 12 | 504,296,192 | 155,850,752 | 70,853,484 |
+
+Arithmetic MEANS per individual sampled node (MiB=2^20 bytes,
+L2 unit left as native 32-B sectors, no invalid L2/DRAM hit ratio):
+
+| Stage | DRAM read MiB/node | DRAM write MiB/node | L2 read sectors/node |
+|---|---:|---:|---:|
+| Stats | 30.0687 | 29.4774 | 2,427,852.5 |
+| Rowmax | 18.0138 | 0 | 792,902 |
+| Tile | 72.1511 | 7.6804 | 14,492,616.5 |
+
+Among ONLY these twelve nodes (equal samples per kernel stage),
+Tile accounts for 60.009% of captured DRAM read bytes and
+81.817% of L2 TEX read sectors; Stats respectively 25.009%
+and 13.706%, Rowmax 14.982% and 4.476%. That identifies
+Tile as the largest source of sampled READ TRAFFIC, NOT a
+proven time/throughput or whole-attention bottleneck.
+
+Read-counter population CV across four nodes was 0.67% Stats,
+0.50% Rowmax, 1.34% Tile, supporting the stability of the
+observed per-node read magnitudes. Write-counter CV was
+28.28% Stats and 51.40% Tile (Rowmax always zero): these
+writes are not yet stable evidence for a VRAM-savings claim.
+Individual DRAM write bytes for Stats:
+46,022,144 / 25,197,312 / 26,630,656 / 25,786,880.
+Individual DRAM write bytes for Tile:
+5,823,232 / 5,584,640 / 15,221,504 / 5,584,384.
+The source of this write variation is UNKNOWN.
+
+IMPORTANT profiler interpretation:
+- Nvidia NCU node replay and cache policy may alter physical
+  DRAM/L2 traffic compared with normal Graph execution.
+- lts__t_sectors_srcunit_tex_op_read.sum counts sectors serviced
+  by L2 for TEX read requests, not hits. Its magnitude cannot
+  be divided by the distinct DRAM byte counter to calculate
+  cache hit rate. No L2 hit/miss breakdown was captured.
+- This is NOT an additive, wall-time weighted stage breakdown.
+  Sampling 4 launches per stage does not cover the complete
+  multi-head/multi-window attention call and does not measure
+  bottleneck latency or instructions executed.
+- No occupancy, register count or spill counters were parsed
+  into validated per-kernel JSON metrics. The CSV header's
+  launch__ fields are metadata and cannot substitute for a
+  measured occupancy/spill study.
+- No numerical change, performance optimization, replacement
+  kernel, CUDA Graph contract or production change was tested.
+
+### Decision after hardware counter gate
+
+CAPTURED EVIDENCE: Tile is the dominant READ-TRAFFIC stage
+among the sampled nodes and issues many L2 read-sector
+requests relative to other stages. It is NOT yet demonstrated
+to be DRAM-bandwidth-bound. Current materialized Tile32 /
+STATS_BT16 remains the baseline; fused_vb and split_stream
+stay NO_GO, SM120 GeForce TMA multicast stays NO_GO. Do NOT
+derive an empirical L2 hit rate from this report and do NOT
+add a speculative V multicast or L2 hint just because Tile
+has many sectors.
+
+If a new GPU experiment is warranted, the next narrow gate is
+kernel TIME and occupancy/resource pressure for the EXISTING
+Tile (registers/thread, SMEM, spills/local-memory operations,
+achieved occupancy), versus Stats, at the SAME exact head and
+QKV setup. Use an independent stable unprofiled complete-call
+timing control; NCU replay timing is not that control. Only
+after confirming the costly resource/time factor should a
+new opt-in Tile optimization be written. Prefer keeping one
+JSON per new experiment. 40k/82k, model-resident and video
+remain UNRUN. No further GPU profiling is required to close
+this read-traffic result.
