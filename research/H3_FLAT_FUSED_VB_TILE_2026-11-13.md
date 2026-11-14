@@ -320,3 +320,118 @@ Model-resident GPU and independent-process VRAM are UNRUN.
 
 The new ABBA CPU source contracts, CUDA benchmark and
 speed confirmation are UNRUN until executed on RTX 5070 Ti.
+
+
+## 2026-11-14 — completed strict four-capture ABBA: fused_vb speed NO_GO
+
+Evidence: user-provided flat_fused_vb_abba.json from
+719db9ca11995adc43c1c1a93f59e26578f4d5c1.
+status=PASS_NUMERIC, completed=true, paired_abba=true.
+Exact shape: 15,275 tokens, four native distinct BF16 heads,
+Balanced/512, Tile32, two independent QKV banks,
+five additional post-capture warmups and seven timed GPU
+events per each of FOUR independently captured sessions,
+order materialized/fused_vb/fused_vb/materialized.
+No model, VAE, video, or Sol.
+
+| Capture block | Variant | GPU median ms | Wall median ms |
+|---|---|---:|---:|
+| 1 | materialized | 4.287584 | 5.842000 |
+| 2 | fused_vb | 13.432864 | 14.973400 |
+| 3 | fused_vb | 13.512032 | 15.298500 |
+| 4 | materialized | 4.281728 | 5.934200 |
+
+Median of the two independent GPU block medians:
+**materialized 4.284656 ms**, **fused_vb 13.472448 ms**.
+Ratio materialized/fused = **0.318031x**;
+fused requires **3.14435x** materialized GPU time
+(+214.43%). The two materialized medians agree to
+~0.14%, and both fused medians are ~13.4-13.5 ms.
+Built-in candidate_speed_signal=false and
+consistent_faster_across_capture_blocks=false.
+
+All four fresh-capture first-call tests return
+PASS_FIRST_REAL_CALL with strict eager/Graph bit equality,
+bank-B eager/Graph parity, and replay equality. Both
+complete output banks are bit-exact across the variants
+and repeated captures. Thus numeric correctness is
+confirmed for this synthetic shape, while the candidate
+speed hypothesis is conclusively rejected for it.
+
+Earlier fixed-order 5-round report at the same nominal
+shape measured materialized 25.462938 ms and fused
+14.105049 ms, appearing to show 1.8x fused speedup.
+Those timings were not reproduced after strict ABBA.
+The earlier first-arm 25.46-ms anomaly's root cause
+remains UNKNOWN; do not ascribe it to clocks or
+allocator behavior without direct evidence. The
+independent-capture result has stable per-mode medians.
+
+**DECISION: fused_vb speed NO_GO / CLOSED.**
+Preserve the experimental kernel for research but do
+not enable it in the normal dispatcher, increase
+bench rounds, or run real H3 model/video/40k for this
+same naive recompute geometry. Keep materialized
+Tile32 with STATS_BT=16 and stock eager fallback.
+This evidence commit does NOT change runtime behavior.
+
+VRAM remains unproven: first-call
+extra_reserved_mib_non_isolated=320 / 0 / 0 / 44 for
+the four blocks is affected by shared CUDA allocator
+and Graph private pools. It is NOT an independently
+isolated comparison. The materialized workspace's
+BF16 VB component (for one full 32-tile, 4-head
+15,275-token window) has a static shape
+[4,32,954,128], about 29.81 MiB of raw data;
+removing it does not by itself quantify live Graph
+memory savings or explain the observed 9.19-ms
+GPU slowdown.
+
+### New architectural question — multi-centre K/V reuse, no new kernel yet
+
+The old fused_vb Tile executes a per-leaf
+_fused_vbar_one_leaf call inside each Tile's far
+loop, repeatedly loading the SAME native K/V
+leaf for different centres/Tiles. The split_stream
+option also retains a separate VB producer and
+consumer and was slower in the earlier short A/B.
+
+Any alternative needs a distinct reuse hypothesis,
+not another BT/BN sweep:
+
+1. Preserve existing exact G/LZ/SG score generation,
+   fixed IDX/EXCL selection and 512 exact near
+   leaves (or 256 in Fast), native K/V and the
+   original far online-softmax + tail + merge.
+2. Propose a **centre-block by leaf-block** fused
+   producer/consumer schedule: load each native K/V
+   leaf into shared/register-local storage once for
+   a bounded group of centres, compute per-centre
+   BF16 VB with the SAME rowwise reduction, and
+   immediately consume it for Tile far accumulation.
+   Do not write global full VB. Avoid recomputation
+   for each Tile/RB/replay split. Reuse must be
+   explicit and measurable, not assumed from syntax.
+3. First produce a traffic/CTA ownership design:
+   number of K/V loads per (head, leaf, centre
+   block), centres per CTA, register/shared-memory
+   occupancy, split order, exact BF16 rounding and
+   how different Q rows accumulate. The previous
+   source shows one query centre per Tile in group1;
+   group scheduling must preserve which MU/EXCL
+   is attached to each query tile.
+4. Only if the design predicts lower total work
+   AND a practical 5070 Ti occupancy should a
+   distinct opt-in kernel be prototyped. Gate on
+   two-bank bit-exact full output + ABBA full-call
+   GPU events, then separately isolated VRAM;
+   only afterward consider 40k/model-resident.
+   Do not equate isolated leaf-kernel benchmarks
+   with attention throughput.
+
+**No new CUDA implementation or GPU request is
+made by this closure.** Real H3, video, VRAM
+isolation and a cooperative implementation remain
+UNRUN / NOT IMPLEMENTED. The ABBA result supersedes
+the earlier provisional 1.8x speed interpretation,
+not the earlier PASS_NUMERIC result.
