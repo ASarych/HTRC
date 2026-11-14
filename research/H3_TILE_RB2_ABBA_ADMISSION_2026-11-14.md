@@ -140,3 +140,104 @@ UNRUN. H3 checkpoint, video, full-attention timing,
 production promotion: UNRUN / PROHIBITED.
 
 No acceleration or accuracy change is claimed.
+
+
+## 2026-11-15 — user RTX 5070 Ti RB2 A/B/B/A result: NO_GO
+
+Original uploaded `flat_tile_resource_abba(3).json`:
+- Raw bytes: **4,544**, SHA-256
+  `46a3511bcee974b65b17562d632f6b6d03ebf531f620d6c41fa8d3709bacf881`.
+- Exact tested source HEAD:
+  `16455263b3e41d000d7c591e4d1b640dabe585b5`.
+- Schema `htrc-tile32-research-resource-abba-v1`;
+  `status=PASS_NUMERIC_TILE_ONLY`, `completed=true`,
+  `candidate=rb2`, `source_head` matches.
+- Same benchmark setup as admission: RTX 5070 Ti SM120,
+  15,275 tokens, 4 distinct BF16 QKV heads, balanced/512,
+  32 tiles, 2,048 query rows in one measured Tile window.
+  Two distinct QKV banks yielded bit-exact PM/PL/PACC
+  versus control; first-call complete Graph/eager and
+  bank-B eager parity gates both PASSED.
+- The result is **one-window Tile-only Graph performance**,
+  NOT full-attention throughput, model denoise, H3, VAE
+  or video performance. No Nsight capture in this run.
+
+Compiled resources and launch geometry (from JSON):
+
+| Metric | Control RB1 | Candidate RB2 |
+|---|---:|---:|
+| Registers/thread | 255 | 140 |
+| Shared memory, bytes/CTA | 49,664 | 37,376 |
+| Compiler-reported spills | 0 | 0 |
+| Four-warp CTAs for one window | 512 | 1,024 |
+| Query rows per CTA | 64 | 32 |
+| Register upper bound, CTA/SM | 2 | 3 |
+| Shared upper bound, CTA/SM | 2 | 2 |
+| Combined optimistic CTA/SM | 2 | 2 |
+
+Registers reduced **45.10%**, shared memory **24.74%**.
+Three simultaneously resident 128-thread CTAs would
+require BOTH registers/thread <= 170 and shared memory
+<= floor(102400/3) = **34,133 bytes/CTA** (ignoring
+granularity). RB2 meets the register requirement but
+misses the shared requirement by **3,243 bytes/CTA**;
+thus **no third CTA residency was admitted** despite
+the larger CTA grid.
+
+Four independent Tile-only captures in control/RB2/RB2/
+control order, each with 5 warmups and 7 GPU-event samples:
+
+| Block | Variant | Median Tile time, ms |
+|---|---|---:|
+| 1 | control | 0.389216006 |
+| 2 | RB2 | 0.516672015 |
+| 3 | RB2 | 0.517216027 |
+| 4 | control | 0.390175998 |
+
+Control median-of-block-medians = **0.389696002 ms**;
+RB2 = **0.516944021 ms**. RB2 **took 32.653% longer**,
+ratio control/candidate **0.753845651**. Both RB2
+capture blocks were slower than both control captures.
+The configured >=5% speedup plus two-capture consistency
+gate FAILS, even though all numerical parity gates PASS.
+**Decision: RB2 = NO_GO_TILE_ONLY.**
+
+Interpretation limits:
+- Doubling CTAs without increasing residency, together
+  with duplicated per-CTA operand/state loads, is
+  compatible with this slowdown. The counterfactual
+  source of slowdown has not been established by a
+  stall/transaction breakdown.
+- Reducing registers is not synonymous with increasing
+  attained occupancy; the SMEM gate remains binding.
+- This result does not support changing the default
+  head-batch launcher, the existing materialized Tile32,
+  Stats BT16, BN64, RB1, two stages or any production
+  path. The research-only RB2 opt-in remains available
+  but is NOT admitted for runtime promotion.
+
+### Falsifiable possible next research direction — not implemented
+
+There is a **specific new resource threshold**, unlike
+a blind RB4/RB8 sweep: RB2 already meets the register
+ceiling for 3 CTA/SM but needs 3,243 fewer shared bytes.
+The earlier standalone `late_q` experiment at RB1
+reduced shared memory by 8,192 B/CTA but did not
+change register pressure and was slightly slower.
+That SMEM reduction cannot be assumed additive at RB2.
+
+A **RB2 + LATE_NEAR_Q** combined specialization would
+be justified for **compile/resource admission only**:
+first measure its actual registers, shared bytes and
+spills, and check the 3-CTA hardware constraints.
+Stop before any speed claim if it fails either resource
+ceiling or exact PM/PL/PACC parity. Only if it crosses
+the concrete 3-CTA resource boundary (and preserves
+numerics) is an independent-capture Tile-only A/B/B/A
+worth considering; then apply the SAME >=5%-faster and
+both-block consistency gate. Even three resident CTAs
+are not a guarantee of faster computation.
+
+No new GPU execution, combined kernel, code test or
+full-H3 experiment was performed while documenting
+this measured RB2 result.
