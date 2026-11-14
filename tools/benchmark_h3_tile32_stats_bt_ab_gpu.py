@@ -271,7 +271,7 @@ def emit(stage, tokens, heads, rounds):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--tokens",type=int,default=8319)
+    p.add_argument("--tokens",type=int,default=40759)
     p.add_argument("--heads",type=int,default=8)
     p.add_argument("--rounds",type=int,default=3)
     p.add_argument("--output",type=Path,default=Path(
