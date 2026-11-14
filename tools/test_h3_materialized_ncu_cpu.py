@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 from pathlib import Path
+import re
 import unittest
 
 SRC = Path(__file__).with_name("profile_h3_flat_materialized_ncu.py")
@@ -19,11 +20,35 @@ class NcuMaterializedAdmission(unittest.TestCase):
         self.assertEqual(c[c.index("--nvtx-include")+1],
                          "HTRC_MATERIALIZED_REPLAY/")
         self.assertEqual(c[c.index("--launch-count")+1],"12")
-        self.assertIn("regex:(_stats_kernel|_rowmax_kernel|_tile_kernel)",c)
+        self.assertIn(model.KERNEL_FILTER,c)
         self.assertNotIn("--export", c)
         for count in (0,17):
             with self.assertRaises(ValueError):
                 model.command("ncu","python","script",count)
+
+    def test_windows_batch_kernel_filter_no_shell_metacharacters(self):
+        # Regression: ncu.BAT via cmd.exe treated '|' as pipeline and
+        # attempted to execute _rowmax_kernel as an external command.
+        c = model.command("ncu.BAT","python.exe","script.py",12)
+        k = c[c.index("--kernel-name") + 1]
+        self.assertEqual(k,"regex:_[srt][a-z]*_kernel")
+        self.assertFalse(any(ch in k for ch in model.WINDOWS_BATCH_META))
+        pattern = re.compile(k.removeprefix("regex:"))
+        for kernel in ("_stats_kernel", "_rowmax_kernel", "_tile_kernel"):
+            self.assertIsNotNone(pattern.search(kernel), kernel)
+        for other in ("_merge_kernel", "empty_kernel", "_prep_kernel"):
+            self.assertIsNone(pattern.search(other), other)
+
+    def test_ncu_console_output_oem_decode(self):
+        message = (
+            '"_rowmax_kernel" ne yavlyaetsya komandoy '
+            '- Windows cmd pipeline misuse'
+        )
+        self.assertEqual(model.decode_profiler_output(
+            message.encode("utf-8")), message)
+        cyrillic = '"_rowmax_kernel" не является внутренней или внешней командой'
+        self.assertEqual(
+            model.decode_profiler_output(cyrillic.encode("cp866")), cyrillic)
 
     def test_ncu_csv_parser_filters_noise_and_header_units(self):
         metrics = model.METRICS

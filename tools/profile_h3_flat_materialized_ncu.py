@@ -17,7 +17,11 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NVTX_RANGE = "HTRC_MATERIALIZED_REPLAY/"
-KERNEL_FILTER = "regex:(_stats_kernel|_rowmax_kernel|_tile_kernel)"
+# ncu.BAT is parsed by cmd.exe on Windows even if subprocess shell=False.
+# Do not pass metacharacters such as | or parentheses via this .BAT wrapper.
+# The bracket class matches stats, rowmax and tile without shell alternation.
+KERNEL_FILTER = "regex:_[srt][a-z]*_kernel"
+WINDOWS_BATCH_META = "|&<>^()%!"
 METRICS = (
     "dram__bytes_read.sum",
     "dram__bytes_write.sum",
@@ -29,6 +33,8 @@ METRICS = (
 def command(ncu: str, py: str, self_path: str, count: int = 12) -> list[str]:
     if not 1 <= count <= 16:
         raise ValueError("Profiled launches must be 1..16")
+    if any(ch in KERNEL_FILTER for ch in WINDOWS_BATCH_META):
+        raise ValueError("ncu.BAT filter contains unsafe Windows cmd metacharacters")
     return [
         ncu, "--nvtx", "--nvtx-include", NVTX_RANGE,
         "--graph-profiling", "node",
@@ -37,6 +43,18 @@ def command(ncu: str, py: str, self_path: str, count: int = 12) -> list[str]:
         "--csv", "--page", "raw", "--print-units", "base",
         py, "-B", self_path, "--child",
     ]
+
+
+def decode_profiler_output(raw: bytes) -> str:
+    """Decode UTF-8 CLI output, falling back to Windows console OEM code page.
+
+    cmd.exe error messages in Russian Windows are usually OEM cp866, not
+    Python's ANSI locale encoding. Preserve diagnostics in our UTF-8 JSON.
+    """
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("oem" if os.name == "nt" else "cp866", errors="replace")
 
 
 def parse_csv(output: str) -> list[dict]:
@@ -191,10 +209,10 @@ def run_parent(ncu: str, count: int) -> dict:
     try:
         proc = subprocess.run(
             command(ncu, sys.executable, str(Path(__file__).resolve()), count),
-            cwd=str(ROOT), text=True, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, errors="replace", timeout=600,
+            cwd=str(ROOT), stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, timeout=600,
         )
-        output = proc.stdout
+        output = decode_profiler_output(proc.stdout or b"")
         result["ncu_exit_code"] = proc.returncode
         result["strict_child_parity_marker"] = (
             "HTRC_NCU_CHILD_STRICT_PARITY_PASS" in output

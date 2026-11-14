@@ -126,3 +126,46 @@ resource data should we decide whether L2
 traffic optimization is worthwhile. If the
 counters fail or sampled nodes are incomplete,
 diagnose the profiler gate, not the math.
+
+## 2026-11-14 — Windows ncu.BAT pipe-token FAIL_CLOSED diagnosis
+
+User's local Windows run on exact HEAD
+34ca7f0225c49a1e9e213c38fa4e775d40536a09:
+CPU source contracts PASS; profiler JSON FAIL_CLOSED,
+ncu_exit_code=255, strict_child_parity_marker=false,
+completed=false. The final captured message starts
+"_rowmax_kernel" followed by CP866-misdecoded Russian
+Windows "not recognized as internal or external command".
+This is strong evidence for cmd.exe interpreting literal
+pipe characters from the old NCU kernel regex
+regex:(_stats_kernel|_rowmax_kernel|_tile_kernel)
+as Windows command pipelines. It is NOT a CUDA numerical
+failure and no DRAM or L2 counters were collected.
+
+Windows .BAT scripts may be executed through cmd.exe
+even with subprocess.run(..., shell=False): Python docs
+https://docs.python.org/3/library/subprocess.html#security-considerations
+NVIDIA documents regex: substring matching for --kernel-name:
+https://docs.nvidia.com/nsight-compute/NsightComputeCli/
+
+Fix is limited to the research profiler:
+- Replace the alternation regex with an equivalent safe
+  character-class expression regex:_[srt][a-z]*_kernel
+  covering _stats_kernel, _rowmax_kernel and _tile_kernel.
+  The JSON parser still admits ONLY those exact three
+  kernel families. The regex also avoids parentheses,
+  pipes, redirection and other cmd.exe metacharacters.
+- command() explicitly rejects accidental reintroduction
+  of Windows cmd metacharacters in the NCU filter.
+- Capture subprocess stdout/stderr as bytes. Decode
+  UTF-8 first, Windows OEM fallback (typically cp866)
+  for correctly legible Russian cmd.exe diagnostics.
+- Add two CPU regression tests; retain all prior gates,
+  same Graph node profile, same 12 max profiled launches,
+  no new CUDA kernel, and unchanged production/math.
+
+This is a Windows launch repair, NOT proof that Nsight
+will collect valid hardware counters. CPU regression
+tests and the new GPU profiling run are UNRUN until
+executed; if the next run fails, inspect the one JSON
+for the next distinct error rather than guessing.
