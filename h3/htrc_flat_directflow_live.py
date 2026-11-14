@@ -350,6 +350,23 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
     cap = shared.capture_from_bhsd(q, k, v, heads)
     s, total_heads, _ = map(int, cap["q_qhd"].shape)
     cfg = shared.flat_config(mode, tiles)
+    # BT32 is not selectable in normal HTRC or a non-Tile32 geometry.
+    # Distinct code specializations must never reuse the same captured
+    # CUDAGraph session: include the research BT in the session key.
+    stats_bt = _env_int("APL_HTRC_TILE32_STATS_BT", 16, 16, 32)
+    if stats_bt not in (16, 32):
+        raise ValueError("Stats BT must be the validated 16 or research 32")
+    if stats_bt == 32 and (
+        tiles != 32 or not compare_only
+        or research_group_size != 8
+        or query_provider is None or kv_provider is None
+        or research_source_kind != "native_h3"
+        or os.environ.get("APL_HTRC_GRAPH_CAPTURE_SAFE_MU", "0") != "1"
+    ):
+        raise RuntimeError(
+            "Stats BT32 is only enabled for Tile32 native_h3 "
+            "eight-head compare-only Graph research with safe CUDA capture"
+        )
     expected_leaves = {"fast": 256, "balanced": 512}[mode]
     if (int(cfg["exact_leaves"]) != expected_leaves
         or int(cfg.get("kern", {}).get("group", 1)) != 1):
@@ -442,7 +459,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
         )
     geom = (dev.index, s, tiles, str(q.dtype), mode, group_cap, vb_mode,
             compare_only, policy, query_provider is not None,
-            kv_provider is not None, research_source_kind)
+            kv_provider is not None, research_source_kind, stats_bt)
     geometries = list(windows.iter_query_windows(
         s, tiles, tile_rows=int(cfg["tile"]), center_group=1
     ))
@@ -614,6 +631,7 @@ def graph_attention_bthd(q, k, v, *, heads, mode, tiles,
                     "gpu":torch.cuda.get_device_name(dev),
                     "heads":total_heads, "tokens":s, "head_groups":rows,
                     "window_tiles":tiles,
+                    "stats_kernel_bt":stats_bt,
                     "query_windows":len(geometries),
                     "graph_replays_per_attention":len(geometries)*math.ceil(total_heads/group_cap),
                     "eager_first_call_diagnostic":(
