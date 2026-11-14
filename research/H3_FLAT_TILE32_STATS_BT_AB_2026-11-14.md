@@ -117,3 +117,35 @@ as independent whole-model VRAM measurements.
 Status on user's RTX 5070 Ti:
 **NEW CPU/GPU TESTS UNRUN**; no BT32 speedup or
 numerical parity claim.
+
+## 2026-11-14 17:58 — first Windows preflight failure and regression fix
+
+The user executed the isolated exact-HEAD CUDA A/B after its
+CPU source/CTA gate succeeded. It **failed before any BT16
+CUDA kernel or Graph capture**:
+
+```text
+phase=BT16_capture
+RuntimeError: H3 Direct-Flow is inference-only
+graph_attention_bthd -> torch.is_grad_enabled()
+```
+
+Root cause was **our benchmark harness**, not the Tile32
+statistics kernel. `tools/benchmark_h3_tile32_stats_bt_ab_gpu.py`
+called the strict HTRC output-producing Graph without entering
+`torch.inference_mode()`. The DirectFlow guard correctly
+rejected grad-enabled execution before any GPU timing was
+recorded. Prior static 20/20 checks failed to cover this
+runtime precondition.
+
+Fixed by decorating the complete GPU benchmark `emit()` entry
+with `@torch.inference_mode()`, rather than changing HTRC
+Graph policy or disabling grad globally for unrelated code.
+`tools/check_h3_tile32_stats_bt_cpu.py` now parses the
+actual benchmark's Python AST and enforces the exact
+`torch.inference_mode()` decorator before GPU test startup.
+
+No Flat math, Tile16/Tile32 defaults, capture cache, H3 model
+weights, or ComfyNodes path changed. The corrected CPU/GPU
+tests are **UNRUN** in this environment. No GPU speed result
+is inferred from this failed harness launch.
