@@ -759,7 +759,27 @@ def prepare_batched_head_states(capture, raw_heads, config, triton_module,
     VB=state_buffer("VB",((h,centers,nb,dim) if vb_mode=="materialized" else (1,)),torch.bfloat16)
     LZ=state_buffer("LZ",(h,centers,nb),torch.float32)
     SG=state_buffer("SG",(h,centers,nb),torch.float32)
-    BT,BL=16,4
+    # Tile32-only research knob: one stats CTA handles 32 rather than
+    # 16 query centres. The default kernel and all other HTRC modes
+    # remain exactly the original BT=16 specialization. This changes
+    # ONLY the stats launch grid, never the leaf mathematics.
+    stats_bt_raw = os.environ.get("APL_HTRC_TILE32_STATS_BT", "16")
+    if stats_bt_raw not in ("16", "32"):
+        raise ValueError("APL_HTRC_TILE32_STATS_BT must be 16 or 32")
+    if stats_bt_raw == "32" and (
+        not os.environ.get("APL_HTRC_GRAPH_CAPTURE_SAFE_MU", "0") == "1"
+        or not 1 <= tile_count <= 32
+        or group != 1 or h != 8
+        or query_staging != "native_direct"
+        or kv_cache is None or query_workspace is None
+        or vb_mode != "materialized"
+        or input_cast != "gpu" or quant_backend != "triton"
+    ):
+        raise RuntimeError(
+            "Stats BT32 is restricted to capture-safe native 8-head "
+            "Tile32 materialized Graph research; no eager/stock fallback"
+        )
+    BT,BL=int(stats_bt_raw),4
     blocks=math.ceil(centers/BT)
     # Head count is a dynamic grid dimension, not a kernel specialization.
     triton_module._stats_kernel[(h*blocks,triton_module.triton.cdiv(nb,BL))](
