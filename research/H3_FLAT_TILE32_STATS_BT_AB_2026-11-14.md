@@ -149,3 +149,66 @@ No Flat math, Tile16/Tile32 defaults, capture cache, H3 model
 weights, or ComfyNodes path changed. The corrected CPU/GPU
 tests are **UNRUN** in this environment. No GPU speed result
 is inferred from this failed harness launch.
+
+## 2026-11-14 — first completed 8-head CUDA A/B: BT32 not faster
+
+User-supplied RTX 5070 Ti report `flat_tile32_stats_bt_ab.json`
+from exact HEAD `dc8c08d437e1849b83638cfb0dbc69bca7091284`:
+`PASS_NUMERIC`, 40,759 tokens, balanced/512, two independent
+BF16 Q/K/V input banks; both modes bit-exact across every output row.
+No H3 checkpoint, denoise, VAE, video, or real production promotion.
+
+- BT16 warmed full-attention GPU events: 37.2983, 37.2873,
+  37.3243 ms; median **37.2983 ms**.
+- BT32 warmed GPU events: 58.4037, 53.6107, 37.4611 ms;
+  median **53.6107 ms**, ratio BT16/BT32 = 0.6957.
+- One eager full-window `leaf_stats` GPU interval:
+  **0.618496 ms** (BT16) vs **0.619552 ms** (BT32).
+  Tile kernel intervals 0.949792 vs 0.947744 ms; these
+  are not per-Graph timings and do not explain the two slow
+  BT32 attention samples.
+- Arm-baseline allocated-peak deltas: 1123.20 / 1123.13 MiB.
+  Cross-arm PyTorch caches, retained bank outputs, and Graph
+  private pools prevent interpreting absolute peaks as an
+  independent total VRAM comparison.
+
+Decision: keep **STATS_BT=16** and Tile32 default. Do not run
+an H3 model/video test of BT32 based on these data. The
+BT32 37.46 ms final sample is too close to BT16 to rule
+out capture/order/warmup-related variability.
+
+### Opt-in independent-capture ABBA follow-up
+
+The CUDA harness now supports `--paired-abba --warmup-replays 5
+--rounds 7`. It performs BT16, BT32, BT32, BT16 in one
+process with **fresh CUDAGraph captures each block**, two
+independent input banks and bit-exact full outputs both
+across BT variants and repeat captures. Each block gets five
+additional untimed full-attention replays AFTER capture,
+then seven warmed timed replays. No timing includes capture
+or eager stage attribution; the eager stage measurement is
+reported separately for each block.
+
+The single JSON includes capture order, raw GPU-event
+samples, block medians, and a speed decision. An
+**exploratory** BT32 speed signal requires >=5% gain in
+the median of block medians AND both BT32 block medians
+strictly below both BT16 medians. This is a threshold for
+further checking only; NOT permission to promote to H3.
+Allocator baselines are still not isolated by process.
+
+On the user's Windows checkout (from exact pushed HEAD):
+
+```powershell
+& "D:\HTRC-graph-group-ab-20261113\tools\run_h3_tile32_stats_bt_ab_safe.ps1" -ExactHead "<exact pushed HEAD>" -PairedABBA -Rounds 7
+```
+
+The safe runner checks source, ComfyUI/Blender inactivity,
+Python AST CPU admission, and stores ONE persistent report
+at `D:\ComfyOutput\H3\math_probe\flat_tile32_stats_bt_abba.json`.
+The previous A/B JSON is left intact. The original non-ABBA
+runner behavior remains unchanged.
+
+New Python CPU/source gate, actual CUDA ABBA, and real H3
+are **UNRUN** as of this commit. No kernel/default/runtime
+math or installed ComfyNodes source was modified.

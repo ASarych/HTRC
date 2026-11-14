@@ -3,7 +3,8 @@ param(
     [ValidatePattern('^[0-9a-f]{40}$')]
     [string]$ExactHead,
     [ValidateRange(2,12)]
-    [int]$Rounds = 3
+    [int]$Rounds = 3,
+    [switch]$PairedABBA
 )
 
 # Only a temporary exact-HEAD HTRC checkout is executed. No ComfyUI
@@ -12,7 +13,14 @@ $ErrorActionPreference = "Stop"
 $source = "D:\HTRC-graph-group-ab-20261113"
 $branch = "experiment/flat-memory-to-speed-balanced-20261113"
 $py = "C:\Users\Misya\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\.venv\Scripts\python.exe"
-$report = "D:\ComfyOutput\H3\math_probe\flat_tile32_stats_bt_ab.json"
+$report = if ($PairedABBA) {
+    "D:\ComfyOutput\H3\math_probe\flat_tile32_stats_bt_abba.json"
+} else {
+    "D:\ComfyOutput\H3\math_probe\flat_tile32_stats_bt_ab.json"
+}
+if ($PairedABBA -and $Rounds -lt 5) {
+    throw "Paired ABBA needs -Rounds 5 or more; use -Rounds 7"
+}
 $tag = [guid]::NewGuid().ToString("N").Substring(0,10)
 $clean = "D:\HTRC-stats-BT-ab-$tag"
 
@@ -57,8 +65,12 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "CPU admission failed. Model/GPU work not started"
     }
-    & $py -B (Join-Path $clean "tools\benchmark_h3_tile32_stats_bt_ab_gpu.py") `
-        --tokens 40759 --heads 8 --rounds $Rounds --output $report
+    $benchArgs = @("--tokens", "40759", "--heads", "8",
+                   "--rounds", "$Rounds", "--output", $report)
+    if ($PairedABBA) {
+        $benchArgs += @("--paired-abba", "--warmup-replays", "5")
+    }
+    & $py -B (Join-Path $clean "tools\benchmark_h3_tile32_stats_bt_ab_gpu.py") @benchArgs
     if ($LASTEXITCODE -ne 0) {
         throw "Stats BT16-vs-BT32 CUDA A/B failed closed. Inspect the single JSON"
     }
@@ -74,6 +86,14 @@ try {
         $result.model_checkpoint_loaded -ne $false -or
         $result.video_or_vae_executed -ne $false) {
         throw "BT32 research output parity or scope gate failed"
+    }
+    if ($PairedABBA -and (
+        $result.paired_abba -ne $true -or
+        (@($result.capture_order) -join ",") -ne "16,32,32,16" -or
+        @($result.arms.'16'.blocks).Count -ne 2 -or
+        @($result.arms.'32'.blocks).Count -ne 2
+    )) {
+        throw "Incomplete paired ABBA capture schedule"
     }
     Write-Host "HTRC stats BT A/B: PASSED numerical parity"
     Write-Host "GPU ratio BT16/BT32: $($result.gpu_speed_ratio_bt16_over_bt32)"

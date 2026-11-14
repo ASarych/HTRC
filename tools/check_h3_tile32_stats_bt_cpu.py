@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import math
+import statistics
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -70,6 +71,38 @@ def check():
         and d.func.attr=="inference_mode"
         and not d.args and not d.keywords
     ), "GPU benchmark must enter torch.inference_mode() before DirectFlow"
+    # Validate the exact speed-decision Python AST without importing torch.
+    helper = [
+        node for node in gpu_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_speed_decision"
+    ]
+    assert len(helper) == 1, "Expected one pure A/B decision helper"
+    namespace = {"math": math, "statistics": statistics}
+    exec(compile(ast.Module(body=helper, type_ignores=[]), str(GPU), "exec"),
+         namespace)
+    decide = namespace["_speed_decision"]
+    assert decide([37.3, 37.29], [58.4, 37.46], True)[
+        "candidate_faster_on_gpu"] is False
+    assert decide([37.2, 37.4], [34.8, 34.9], True)[
+        "candidate_faster_on_gpu"] is True
+    assert decide([20.0, 100.0], [18.0, 40.0], True)[
+        "candidate_faster_on_gpu"] is False
+    try:
+        decide([37.0], [36.0], True)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Incomplete ABBA decision must reject")
+    for marker in (
+        'order = (16, 32, 32, 16) if paired_abba else (16, 32)',
+        'for _ in range(warmup_replays):',
+        'if key in outputs:',
+        'blocks[str(bt)].append(record)',
+        '"speed_decision":decision',
+        '--paired-abba',
+        '--warmup-replays',
+    ):
+        assert marker in gpu, "Broken ABBA source admission: " + marker
     for marker in (
         'for bt in (16, 32):',
         'for bank_index in (0, 1):',

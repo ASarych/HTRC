@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import statistics
@@ -32,13 +33,45 @@ from h3 import htrc_flat_live_backend as live
 from h3 import htrc_flat_windows as windows
 
 
+def _speed_decision(bt16, bt32, paired_abba):
+    """Pure arithmetic: source gate executes this without importing torch."""
+    if not bt16 or len(bt16) != len(bt32):
+        raise ValueError("Both modes require the same nonzero block count")
+    if paired_abba and len(bt16) != 2:
+        raise ValueError("ABBA requires two independent captures per mode")
+    if any(not math.isfinite(x) or x <= 0 for x in bt16 + bt32):
+        raise ValueError("GPU event block medians must be finite and positive")
+    ratio = statistics.median(bt16) / statistics.median(bt32)
+    consistent = max(bt32) < min(bt16)
+    candidate = bool(
+        (ratio >= 1.05 and consistent)
+        if paired_abba else (ratio > 1.0)
+    )
+    return {
+        "gpu_speed_ratio_bt16_over_bt32": ratio,
+        "candidate_faster_on_gpu": candidate,
+        "bt32_strictly_faster_across_all_captures": (
+            consistent if paired_abba else None
+        ),
+        "candidate_criterion": (
+            "ABBA: >=5% advantage and both BT32 block medians below both BT16"
+            if paired_abba else "legacy: single-capture median advantage"
+        ),
+    }
+
+
 @torch.inference_mode()
-def emit(stage, tokens, heads, rounds):
+def emit(stage, tokens, heads, rounds, paired_abba=False, warmup_replays=0):
     if not torch.cuda.is_available():
         raise RuntimeError("NVIDIA CUDA GPU required; no CPU approximation")
     if (tokens < 2064 or tokens > 40759 or heads != 8
         or rounds < 2 or rounds > 12):
         raise ValueError("Guard only 2064..40759 tokens, exactly eight heads, 2..12 rounds")
+    if warmup_replays < 0 or warmup_replays > 20:
+        raise ValueError("Post-capture warmup replays must be within 0..20")
+    if paired_abba and (rounds < 5 or warmup_replays < 5):
+        raise ValueError("ABBA requires >=5 timed rounds and >=5 post-capture warmups")
+    order = (16, 32, 32, 16) if paired_abba else (16, 32)
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
     torch.manual_seed(20261114)
@@ -51,7 +84,8 @@ def emit(stage, tokens, heads, rounds):
     marker = torch.zeros((1, 1, 1, 1), device=device, dtype=torch.bfloat16)
     placeholder = marker.expand(shape)
     best = {}
-    stage["partial_arms"] = best
+    blocks = {"16": [], "32": []}
+    stage["partial_arms"] = blocks
     outputs = {}
     run_flags = (
         "APL_HTRC_TILE32_STATS_BT",
@@ -82,8 +116,8 @@ def emit(stage, tokens, heads, rounds):
                         )
                     )
 
-            for bt in (16, 32):
-                stage["phase"] = f"BT{bt}_capture"
+            for block_index, bt in enumerate(order):
+                stage["phase"] = f"BT{bt}_capture_block_{block_index+1}"
                 flow.clear_session_cache()
                 os.environ["APL_HTRC_TILE32_STATS_BT"] = str(bt)
                 # Capture a per-arm memory delta. The second arm retains
@@ -123,14 +157,30 @@ def emit(stage, tokens, heads, rounds):
                         raise RuntimeError(
                             f"BT{bt}: invalid full BF16 Graph output"
                         )
-                    outputs[(bt,bank_index)] = result.detach().clone()
+                    key = (bt, bank_index)
+                    if key in outputs:
+                        if not torch.equal(outputs[key], result):
+                            raise AssertionError(
+                                f"BT{bt} bank{bank_index}: output changed after recapture"
+                            )
+                    else:
+                        outputs[key] = result.detach().clone()
                     del result
                 if torch.equal(outputs[(bt,0)], outputs[(bt,1)]):
                     raise AssertionError(
                         "Two independent mutable Q/K/V banks returned identical attention"
                     )
 
-                stage["phase"] = f"BT{bt}_warm_replay"
+                stage["phase"] = f"BT{bt}_post_capture_warmups"
+                for _ in range(warmup_replays):
+                    warmed = run(1)
+                    torch.cuda.synchronize(device)
+                    if not torch.equal(warmed, outputs[(bt,1)]):
+                        raise AssertionError(
+                            f"BT{bt}: post-capture warmup changed output"
+                        )
+                    del warmed
+                stage["phase"] = f"BT{bt}_timed_block_{block_index+1}"
                 timings = []
                 for _ in range(rounds):
                     start = torch.cuda.Event(enable_timing=True)
@@ -215,7 +265,9 @@ def emit(stage, tokens, heads, rounds):
                     raise AssertionError(
                         f"BT{bt}: eager stage kernels differ from captured Graph output"
                     )
-                best[str(bt)] = {
+                record = {
+                    "capture_block_index": block_index + 1,
+                    "post_capture_warmup_replays": warmup_replays,
                     "gpu_event_ms_warmed_full_attention": timings,
                     "median_gpu_event_ms": statistics.median(timings),
                     "one_full_window_eager_kernel_stages_gpu_ms": stages_ms,
@@ -245,10 +297,27 @@ def emit(stage, tokens, heads, rounds):
                         "independently isolated"
                     ),
                 }
-                if best[str(bt)]["first_call_graph_report_stats_bt"] != bt:
+                if record["first_call_graph_report_stats_bt"] != bt:
                     raise RuntimeError("Graph report mislabeled stats BT")
-                del states, partial, merged, selected_window
+                blocks[str(bt)].append(record)
+                del states, partial, merged, selected_window, item, state
                 flow.clear_session_cache()
+        for bt in (16, 32):
+            per_block = blocks[str(bt)]
+            expected = 2 if paired_abba else 1
+            if len(per_block) != expected:
+                raise AssertionError(f"BT{bt}: incomplete capture blocks")
+            medians = [row["median_gpu_event_ms"] for row in per_block]
+            best[str(bt)] = {
+                **per_block[0],
+                "blocks": per_block,
+                "block_medians_gpu_event_ms": medians,
+                "median_gpu_event_ms": statistics.median(medians),
+                "gpu_event_ms_warmed_full_attention": [
+                    x for row in per_block
+                    for x in row["gpu_event_ms_warmed_full_attention"]
+                ],
+            }
         comparisons = {}
         for index in (0,1):
             a=outputs[(16,index)]
@@ -268,9 +337,10 @@ def emit(stage, tokens, heads, rounds):
             raise AssertionError(
                 "Stats BT32 must be BIT EXACT to BT16 for BOTH full outputs"
             )
-        ratio = (
-            best["16"]["median_gpu_event_ms"]/
-            best["32"]["median_gpu_event_ms"]
+        decision = _speed_decision(
+            best["16"]["block_medians_gpu_event_ms"],
+            best["32"]["block_medians_gpu_event_ms"],
+            paired_abba,
         )
         return {
             "status":"PASS_NUMERIC",
@@ -280,10 +350,15 @@ def emit(stage, tokens, heads, rounds):
             "tokens":tokens,"heads":heads,"head_dim":128,
             "mode":"balanced","tiles":32,"exact_leaves":512,
             "rounds":rounds,
+            "paired_abba":paired_abba,
+            "capture_order":list(order),
+            "post_capture_warmup_replays_per_block":warmup_replays,
             "outputs":comparisons,
             "arms":best,
-            "gpu_speed_ratio_bt16_over_bt32":ratio,
-            "candidate_faster_on_gpu":bool(ratio > 1.0),
+            "gpu_speed_ratio_bt16_over_bt32":decision[
+                "gpu_speed_ratio_bt16_over_bt32"],
+            "candidate_faster_on_gpu":decision["candidate_faster_on_gpu"],
+            "speed_decision":decision,
             "cuda_device":torch.cuda.get_device_name(device),
             "model_resident_h3":False,
             "promotion_to_real_h3":"UNRUN_NOT_AUTHORIZED",
@@ -306,6 +381,10 @@ def main():
     p.add_argument("--tokens",type=int,default=40759)
     p.add_argument("--heads",type=int,default=8)
     p.add_argument("--rounds",type=int,default=3)
+    p.add_argument("--paired-abba",action="store_true",
+                   help="4 independent captures: BT16, BT32, BT32, BT16")
+    p.add_argument("--warmup-replays",type=int,default=0,
+                   help="additional untimed full attention replays per capture")
     p.add_argument("--output",type=Path,default=Path(
         r"D:\ComfyOutput\H3\math_probe\flat_tile32_stats_bt_ab.json"
     ))
@@ -319,7 +398,9 @@ def main():
         "error":None,
     }
     try:
-        result=emit(phase,args.tokens,args.heads,args.rounds)
+        result=emit(phase,args.tokens,args.heads,args.rounds,
+                    paired_abba=args.paired_abba,
+                    warmup_replays=args.warmup_replays)
         report.update(result)
         report["completed"]=True
     except BaseException as exc:
