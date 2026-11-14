@@ -110,6 +110,22 @@ def _new_session(bank, geometries, tiles, cfg, tr, warmups,
                  baseline_memory=None, query_provider=None,
                  kv_provider=None):
     h, seq = int(bank[0].shape[1]), int(bank[0].shape[2])
+    if os.environ.get("APL_HTRC_DIRECTFLOW_TILES32_ADMISSION") == "1":
+        if tiles != 32:
+            raise ValueError("Tile32 research gate requires a 32-tile window")
+        mode = {256: "fast", 512: "balanced"}.get(int(cfg["exact_leaves"]))
+        if mode is None:
+            raise ValueError("Unrecognized Flat exact-leaf setting")
+        estimate = group_plan.graph_stage_head_bytes(
+            tokens=seq, tiles=32, mode=mode, vb_mode=vb_mode
+        )
+        required = 8 * int(estimate["estimated_persisted_bytes_per_head"])
+        free, _ = torch.cuda.mem_get_info(bank[0].device)
+        if h != 8 or free < required + 1024 * _MIB:
+            raise MemoryError(
+                "Tile32 Graph preflight: insufficient free memory for "
+                "persistent 8-head stage plus 1024 MiB pool/headroom"
+            )
     def note(phase, geom=None):
         if memory_trace is None:
             return
