@@ -115,3 +115,105 @@ model weights, or online quality contract.
 - Actual RTX 5070 Ti candidate compile, two-bank numeric parity,
   far-only GPU partial comparison and complete attention: **UNRUN**.
 - No performed GPU timing, no observed speedup or production promotion.
+
+
+## 2026-11-15 — measured RTX 5070 Ti packed far PASS1 numeric NO_GO
+
+Evidence: user-uploaded `flat_packed_far_numeric.json`
+(4,111 raw bytes), SHA-256
+`9512e136b6fc774e6019cb7f66ac11ae8d4d5b58232c9c21286f13b012b9ac00`.
+Verified against source HEAD
+`c77084c7f4cedfc5f4cc0902a6ec7782d3c4925a`.
+Raw result is not committed; this section records the
+file fingerprint, scoped measurements, and decision.
+
+Report: `htrc-packed-far-numeric-v1`,
+`status=FAIL_CLOSED`, `completed=false`,
+`parity_admission=NO_GO_FAR_BIT_EXACT`.
+The latter is the intended scientific negative outcome
+of this numeric gate, not evidence of a compilation,
+system, or Git checkout error.
+
+Pinned conditions: RTX 5070 Ti SM120, 15,275 BF16
+tokens, 4 independent heads x 32 tiles, materialized
+Balanced/512, 4 original far splits, BN64,
+same original EXCL/IDX selections on two distinct
+QKV banks. The independent bank mask hashes match
+the previously validated index pack and gather probes:
+A `bd56312c61e4c5f950c1a1dfea718faed0ac50c7aa18c0d3c862cd156dee4a32`;
+B `05dc41bf73bcc98204739f708a86b6c8e39343f24adb39fa9b952c195a341264`.
+
+First complete Graph/eager bit parity PASS, bank-B
+independent complete Graph/eager bit parity PASS;
+both selection masks distinct. Both compiled kernels
+report zero compiler spills. The numerical comparison
+is **far-only**: original unchanged
+`_tile_kernel(PASS=1)` vs `packed_far_partial`
+from the research-only module; no near, merge or
+end-to-end compacted attention candidate.
+
+### Per-field strict raw FP32-bit comparison
+
+| Field | Bank A mismatched/total | Bank B mismatched/total | Maximum finite absolute diff, A/B |
+|---|---:|---:|---:|
+| PM | **0 / 32,768** | **0 / 32,768** | 0 / 0 |
+| PL | **12,358 / 32,768 (37.71%)** | **12,253 / 32,768 (37.39%)** | 1.52587890625e-5 / 1.52587890625e-5 |
+| PACC | **3,148,380 / 4,194,304 (75.06%)** | **3,158,790 / 4,194,304 (75.31%)** | 0.014467000961303711 / 0.014363288879394531 |
+
+First mismatches, using report's multidimensional
+indices: bank A PL [0,0,0,3], PACC [0,0,0,0,0];
+bank B PL [0,0,0,2], PACC [0,0,0,0,0].
+PM exact on BOTH banks does **not** imply PL/PACC exact.
+
+Packed-block lower bound remains 1,056 / 1,049,
+vs 1,920 source far blocks. It is not an executed
+kernel speed reduction. The actual compiler resources
+for the far-only QK/PV kernels are:
+
+| Metric | Original PASS=1 | Ordered packed PASS=1 |
+|---|---:|---:|
+| Registers/thread | **212** | **255** |
+| Shared bytes/CTA | 41,472 | 41,472 |
+| Reported compiler spills | 0 | 0 |
+
+The candidate consumes 43 more registers/thread;
+this is resource metadata, **not measured performance**.
+
+### Admission and next direction
+
+**Stop this precise cross-BN64 far packing hypothesis.**
+Observed PM identity is consistent with the same
+maximum far logit, while the PL/PACC divergences
+are consistent with changed grouping of Tensor Core
+columns and FP32 online-softmax accumulation.
+The run has not separately isolated every compiler
+rounding cause; do not call the grouping the uniquely
+proven microarchitectural cause. The raw-byte
+G/VB/LZ/SG/EXCL gather and packed-index tests passed
+in earlier studies, so the data addresses themselves
+are not grounds for skipping the strict numeric gate.
+
+The established contract requires bit-exact
+PM/PL/PACC, not a relative/absolute-tolerance test.
+Do NOT relax this gate, test this failed candidate's
+speed, splice this kernel into far+near production,
+or infer a full-operator/model/video speed gain.
+
+`speed_measurement=UNRUN_NUMERIC_GATE_ONLY`,
+`speed_capture_blocks=[]`, `no_cuda_event_timing=true`,
+`full_packed_attention=UNRUN`, model/video UNRUN,
+production promotion prohibited. No CUDA timing
+samples were collected.
+
+Any new research hypothesis needs a DIFFERENT
+mechanism, preferably preserving the original
+BN64 work-group and accumulation association so
+bit-exact arithmetic is at least plausible, or
+targeting an independently measured bottleneck
+outside this already rejected compacted far pass.
+This conclusion does not rule out all sparse or
+approximate attention in other accuracy contracts.
+
+This result is a documentation-only slice. No HTRC
+production code or research Triton kernel was changed,
+and no additional CPU/GPU tests were executed.
