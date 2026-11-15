@@ -132,3 +132,98 @@ Implementation-time CPU unit tests, exact-HEAD static checks and
 negative-path smoke are required before CUDA. At authoring time, the
 RTX 5070 Ti GPU A/B/B/A, actual full Graph model/video and production
 integration are **UNRUN**; there is **no measured Tile speedup** yet.
+
+## 2026-11-15 — actual RTX 5070 Ti full Tile mask-G A/B/B/A: NO_GO by 5% threshold
+
+User-uploaded original `flat_full_mask_g_tile_abba.json`:
+**23,447 bytes**, SHA-256
+`0056a107c52c679aabb31c560ae668d018fc4eb8139ef3c9cb41075b01455e22`.
+Executed at source HEAD
+`56e89232eacae194699987f73ecbc0d3a0533674`.
+Raw JSON remains user-held. Report schema
+`htrc-full-mask-g-tile-abba-v1`, status
+`NO_GO_TILE_ONLY`, `completed=true`,
+`numeric_gate=PASS_TWO_BANK_FULL_TILE_MERGE_BIT_EXACT`,
+`parity_admission=PASS_TWO_BANK_FULL_TILE_MERGE_BIT_EXACT`.
+
+Scope: only ONE 2,048-query-row materialized Tile32
+window on NVIDIA RTX 5070 Ti SM120, four heads,
+15,275 BF16 QKV source tokens, Balanced/512,
+four original far splits, BN64 and 11 exact tail
+tokens (tail merged outside event timing).
+Both independently seeded QKV banks retained expected
+selection mask hashes, passed complete native
+Graph/eager checks and produced bit-exact original,
+mirror and mask-G Tile PM/PL/PACC plus unchanged
+Merge. In all 4 independent captures, the pre-capture,
+post-warmup and post-timing checks were also all
+bit-exact for the Tile partials and Merge. This is
+not a numerical failure.
+
+### Recorded GPU Event measurements
+
+Four independent Graph captures in order
+`control / mask_g / mask_g / control`, 5 warmup
+replays per capture, 7 timing samples of 16 replays
+per sample. All values below are the within-capture
+median milliseconds per one complete Tile kernel.
+
+| Capture | Arm | Median (ms) | Median (microseconds) |
+|---|---|---:|---:|
+| 1 | Original control | 0.3831860125 | 383.186 |
+| 2 | Research mask-G | 0.3695159853 | 369.516 |
+| 3 | Research mask-G | 0.3694239855 | 369.424 |
+| 4 | Original control | 0.3833160102 | 383.316 |
+| **Arm median of capture medians** | **Original** | **0.3832510114** | **383.251** |
+| **Arm median of capture medians** | **mask-G** | **0.3694699854** | **369.470** |
+
+Candidate time reduction relative to control:
+**3.5958224758296575%**, equivalent to **13.7810
+microseconds** per tested Tile window, or **1.037299×**
+control/candidate speed ratio in this narrow test.
+Worst control-candidate pair reduction **3.5674651%**.
+Spread between capture medians was **0.0339255%**
+for control and **0.0249036%** for mask-G: both
+well under the allowed 3% spread. The measured
+improvement was consistent, not inconclusive.
+
+Both full kernels compiled to **255 registers/thread,
+49,664 bytes shared/CTA, zero compiler spills**.
+The research mirror compiled to 254 registers/thread,
+same shared size and no spills. The resource gate
+passed; no extra static register or shared memory
+allocation was observed for mask-G.
+
+### Gate decision — numerical PASS, speed NO_GO
+
+The independent-capture admission threshold was
+a **minimum 5% consistent reduction in Tile time**,
+including worst-pair >=5%, and <=3% capture spread.
+The observed 3.596% / 3.567% respectively do not
+meet that threshold. Therefore
+`status=NO_GO_TILE_ONLY` is correct despite
+a repeatable, genuinely faster isolated Tile.
+
+No full attention-call speed was timed:
+`timing_scope=ONE_WINDOW_TILE_KERNEL_ONLY_NO_MERGE`,
+`timed_full_attention=false`, model/video UNRUN,
+`not_a_full_operator_speedup=true`,
+`production_promotion=PROHIBITED_RESEARCH_ONLY`.
+The result does NOT imply a 3.6% H3 denoise or
+end-to-end win; source preparation, near/far selection,
+Merge, other query windows and model-resident 56 heads
+are outside this timing.
+
+**Do not promote mask-G to production or run a
+model/video promotion gate based on this slice.**
+Keep the research-only implementation and this measured
+outcome for reuse, without re-running the same A/B/B/A
+to seek a favorable random result. The 3.6% stable
+observation is useful for deciding future *distinct*
+memory/Tile mechanisms, but is below the agreed
+admission bar and not an excuse to lower it.
+
+The present evidence-recording commit is documentation
+only. No further GPU experiment, CUDA Graph timing,
+source kernel change or production modification occurred
+while recording this uploaded report.
