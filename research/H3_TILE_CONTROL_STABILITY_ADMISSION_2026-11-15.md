@@ -175,3 +175,132 @@ and all GPU timing: **UNRUN**. Full H3 model, video,
 full-attention candidate speed and production promotion:
 **UNRUN**. Preserve the old inconclusive evidence
 without reinterpreting it.
+
+## 2026-11-15 — measured original-only fresh/sentinel stability: SHARED variation
+
+Evidence: user-uploaded `flat_tile_control_stability.json`,
+**27,779 raw bytes**, SHA-256
+`9ded0eb5d8fc8b2327c6506681532c292922172b3447885fbd81822fa5678080`,
+tested on **exact source HEAD**
+`103f7ff7a95a5139cfe46cb680817c2668dd8f86`.
+The original user JSON is not committed to the repository;
+this is its measured-result and provenance record.
+
+Source report: schema `htrc-tile-control-stability-v1`,
+`status=UNSTABLE_CONTROL_ONLY`, `completed=true`,
+`classification=SHARED_CONTROL_AND_SENTINEL_VARIATION`,
+`numeric_gate=PASS_TWO_BANK_ORIGINAL_TILE_MERGE_BIT_EXACT`,
+`speed_measurement=CONTROL_ONLY_SENTINEL_BRACKET_EVENTS`,
+`candidate_timed=false`.
+The original CUDA Graph and independent original full
+Tile+Merge on **both** independently generated QKV banks
+were bit-exact, including separate bank-B Graph/eager
+verification. Both original EXCL/IDX masks matched earlier
+acceptance fingerprints:
+- A: `bd56312c61e4c5f950c1a1dfea718faed0ac50c7aa18c0d3c862cd156dee4a32`
+- B: `05dc41bf73bcc98204739f708a86b6c8e39343f24adb39fa9b952c195a341264`
+
+Actual GPU scope: NVIDIA RTX 5070 Ti SM120,
+15,275 BF16 key tokens, four heads, Balanced/512,
+one 2,048-row Tile32 window, four far BN64 splits,
+original 11-token tail merged **outside event timing**.
+Four independent fresh original Tile CUDA Graph captures
+were interleaved with measurements of the SAME
+persistent original Tile sentinel CUDA Graph,
+captured exactly once. Each of the 12 timed segments
+(fresh or sentinel) collected seven CUDA event samples
+of 16 graph replays per sample. Five warmup replays
+per fresh capture. Pre-capture, post-warmup and
+post-timing original full PM/PL/PACC and Merge raw-bit
+checks PASS for all four captures and the original
+sentinel. The original resource metadata remained
+255 registers/thread, 49,664 shared B/CTA, zero spills,
+identical on the two QKV banks.
+
+### Measured control-only CUDA event medians
+
+| Capture | Persistent sentinel before (us) | Fresh original (us) | Same sentinel after (us) |
+|---|---:|---:|---:|
+| 1 | 394.814 | 384.962 | 385.736 |
+| 2 | 426.802 | 385.676 | 385.734 |
+| 3 | 415.806 | 430.140 | 385.718 |
+| 4 | 382.046 | 444.538 | 477.588 |
+
+The independently recaptured original control medians
+have **15.47581473%** max/min spread; the eight sentinel
+bracketing medians have **25.00797818%** spread. The
+sentinel pre/post paired drifts were 2.35343%,
+10.64672%, 7.80052% and 25.00798%.
+Both control and persistent sentinel fail the
+pre-registered <=3% threshold; therefore report
+`UNSTABLE_CONTROL_ONLY` and the narrower observed
+classification `SHARED_CONTROL_AND_SENTINEL_VARIATION`.
+
+### Raw sample-level evidence and interpretation
+
+All 12 series contain individual large deviations
+despite the original kernel and inputs remaining
+unchanged. Each series has 7 raw GPU event samples.
+Across all 84 timed samples, **47/84** differ by
+more than 3% from their OWN seven-sample series median,
+as counted in the uploaded diagnostic's
+`samples_more_than_3pct_from_median` fields.
+Per-series `max/min-1` spreads range from 10.0867%
+to 39.2376%, including persistent-sentinel series.
+The sentinel-before segment of capture 4 spans
+**380.910 to 530.370 us**, while fresh capture 4
+spans **385.050 to 512.958 us**. Capture 4's final
+sentinel-after segment spans **415.146 to 563.024 us**.
+
+This establishes that temporal variability can
+affect the *same already captured CUDA Graph*; it is
+NOT limited to separate Graph capture, source code,
+partial buffers or candidate mathematics. The
+results still do NOT distinguish between external
+GPU interference, clock dynamics, thermal/power
+states, event/replay sampling overhead and other
+system effects. Avoid claiming a proven hardware
+or Windows scheduler root cause.
+
+Read-only `nvidia-smi` start/end snapshots:
+- Start: 2026-11-15 18:46:17.986,
+  P1, SM 2632 MHz, memory 13801 MHz,
+  49.53 C, 46.15 W, GPU util 9%,
+  memory util 3%.
+- End: 2026-11-15 18:46:19.079,
+  P1, SM 2887 MHz, memory 13801 MHz,
+  63.61 C, 165.77 W, GPU util 74%,
+  memory util 31%.
+
+These are two coarse, non-simultaneous observations,
+not a sampling trace synchronized with the 84 events.
+The observed SM clock **increased**, not decreased,
+between these snapshots. They do not establish
+thermal throttling, clock stability in the event
+windows, or interference by another process.
+
+### Decision
+
+**Control stability FAIL; numerical original correctness PASS.**
+No candidate was timed and no speed comparison is
+admitted. Do NOT reinterpret the preceding far-VB
+`.cg` experiment's arithmetic 15.98% difference as
+a validated speedup, or promote `.cg`/mask-G on
+this evidence. The earlier mask-G ~3.596% Tile-only
+gain remains independent and below its required 5%.
+
+Before ANY further kernel optimization or new candidate
+A/B/B/A, run a **distinct stability investigation**
+that records GPU clock, temperature, power, utilization
+and other GPU client activity at finer time granularity
+if feasible, and that compares unprofiled repeated
+sentinel replays under an explicitly quiet environment.
+Do not drop slow samples post hoc to obtain a passing
+score. A stable <=3% control-only gate is necessary
+for interpreting a narrow >=5% speed threshold; it is
+not alone sufficient for full H3 speed or image quality.
+
+`h3_model_or_video=UNRUN`, full attention speed UNRUN,
+production promotion PROHIBITED. This commit is
+documentation-only: no new GPU tests, Python unit
+tests, or changes to `h3/` or production code.
