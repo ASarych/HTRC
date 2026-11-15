@@ -27,7 +27,7 @@ def fake_phases(startup_spike=False, settled_spike=False):
                     else 0.44 if settled_spike and name == 'final_wall' and i == 4
                     else 0.409 + i * 0.00001)
             samples = [{
-                'instrumented': paired,
+                'event_instrumented': paired,
                 'wall_ms_per_replay': wall,
                 'enqueue_ms_per_replay': 0.0009,
                 'gpu_event_ms_per_replay': 0.408 if paired else None
@@ -78,13 +78,59 @@ class PureLogic(unittest.TestCase):
         s = summarize_protocol(fake_phases(settled_spike=True))
         self.assertEqual(s['classification'], 'VARIATION_PERSISTS_IN_FINAL_UNPROFILED_PHASE')
 
+    def test_native_sample_schema_matches_protocol_fixture(self):
+        # Exercise the REAL _time_sample() payload, not a hand-written
+        # alternative field name. Fake CUDA calls avoid GPU hardware.
+        from benchmark_h3_tile_host_device_attribution import _time_sample
+
+        class FakeGraph:
+            def __init__(self):
+                self.replays = 0
+
+            def replay(self):
+                self.replays += 1
+
+        class FakeEvent:
+            def record(self):
+                pass
+
+            def synchronize(self):
+                pass
+
+            def elapsed_time(self, other):
+                return 102.4
+
+        class FakeTorch:
+            class cuda:
+                @staticmethod
+                def synchronize(device):
+                    pass
+
+        graph = FakeGraph()
+        paired = _time_sample(FakeTorch, graph, 'cuda:0', FakeEvent(), FakeEvent())
+        self.assertEqual(graph.replays, REPLAYS_PER_SAMPLE)
+        self.assertIs(paired['event_instrumented'], True)
+        self.assertNotIn('instrumented', paired)
+        self.assertGreater(paired['gpu_event_ms_per_replay'], 0)
+
+        quiet = _time_sample(FakeTorch, graph, 'cuda:0')
+        self.assertIs(quiet['event_instrumented'], False)
+        self.assertIsNone(quiet['gpu_event_ms_per_replay'])
+        self.assertEqual(graph.replays, REPLAYS_PER_SAMPLE * 2)
+
+    def test_missing_sample_schema_is_valueerror_not_keyerror(self):
+        p = fake_phases()
+        del p['startup_host_gpu']['blocks'][0]['samples'][0]['event_instrumented']
+        with self.assertRaisesRegex(ValueError, 'Instrumented sample mismatch'):
+            summarize_protocol(p)
+
     def test_invalid_incomplete_and_instrument_mismatch(self):
         with self.assertRaises(ValueError):
             spread_pct([0.4, math.nan])
         with self.assertRaises(ValueError):
             summarize_protocol({'startup_host_gpu': fake_phases()['startup_host_gpu']})
         p = fake_phases()
-        p['settled_host_gpu']['blocks'][0]['samples'][0]['instrumented'] = False
+        p['settled_host_gpu']['blocks'][0]['samples'][0]['event_instrumented'] = False
         with self.assertRaises(ValueError):
             summarize_protocol(p)
 
@@ -97,6 +143,7 @@ class SourceContract(unittest.TestCase):
         ast.parse(old)
         self.assertIn("getattr(args, 'measurement_protocol', None) == 'host_device'", old)
         self.assertIn('collect_control_probe(', old)
+        self.assertIn("sample.get('event_instrumented') is not paired", s)
         self.assertEqual(old.count('with torch.cuda.graph(sentinel):'), 1)
         for wanted in ("'current_pid': os.getpid()", "torch.cuda.Event(enable_timing=True)",
                        "stop_event.synchronize()", "start_event.elapsed_time(stop_event)",
@@ -110,6 +157,8 @@ class SourceContract(unittest.TestCase):
 
     def test_runner_has_one_line_invocation_and_parser(self):
         s = (HERE / 'run_h3_tile_host_device_attribution_safe.ps1').read_text('utf-8')
+        self.assertIn('$failed.source_head -eq $ExactHead', s)
+        self.assertIn('Write-Host $failed.traceback_tail', s)
         for wanted in (
             "benchmark_h3_tile_host_device_attribution.py') --expect-head $ExactHead",
             'test_h3_tile_host_device_attribution_cpu.py',

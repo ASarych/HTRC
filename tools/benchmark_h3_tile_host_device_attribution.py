@@ -124,8 +124,8 @@ def summarize_protocol(phases):
         enqueue = [b['enqueue_median_ms_per_replay'] for b in blocks]
         paired = name != 'final_wall'
         gpu = [b['gpu_event_median_ms_per_replay'] for b in blocks] if paired else None
-        if any(b['instrumented'] != paired for b in
-               (sample for block in blocks for sample in block['samples'])):
+        if any(sample.get('event_instrumented') is not paired
+               for block in blocks for sample in block['samples']):
             raise ValueError('Instrumented sample mismatch')
         summary[name] = {
             'wall_block_medians_ms_per_replay': wall,

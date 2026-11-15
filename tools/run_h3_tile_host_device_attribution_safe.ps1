@@ -66,7 +66,24 @@ try {
     }
 
     & $py -B (Join-Path $tmp 'tools\benchmark_h3_tile_host_device_attribution.py') --expect-head $ExactHead --quiet-confirmed --output $output
-    if ($LASTEXITCODE -ne 0) { throw 'Research diagnostic FAIL_CLOSED: inspect ONE JSON' }
+    if ($LASTEXITCODE -ne 0) {
+        # Fail closed, but expose the actual Python exception instead of
+        # masking it behind a generic PowerShell exception.
+        if (Test-Path -LiteralPath $output -PathType Leaf) {
+            $modified = (Get-Item -LiteralPath $output).LastWriteTimeUtc
+            if ($modified -gt $old) {
+                try {
+                    $failed = Get-Content -LiteralPath $output -Raw | ConvertFrom-Json
+                    if ($failed.source_head -eq $ExactHead -and $failed.status -eq 'FAIL_CLOSED') {
+                        Write-Host "Python diagnostic error: $($failed.error)"
+                        Write-Host $failed.traceback_tail
+                    }
+                }
+                catch { Write-Warning 'Cannot inspect fresh diagnostic failure JSON' }
+            }
+        }
+        throw 'Research diagnostic FAIL_CLOSED (see Python error above)'
+    }
     if (-not (Test-Path -LiteralPath $output -PathType Leaf) -or
         (Get-Item -LiteralPath $output).LastWriteTimeUtc -le $old) {
         throw 'No fresh ONE JSON produced'
