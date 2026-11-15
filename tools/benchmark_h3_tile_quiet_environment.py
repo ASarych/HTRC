@@ -392,6 +392,16 @@ def run_gpu(args):
             if not sentinel_initial['full_window_bit_exact']:
                 raise AssertionError('Persistent original sentinel numeric mismatch')
 
+            if getattr(args, 'measurement_protocol', None) == 'host_device':
+                # Research-only observer of the original sentinel, no changed math or model.
+                from benchmark_h3_tile_host_device_attribution import collect_control_probe
+                return collect_control_probe(
+                    torch, sentinel, device, report,
+                    lambda phase_name: _verify_partials_and_merge(
+                        torch, batch, states, cfg, tr, last_control, last_merged,
+                        last_tail, sentinel_out, phase_name + '_post'),
+                    _nvidia_smi_snapshot, _compute_clients_snapshot)
+
             # Three phases, exactly one and the SAME original sentinel CUDA Graph.
             report['compute_clients'] = {'before': _compute_clients_snapshot()}
             report['quiet_declaration'] = 'OPERATOR_CONFIRMED_NOT_INDEPENDENTLY_PROVEN'

@@ -159,3 +159,43 @@ full attention speed, model/video quality or production admission.
 Documentation and Windows preflight update only: no `h3/` math,
 Tile CUDA kernel, Graph runtime or production code changed.
 New GPU rerun **UNRUN**.
+
+
+## 2026-11-15 — second, stricter-preflight quiet/monitor/quiet rerun
+
+User report `flat_tile_quiet_environment(1).json`, 45,322 bytes,
+SHA-256 `197a1e449628afd389a58f67955b3e1fae07cac136b010a5826863c0f8102b2f`,
+exact source HEAD `4f4cafd2d904c6705f4942b9b0ecd0d2ddd0a086`.
+Original two-bank numeric, source masks, compiler resource envelope,
+persistent sentinel and all phase-end PM/PL/PACC/Merge raw-bit gates PASS.
+Candidate speed, model/video and production promotion remain UNRUN/PROHIBITED.
+
+| Phase | Median (us) | Block-median spread | Result |
+|---|---:|---:|---|
+| Quiet before | 419.074 | **7.95696279%** | FAIL |
+| Monitored | 408.993 | 2.56692562% | <=3% |
+| Quiet after | 409.817 | **0.12091714%** | <=3% |
+
+Quiet pre/post median drift 2.25881860%. All 90 raw samples are
+retained without exclusion. The previous run's quiet-after spread
+was 0.18070350%; the new run again shows late stability despite
+the unstable first quiet phase.
+
+**Correction:** this document's earlier inference that the
+`standalone-env/python.exe` entry was a likely *separate* ComfyUI
+GPU client was unwarranted. The compute-client snapshots are taken
+INSIDE the benchmark after its own Python process has initialized
+CUDA. The observed Python PID may well belong to the benchmark itself,
+which uses Comfy Desktop's Python installation. Neither run records
+its own os.getpid(), so neither proves competing CUDA work.
+The preflight check performed before launching the Python benchmark
+passed. Do not reinterpret this client line as evidence of
+external interference. The follow-up host/GPU attribution diagnostic
+explicitly records its own PID, preserving independent attribution.
+
+**Decision:** same original control numerics PASS, stability FAIL.
+Do not rerun identical quiet/monitor/quiet measurements again to
+seek a passing score. Next: pre-registered startup wall and paired
+host enqueue vs GPU Event timing using the original sentinel Graph
+under `H3_TILE_HOST_DEVICE_STARTUP_DIAGNOSTIC_2026-11-15.md`.
+That is distinct from a candidate optimization or speed admission.
