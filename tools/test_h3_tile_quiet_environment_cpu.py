@@ -103,6 +103,29 @@ class SourceAndRunner(unittest.TestCase):
                        "candidate_timed -ne $false"):
             self.assertIn(phrase, code)
 
+    def test_runner_invocation_is_single_line_and_powershell_parses(self):
+        # Guard against PowerShell treating --expect-head as a new statement.
+        code = (HERE / 'run_h3_tile_quiet_environment_safe.ps1').read_text('utf-8')
+        self.assertIn(
+            "& $py -B (Join-Path $tmp 'tools\\benchmark_h3_tile_quiet_environment.py') --expect-head $ExactHead --quiet-confirmed --output $output --warmups 5",
+            code)
+        exe = shutil.which('powershell.exe') or shutil.which('pwsh')
+        if exe is None:
+            self.skipTest('PowerShell parser unavailable on this host')
+        path = str((HERE / 'run_h3_tile_quiet_environment_safe.ps1').resolve())
+        path = path.replace("'", "''")
+        script = (
+            "$tokens=$null; $parseErrors=$null; "
+            "[void][System.Management.Automation.Language.Parser]::ParseFile("
+            + "'" + path + "', [ref]$tokens, [ref]$parseErrors); "
+            "if($parseErrors.Count -gt 0){"
+            "$parseErrors | Out-String | Write-Host; exit 1}"
+        )
+        p = subprocess.run(
+            [exe, '-NoProfile', '-NonInteractive', '-Command', script],
+            capture_output=True, text=True, timeout=20)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
     def test_wrong_head_fails_before_cuda(self):
         with tempfile.TemporaryDirectory(prefix='htrc-quiet-check-') as temp:
             root = Path(temp)

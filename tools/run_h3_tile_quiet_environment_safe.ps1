@@ -50,8 +50,7 @@ try {
         & $py -B -m unittest discover -s (Join-Path $tmp 'tools') -p $suite -v
         if ($LASTEXITCODE -ne 0) { throw "CPU suite $suite failed; CUDA not started" }
     }
-    & $py -B (Join-Path $tmp 'tools\benchmark_h3_tile_quiet_environment.py') 
-        --expect-head $ExactHead --quiet-confirmed --output $output --warmups 5
+    & $py -B (Join-Path $tmp 'tools\benchmark_h3_tile_quiet_environment.py') --expect-head $ExactHead --quiet-confirmed --output $output --warmups 5
     if ($LASTEXITCODE -ne 0) { throw 'Research diagnostic FAIL_CLOSED: inspect ONE JSON' }
     if (-not (Test-Path -LiteralPath $output -PathType Leaf) -or
         (Get-Item -LiteralPath $output).LastWriteTimeUtc -le $old) {
