@@ -158,3 +158,134 @@ New GPU compile, first-call new mirror and far VB .cg
 numeric parity, resource gate, CUDA Graph A/B/B/A timing,
 full H3 model/video and production promotion: **UNRUN**.
 No new GPU measurement or change to working production.
+
+## 2026-11-15 — measured RTX 5070 Ti far-VB .cg Tile A/B/B/A: INCONCLUSIVE
+
+Source: user-uploaded `flat_full_far_vb_cg_tile_abba.json`,
+**23,533 bytes**, raw SHA-256
+`30086057d292a1ce8dc46ef75ebee794292a18d782e25d82b96e35c106938692`.
+Exact tested source HEAD:
+`4f2749f3e93be8975cc790ac3e3f9ff30e04542c`.
+The original JSON is not checked into Git; these are extracted
+verified measurements and provenance. Report:
+`schema=htrc-far-vb-cg-tile-abba-v1`,
+`status=INCONCLUSIVE_TILE_ONLY`, `completed=true`,
+`numeric_gate=PASS_TWO_BANK_FULL_TILE_MERGE_BIT_EXACT`,
+`timing_scope=ONE_WINDOW_TILE_KERNEL_ONLY_NO_MERGE`.
+
+Target: RTX 5070 Ti SM120, four BF16 heads, 15,275 tokens,
+one 2,048-query-row window (32 tiles, 64 rows each),
+Balanced/512, four far BN64 splits and exact 11-token tail
+in the unchanged Merge. First-call full Graph/eager and
+independent bank-B Graph/eager source checks PASS.
+Both independent selection mask fingerprints are identical
+to earlier validated reports:
+A `bd56312c61e4c5f950c1a1dfea718faed0ac50c7aa18c0d3c862cd156dee4a32`;
+B `05dc41bf73bcc98204739f708a86b6c8e39343f24adb39fa9b952c195a341264`.
+
+### Exact numerical and compiled-resource results
+
+On BOTH independent QKV banks:
+- Unchanged original full Tile + original Merge matches
+  captured Graph output bit-for-bit.
+- Research unmodified `mirror` matches original
+  PM/PL/PACC and merged output bit-for-bit.
+- Research `far_vb_cg` also matches original PM/PL/PACC
+  and merged output bit-for-bit.
+- For each bank, 32,768 PM, 32,768 PL, 4,194,304 PACC
+  and 1,048,576 Merge FP32 values were checked; **zero raw
+  bit mismatches** for each candidate field.
+- All four independent captures passed pre-capture,
+  post-warmup and post-timing same-field bit-exact
+  validations. The performance inconsistency is not
+  due to an observed numerical mismatch.
+
+| Compiled kernel | Registers/thread | Shared B/CTA | Compiler spills |
+|---|---:|---:|---:|
+| Unchanged full control | 255 | 49,664 | 0 |
+| Research default mirror | 254 | 49,664 | 0 |
+| Research far VB .cg | 254 | 49,664 | 0 |
+
+`resource_gate.admitted=true`: the candidate did not exceed
+the reference's registers/SMEM and did not spill. The report's
+`no_additional_registers_or_shared_memory=false` field is
+misleadingly named: the actual implementation sets it by
+**strict equality** of both register counts and SMEM.
+It is false because 254 is **one fewer** register than 255,
+NOT because the candidate increased resource usage.
+This is metadata semantics, not a resource-gate failure;
+do not retroactively rewrite the user JSON.
+
+### Independent Graph GPU event timings
+
+Four independent captures in exact A/B/B/A order, each
+with 5 warmup replays, 7 samples of 16 Graph replays.
+All times below are reported ms per one full Tile only.
+Merge and preparation are excluded.
+
+| Capture | Arm | Median ms | Median microseconds |
+|---|---|---:|---:|
+| 1 | Control | **0.507575989** | 507.576 |
+| 2 | far_vb_cg | 0.374404013 | 374.404 |
+| 3 | far_vb_cg | 0.374381989 | 374.382 |
+| 4 | Control | **0.383578002** | 383.578 |
+
+The two control captures differ by **32.3266677%**
+using the pre-registered `max/min - 1` spread;
+the allowed maximum was 3%. Far VB .cg capture spread
+was only **0.00588274%**. Their individual samples also
+show excursions: control-1 ranges from 0.459758 to
+0.559120 ms; control-4 has several 0.427–0.433 ms
+samples despite a 0.383578 ms median. The .cg captures
+also have isolated ~0.425–0.431 ms samples. This is
+observed variance, not proof of another workload,
+thermal throttling, GPU clocks or any specific cause.
+
+The report's raw median-of-capture-medians arithmetic
+gives control 0.445576996 ms, candidate
+0.374393001 ms, and an apparent **15.97568885%**
+time reduction. **DO NOT call this an accepted speedup**:
+the control is unstable and artificially high in
+that aggregation. The conservative `worst_cross_capture_
+time_reduction_pct` is only **2.39168806%**,
+below the independent >=5% gate. Relative to the
+faster control-4 median, candidate's two-capture
+median corresponds to around **2.40%** reduction,
+but selectively using that control is only context,
+NOT a replacement for an admissible stable comparison.
+
+### Decision and next work
+
+**INCONCLUSIVE_TILE_ONLY.** Exact full numerical
+admission PASS, resource admission PASS, timing gate
+NOT PASSED. Do not promote the far VB .cg cache hint,
+interpret the arithmetic 15.98% as demonstrated, or
+extrapolate any Tile timing to all attention windows,
+56 heads, H3 denoising or video quality. The Graph
+captures measured only this one isolated Tile;
+`timed_full_attention=false` and `h3_model_or_video=UNRUN`.
+
+The large and temporally varying control latency means
+the benchmark environment warrants inspection before
+using ANY future small speed effect for admission.
+First investigate reproducibility/thermal-clock/
+background GPU interference **as hypotheses only**,
+with instrumented measurements if this matters,
+instead of rerunning until a favorable pair appears.
+Do not retroactively drop capture1 or outliers to
+turn this pre-registered INCONCLUSIVE into PASS.
+
+If the cache-policy hypothesis is revisited, require
+an independently designed environmental stability
+gate and paired baseline/control measurements before
+any fresh GPU A/B/B/A. Maintain the same >=5% robust
+threshold, raw bit-exact two-bank checks, exact-head
+source pinning, single JSON and unchanged production.
+The existing validated `mask_g` +3.596% Tile-only
+result remains separately documented **NO_GO**;
+there is no evidence to add the two effects or claim
+a combined improvement.
+
+This commit records the uploaded experiment ONLY;
+no new CPU/GPU execution, code fix, production change,
+model/video run or fresh speed measurement was done.
