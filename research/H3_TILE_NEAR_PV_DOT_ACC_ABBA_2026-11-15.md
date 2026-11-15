@@ -136,3 +136,72 @@ Local Python:
 **GPU tests UNRUN.** There is no observed speed
 or proof of numerical bit-exactness for the candidate
 yet. Production remains unchanged.
+
+
+## 2026-11-15 — Measured near_pv_acc decision: NO_GO
+
+Raw user-uploaded flat_tile_resource_abba(6).json: 4,965 bytes,
+SHA-256 d9de9d39cb0aefb970fc8d08c5cf4b236c8ef181542ecb08a2e49da6393a6890.
+Exact source HEAD: d35b35fb24562ba0b6bf0b26fdbf3bb40136dba2.
+The raw report is user-held; this commit records its grounded fields.
+
+Report schema htrc-tile32-research-resource-abba-v1,
+status PASS_NUMERIC_TILE_ONLY, completed=true,
+candidate near_pv_acc; four distinct BF16 heads, 15,275
+tokens, balanced/512, one 2,048-row Tile32 window.
+Both independent QKV banks have bit-exact PM/PL/PACC
+versus default materialized control; first-call full Graph
+vs eager and separate bank-B eager parity both PASS.
+
+Compiler result (both control and near_pv_acc identical):
+255 registers/thread, 49,664 B shared/CTA, zero reported
+compiler spills, 4 warps/CTA. CTA grid (128,4,1) = 512
+for both; resource upper bound remains 2 CTA/SM.
+
+Four independent CUDA Graph captured blocks, seven
+warmed GPU-event samples each, A/B/B/A order:
+
+| Capture | Arm | Block median (ms) |
+|---|---|---:|
+| 1 | control | 0.385343999 |
+| 2 | near_pv_acc | 0.386976004 |
+| 3 | near_pv_acc | 0.386783987 |
+| 4 | control | 0.384831995 |
+
+First control block contained an isolated 0.963616-ms
+sample (other six samples around 0.384-0.387 ms).
+The median is not driven by that isolated outlier.
+Median-of-block-medians: control 0.385087997 ms;
+candidate 0.386879995 ms. Control/candidate ratio
+0.995368076. Candidate time **+0.4654%**, and neither
+candidate capture is faster than either control capture.
+The required >=5% improvement and both-captures criterion
+FAILS; verdict **NO_GO_TILE_ONLY** despite strict
+numerical PASS.
+
+This only measures a single Tile kernel window,
+NOT complete Graph attention, H3 inference, denoise or video.
+The no-improvement result does NOT demonstrate the compiler
+generated identical instructions or reveal which pipeline
+component dominates. Default NEAR_PV_ACC=0 remains unchanged.
+Stop micro-toggling existing compiler flags without a
+different dataflow/work-reduction hypothesis.
+
+### Next investigation: exclusion mask geometry, not an immediate kernel rewrite
+
+In the far loop, EXCL masks near-selected leaves *after*
+loading G/LZ, performing the far QK dot, and computing
+candidate leaf scores. Masked-away leaves can consume
+far-field dot work even though their exact tokens are
+processed in the near branch. A potential far compaction
+must be justified by measured selection masks first:
+how many 64-leaf far blocks are completely excluded
+and how many eligible far leaves remain per split.
+If complete excluded blocks are rare, a trivial branch
+skip is unlikely to help; a packed gather would need
+a separate, genuinely worthwhile cost analysis.
+
+Do not conflate theoretical far block reduction with
+whole-attention speed gain. GPU work for the next
+diagnostic (if implemented) is UNRUN at this commit.
+No production source modified in this evidence slice.
