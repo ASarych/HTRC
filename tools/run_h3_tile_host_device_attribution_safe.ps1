@@ -5,7 +5,7 @@ param(
     [switch]$IClosedOtherGpuWorkloads
 )
 
-# Research-only: one original Tile, startup wall then instrumented GPU Event then wall.
+# Research-only: original Tile, early paired host/GPU, settled paired, final unprofiled wall.
 # No driver/clock/power changes, candidate code, model or video inference.
 $ErrorActionPreference = 'Stop'
 $repo = 'D:\HTRC-graph-group-ab-20261113'
@@ -82,16 +82,16 @@ try {
         $report.candidate_timed -ne $false -or
         $report.process_identity.current_pid -le 0 -or
         $report.sentinel_initial_parity.full_window_bit_exact -ne $true -or
-        $report.phase_blocks.startup_wall.blocks.Count -ne 12 -or
-        $report.phase_blocks.paired_host_gpu.blocks.Count -ne 12 -or
-        $report.phase_blocks.settled_wall.blocks.Count -ne 6) {
+        $report.phase_blocks.startup_host_gpu.blocks.Count -ne 12 -or
+        $report.phase_blocks.settled_host_gpu.blocks.Count -ne 12 -or
+        $report.phase_blocks.final_wall.blocks.Count -ne 6) {
         throw 'Invalid research-only numeric or measurement contract; inspect ONE JSON'
     }
-    foreach ($name in @('startup_wall','paired_host_gpu','settled_wall')) {
+    foreach ($name in @('startup_host_gpu','settled_host_gpu','final_wall')) {
         if ($report.phase_blocks.$name.post_phase_parity.full_window_bit_exact -ne $true) {
             throw "Original Tile numeric parity failed after $name"
         }
-        $count = if ($name -eq 'settled_wall') { 6 } else { 12 }
+        $count = if ($name -eq 'final_wall') { 6 } else { 12 }
         if ($report.phase_blocks.$name.blocks.Count -ne $count) { throw "Missing $name blocks" }
         foreach ($block in $report.phase_blocks.$name.blocks) {
             if ($block.samples.Count -ne 5) { throw "Missing $name samples" }
@@ -99,7 +99,7 @@ try {
                 if ($sample.wall_ms_per_replay -le 0 -or $sample.enqueue_ms_per_replay -le 0) {
                     throw "Invalid $name CPU timing"
                 }
-                if ($name -eq 'paired_host_gpu') {
+                if ($name -ne 'final_wall') {
                     if ($sample.event_instrumented -ne $true -or $sample.gpu_event_ms_per_replay -le 0) {
                         throw 'Missing paired CUDA Event GPU timing'
                     }

@@ -1,4 +1,4 @@
-"""Isolate startup original Tile variation: host enqueue vs CUDA Event GPU duration.
+"""Isolate startup original Tile variation: early paired host enqueue vs CUDA Event GPU duration.
 
 Research-only, single original persistent Graph from the existing exact two-bank gate.
 CUDA Event timing is diagnostic instrumentation, NOT a candidate speed comparison.
@@ -20,8 +20,8 @@ if str(ROOT / 'tools') not in sys.path:
     sys.path.insert(0, str(ROOT / 'tools'))
 from benchmark_h3_tile_quiet_environment import run_gpu
 
-PHASES = ('startup_wall', 'paired_host_gpu', 'settled_wall')
-BLOCKS = {'startup_wall': 12, 'paired_host_gpu': 12, 'settled_wall': 6}
+PHASES = ('startup_host_gpu', 'settled_host_gpu', 'final_wall')
+BLOCKS = {'startup_host_gpu': 12, 'settled_host_gpu': 12, 'final_wall': 6}
 SAMPLES_PER_BLOCK = 5
 REPLAYS_PER_SAMPLE = 256
 WARMUPS = 5
@@ -85,7 +85,7 @@ def _time_sample(torch, graph, device, start_event=None, stop_event=None):
 
 
 def _phase(torch, graph, device, name):
-    instrumented = name == 'paired_host_gpu'
+    instrumented = name != 'final_wall'
     # Reuse the SAME events for all paired samples to avoid per-sample allocations.
     start = torch.cuda.Event(enable_timing=True) if instrumented else None
     stop = torch.cuda.Event(enable_timing=True) if instrumented else None
@@ -122,7 +122,7 @@ def summarize_protocol(phases):
             raise ValueError('Missing raw samples')
         wall = [b['wall_median_ms_per_replay'] for b in blocks]
         enqueue = [b['enqueue_median_ms_per_replay'] for b in blocks]
-        paired = name == 'paired_host_gpu'
+        paired = name != 'final_wall'
         gpu = [b['gpu_event_median_ms_per_replay'] for b in blocks] if paired else None
         if any(b['instrumented'] != paired for b in
                (sample for block in blocks for sample in block['samples'])):
@@ -137,7 +137,7 @@ def summarize_protocol(phases):
             'gpu_event_block_median_spread_pct': spread_pct(gpu) if paired else None,
             'gpu_event_median_ms_per_replay': statistics.median(gpu) if paired else None,
         }
-    startup = summary['startup_wall']
+    startup = summary['startup_host_gpu']
     # These first/last-six cohorts are pre-registered, not a filtered speed claim.
     startup['first_six_block_spread_pct'] = spread_pct(
         startup['wall_block_medians_ms_per_replay'][:6])
@@ -147,7 +147,15 @@ def summarize_protocol(phases):
         startup['wall_block_medians_ms_per_replay'][:6])
     startup['last_six_median_ms'] = statistics.median(
         startup['wall_block_medians_ms_per_replay'][6:])
-    steady = summary['settled_wall']['wall_block_median_spread_pct']
+    startup['first_six_gpu_event_spread_pct'] = spread_pct(
+        startup['gpu_event_block_medians_ms_per_replay'][:6])
+    startup['last_six_gpu_event_spread_pct'] = spread_pct(
+        startup['gpu_event_block_medians_ms_per_replay'][6:])
+    startup['first_six_gpu_event_median_ms'] = statistics.median(
+        startup['gpu_event_block_medians_ms_per_replay'][:6])
+    startup['last_six_gpu_event_median_ms'] = statistics.median(
+        startup['gpu_event_block_medians_ms_per_replay'][6:])
+    steady = summary['final_wall']['wall_block_median_spread_pct']
     initial = startup['wall_block_median_spread_pct']
     if steady > SPREAD_PCT:
         classification = 'VARIATION_PERSISTS_IN_FINAL_UNPROFILED_PHASE'
@@ -160,11 +168,13 @@ def summarize_protocol(phases):
         'classification': classification,
         'phases': summary,
         'original_wall_initial_spread_pct': initial,
+        'original_gpu_event_initial_spread_pct':
+            startup['gpu_event_block_median_spread_pct'],
         'original_wall_final_spread_pct': steady,
-        'paired_host_wall_spread_pct':
-            summary['paired_host_gpu']['wall_block_median_spread_pct'],
-        'paired_gpu_event_spread_pct':
-            summary['paired_host_gpu']['gpu_event_block_median_spread_pct'],
+        'settled_host_wall_spread_pct':
+            summary['settled_host_gpu']['wall_block_median_spread_pct'],
+        'settled_gpu_event_spread_pct':
+            summary['settled_host_gpu']['gpu_event_block_median_spread_pct'],
         'max_descriptive_spread_pct': SPREAD_PCT,
         'candidate_timed': False, 'not_candidate_speed_gate': True,
         'no_proven_root_cause': True, 'not_full_attention_timing': True,
@@ -194,7 +204,7 @@ def collect_control_probe(torch, graph, device, report, verify, snapshot, client
         'status': STATUS, 'completed': True,
         'host_device_diagnostic': summary,
         'speed_measurement': 'ORIGINAL_ONLY_HOST_WALL_AND_INSTRUMENTED_GPU_EVENT',
-        'gpu_event_stability': 'DESCRIPTIVE_ONLY_NOT_PREVIOUS_ADMISSION',
+        'gpu_event_stability': 'DESCRIPTIVE_EARLY_AND_SETTLED_NOT_SPEED_ADMISSION',
         'timed_full_attention': False, 'candidate_timed': False,
         'no_model_runtime_change': True,
     })
@@ -212,7 +222,7 @@ def main():
     result = {
         'schema': 'htrc-tile-host-device-v1',
         'status': 'FAIL_CLOSED', 'completed': False, 'source_head': None,
-        'probe': 'PERSISTENT_ORIGINAL_TILE_STARTUP_WALL_PAIRED_HOST_GPU_SETTLED_WALL',
+        'probe': 'PERSISTENT_ORIGINAL_TILE_EARLY_PAIRED_LATE_PAIRED_FINAL_WALL',
         'phase_order': list(PHASES), 'phase_blocks': {},
         'numeric_gate': 'UNRUN', 'h3_model_or_video': 'UNRUN',
         'production_promotion': 'PROHIBITED_RESEARCH_ONLY',

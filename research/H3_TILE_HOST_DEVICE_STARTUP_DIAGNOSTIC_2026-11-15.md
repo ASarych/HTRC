@@ -42,17 +42,16 @@ The original two-bank, resource and full PM/PL/PACC/Merge gates run
 first. No research kernel, alternative math, model or video execution.
 
 Pre-registered measurement schedule (all same persistent Graph):
-1. `startup_wall`: 12 blocks x 5 samples x 256 Graph replays.
-   Host `perf_counter_ns` wall time; separately record the Python
-   replay-enqueue span and completion wait. **No CUDA Events.**
-2. `paired_host_gpu`: 12 blocks x 5 samples x 256 Graph replays.
-   Reuse a fixed start/stop CUDA Event pair across samples;
-   record GPU elapsed time and host wall/enqueue/completion spans.
-3. `settled_wall`: 6 blocks x 5 samples x 256 Graph replays.
-   Again NO CUDA Events; check whether late uninstrumented wall
-   measurements remain stable.
+1. `startup_host_gpu`: **first** 12 blocks x 5 samples x 256 Graph replays.
+   CUDA Events are active from the first sample, together with host
+   `perf_counter_ns` wall/enqueue/completion spans, to catch early
+   changes on both scales instead of waiting until after warmup.
+2. `settled_host_gpu`: next 12 blocks x 5 samples x 256 Graph replays.
+   Same event instrumentation to compare early and late GPU durations.
+3. `final_wall`: 6 blocks x 5 samples x 256 Graph replays.
+   NO CUDA Events: independent late uninstrumented wall stability check.
 
-The first/last six startup blocks are pre-defined cohorts; no
+The first/last six startup blocks (both host and GPU Event timing) are pre-defined cohorts; no
 retrospective outlier removal or threshold relaxation.
 Original output partials and Merge are verified **after every phase**.
 Capture the process's own PID and `sys.executable`, alongside

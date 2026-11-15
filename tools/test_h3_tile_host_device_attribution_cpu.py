@@ -20,11 +20,11 @@ from benchmark_h3_tile_host_device_attribution import (
 def fake_phases(startup_spike=False, settled_spike=False):
     phases = {}
     for name in PHASES:
-        paired = name == 'paired_host_gpu'
+        paired = name != 'final_wall'
         blocks = []
         for i in range(BLOCKS[name]):
-            wall = (0.43 if startup_spike and name == 'startup_wall' and i == 1
-                    else 0.44 if settled_spike and name == 'settled_wall' and i == 4
+            wall = (0.43 if startup_spike and name == 'startup_host_gpu' and i == 1
+                    else 0.44 if settled_spike and name == 'final_wall' and i == 4
                     else 0.409 + i * 0.00001)
             samples = [{
                 'instrumented': paired,
@@ -43,8 +43,8 @@ def fake_phases(startup_spike=False, settled_spike=False):
 
 class PureLogic(unittest.TestCase):
     def test_pinned_protocol(self):
-        self.assertEqual(PHASES, ('startup_wall', 'paired_host_gpu', 'settled_wall'))
-        self.assertEqual(BLOCKS, {'startup_wall': 12, 'paired_host_gpu': 12, 'settled_wall': 6})
+        self.assertEqual(PHASES, ('startup_host_gpu', 'settled_host_gpu', 'final_wall'))
+        self.assertEqual(BLOCKS, {'startup_host_gpu': 12, 'settled_host_gpu': 12, 'final_wall': 6})
         self.assertEqual((REPLAYS_PER_SAMPLE, SAMPLES_PER_BLOCK, SPREAD_PCT), (256, 5, 3.0))
         class Args:
             quiet_confirmed = True
@@ -72,7 +72,7 @@ class PureLogic(unittest.TestCase):
         self.assertEqual(s['classification'], 'INITIAL_VARIATION_FINAL_UNPROFILED_STABLE')
         self.assertGreater(s['original_wall_initial_spread_pct'], 3)
         self.assertLess(s['original_wall_final_spread_pct'], 3)
-        self.assertEqual(len(s['phases']['startup_wall']['wall_block_medians_ms_per_replay']), 12)
+        self.assertEqual(len(s['phases']['startup_host_gpu']['wall_block_medians_ms_per_replay']), 12)
 
     def test_final_phase_variation_refuses_stability(self):
         s = summarize_protocol(fake_phases(settled_spike=True))
@@ -82,9 +82,9 @@ class PureLogic(unittest.TestCase):
         with self.assertRaises(ValueError):
             spread_pct([0.4, math.nan])
         with self.assertRaises(ValueError):
-            summarize_protocol({'startup_wall': fake_phases()['startup_wall']})
+            summarize_protocol({'startup_host_gpu': fake_phases()['startup_host_gpu']})
         p = fake_phases()
-        p['paired_host_gpu']['blocks'][0]['samples'][0]['instrumented'] = False
+        p['settled_host_gpu']['blocks'][0]['samples'][0]['instrumented'] = False
         with self.assertRaises(ValueError):
             summarize_protocol(p)
 
