@@ -162,7 +162,7 @@ def summarize_protocol(phases):
     elif initial > SPREAD_PCT:
         classification = 'INITIAL_VARIATION_FINAL_UNPROFILED_STABLE'
     else:
-        classification = 'INITIAL_AND_FINAL_UNPROFILED_WITHIN_THRESHOLD'
+        classification = 'INITIAL_PAIRED_AND_FINAL_UNPROFILED_WITHIN_THRESHOLD'
     return {
         'status': STATUS,
         'classification': classification,

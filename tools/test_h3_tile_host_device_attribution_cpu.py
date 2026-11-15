@@ -62,7 +62,7 @@ class PureLogic(unittest.TestCase):
 
     def test_stable_is_descriptive_only(self):
         s = summarize_protocol(fake_phases())
-        self.assertEqual(s['classification'], 'INITIAL_AND_FINAL_UNPROFILED_WITHIN_THRESHOLD')
+        self.assertEqual(s['classification'], 'INITIAL_PAIRED_AND_FINAL_UNPROFILED_WITHIN_THRESHOLD')
         self.assertEqual(s['status'], STATUS)
         self.assertTrue(s['no_proven_root_cause'])
         self.assertTrue(s['not_candidate_speed_gate'])
