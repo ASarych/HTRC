@@ -67,6 +67,8 @@ def _check(torch, packed, counts, reference, phase):
 
 def run_gpu(args):
     import torch
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
     from htrc_far_pack_triton import pack_ordered_far_index
     from h3 import htrc_flat_directflow_live as flow
     from h3 import htrc_flat_live_backend as live

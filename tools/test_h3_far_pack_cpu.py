@@ -121,6 +121,9 @@ class SourceContracts(unittest.TestCase):
             'torch.equal(eager.cpu(), full_outputs[1])',
         ):
             self.assertIn(token, src)
+        self.assertIn('if str(ROOT) not in sys.path:', src)
+        self.assertLess(src.index('if str(ROOT) not in sys.path:'),
+                        src.index('from h3 import htrc_flat_directflow_live as flow'))
         self.assertIn('"no_packed_attention_kernel": True', src)
         self.assertIn('"no_attention_candidate_timing": True', src)
         self.assertNotIn('launch_prepared_tile_batch(', src)
