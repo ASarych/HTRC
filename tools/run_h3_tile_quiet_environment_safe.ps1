@@ -28,6 +28,26 @@ if (Get-NetTCPConnection -LocalPort 8188 -State Listen -ErrorAction SilentlyCont
 if (Get-Process -Name blender,ollama,ollama_llama_server -ErrorAction SilentlyContinue) {
     throw 'Close Blender/Ollama before GPU diagnostic'
 }
+# Read-only GPU-client check, before cloning, CPU suites or CUDA work.
+# Port 8188 may be closed while Comfy Desktop still owns a Python GPU context.
+$clientLines = @(& nvidia-smi --id=0 --query-compute-apps=pid,process_name,used_gpu_memory --format=csv,noheader,nounits 2>$null)
+if ($LASTEXITCODE -ne 0) {
+    throw 'nvidia-smi GPU-client preflight failed; cannot verify quiet environment'
+}
+$comfyPythonClients = @($clientLines | Where-Object {
+    $_ -like '*\ComfyUI-Installs\*\standalone-env\python*.exe*' -or
+    $_ -like '*\ComfyUI-Installs\*\ComfyUI\.venv\Scripts\python*.exe*'
+})
+if ($comfyPythonClients.Count -gt 0) {
+    throw "Background Comfy Python GPU client present; close it before running: $($comfyPythonClients -join '; ')"
+}
+$epicClients = @($clientLines | Where-Object {
+    $_ -like '*\EpicGamesLauncher.exe*' -or
+    $_ -like '*\EOSOverlayRenderer-*'
+})
+if ($epicClients.Count -gt 0) {
+    Write-Warning 'Epic Games GPU clients were detected. Close launcher/overlay for stricter isolation.'
+}
 $old = if (Test-Path -LiteralPath $output -PathType Leaf) {
     (Get-Item -LiteralPath $output).LastWriteTimeUtc
 } else { [datetime]::MinValue }

@@ -126,6 +126,22 @@ class SourceAndRunner(unittest.TestCase):
             capture_output=True, text=True, timeout=20)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
+    def test_background_comfy_python_gpu_client_preflight(self):
+        # 8188 closed does not imply Comfy Desktop background Python is gone.
+        code = (HERE / 'run_h3_tile_quiet_environment_safe.ps1').read_text('utf-8')
+        for phrase in (
+            '--query-compute-apps=pid,process_name,used_gpu_memory',
+            '*\ComfyUI-Installs\*\standalone-env\python*.exe*',
+            '*\ComfyUI-Installs\*\ComfyUI\.venv\Scripts\python*.exe*',
+            'Background Comfy Python GPU client present',
+            'Write-Warning',
+        ):
+            self.assertIn(phrase, code)
+        self.assertLess(code.index('$comfyPythonClients ='),
+                        code.index('git clone --no-checkout --no-hardlinks'))
+        self.assertLess(code.index('git clone --no-checkout --no-hardlinks'),
+                        code.index('benchmark_h3_tile_quiet_environment.py'))
+
     def test_wrong_head_fails_before_cuda(self):
         with tempfile.TemporaryDirectory(prefix='htrc-quiet-check-') as temp:
             root = Path(temp)

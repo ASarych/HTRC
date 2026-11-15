@@ -86,3 +86,76 @@ At authoring: static code review only; CPU tests = **UNRUN** on the
 target Windows runtime; GPU wall timing and telemetry = **UNRUN**.
 H3 model/video = **UNRUN**, full attention candidate speed = **UNRUN**,
 promotion = **PROHIBITED**. No `h3/` or production source modified.
+
+
+## 2026-11-15 — uploaded quiet/monitor/quiet result: first quiet phase unstable
+
+Evidence: user-uploaded original `flat_tile_quiet_environment.json`,
+**45,312 bytes**, SHA-256
+`8e925c3dfbf66e548ea227f09b6f266623cf62abc2a732e944b62d245a481cfc`,
+measured on exact source HEAD
+`0d548f6c0cb4c912efc5f31853726c20021cab05`.
+The raw JSON is not committed here; its source fingerprint and results are
+recorded without changing the acceptance threshold.
+
+Report: `schema=htrc-tile-quiet-environment-v1`,
+`completed=true`, `numeric_gate=PASS_TWO_BANK_ORIGINAL_TILE_MERGE_BIT_EXACT`,
+`status=WALL_CONTROL_UNSTABLE_DIAGNOSTIC_ONLY`,
+`classification=QUIET_PHASE_VARIATION_OR_INTER_PHASE_DRIFT`.
+Both distinct original BF16 QKV banks passed bit-exact native Graph/Tile+Merge
+and independent eager equivalence. Sentinel initial, all phase-end PM/PL/PACC,
+and original Merge raw-bit parity PASS. Original resources: 255 regs/thread,
+49,664 B/CTA, no spills. No new candidate and no CUDA Events.
+
+| Phase | 6 block-median values (ms / replay) | Phase median (us) | Max/min spread |
+|---|---|---:|---:|
+| Quiet before | .409501, .419146, .410844, .409188, .409313, .423144 | 410.173 | **3.41062049% FAIL** |
+| Monitored | .404586, .409383, .409520, .409709, .409880, .409987 | 409.614 | 1.33489099% |
+| Quiet after | .410110, .410073, .410219, .410397, .410548, .410814 | 410.308 | 0.18070350% |
+
+Quiet pre/post median drift **0.03299868%**. Within each phase there were
+30 raw wall-clock samples (six blocks of five, 256 graph replays/sample),
+for **90 original-only samples**. Counts of raw samples >3% from their
+own block medians: quiet-before **3**, monitored **0**, quiet-after **1**.
+Quiet-before block 1 spanned **385.374–419.850 us** per replay; block 6
+reached **431.068 us**. These outliers are retained; no retrospective
+sample exclusion or altered threshold.
+
+The monitored phase yielded **19** nvidia-smi records; SM clocks
+**2662–2947 MHz**, temperature **59.33–75.09 C**, power
+**107.27–257.77 W**, and GPU utilization 0–100%.
+Sampling is coarse and receipt timestamps are not exact driver-event
+timestamps. Do **NOT** conclude nvidia-smi improves stability or that
+thermal/power changes, scheduling, GPU contention or Graph capture caused
+the first-phase failures. These are hypotheses only.
+
+**Important environmental admission gap:** pre/post nvidia-smi
+compute-client snapshots both include a distinct long-running
+`C:\Users\Misya\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\standalone-env\python.exe`
+(PID **19608** in this report), although ComfyUI port 8188 was not
+listening. Epic Games Launcher, Epic web helper and
+EOSOverlayRenderer were also listed along with browser, desktop and
+other contexts; WDDM reports GPU-client presence, not their actual
+kernel activity during measured samples. This is a plausible
+contamination risk, **not proven interference**.
+
+**Next and only admitted test:** close remaining Comfy Desktop
+standalone Python and other optional GPU-using apps (Epic launcher
+and overlay especially); re-run the **same three-phase control-only
+protocol once** on the new exact source commit, without changing
+warmup counts, 3% limit, or graph geometry. The runner now fails
+closed before clone/CPU/GPU if nvidia-smi still lists the specific
+Comfy Python context; it does not terminate processes. The runner
+also warns about Epic clients but does not make their presence an
+automatic cause claim. Compare the new raw block series to the
+preserved original report, not just a PASS/FAIL label.
+
+If quiet-before remains unstable, do not promote candidate A/B;
+investigate host submission/synchronization jitter and workload/clock
+state with a separate pre-registered controlled test. Even a stable
+wall-only rerun would **not** establish CUDA Event baseline stability,
+full attention speed, model/video quality or production admission.
+
+Documentation and Windows preflight update only: no `h3/` math,
+Tile CUDA kernel, Graph runtime or production code changed.
+New GPU rerun **UNRUN**.
