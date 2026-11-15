@@ -147,3 +147,112 @@ windows, all 56 heads or the model-resident denoising process.
   variant are unknown until the target GPU runs.
 - GPU performance, complete multi-window masked attention,
   model/video output and production promotion: **UNRUN**.
+
+
+## 2026-11-15 — observed RTX 5070 Ti full-window mask-G numeric PASS
+
+Evidence supplied by user: `flat_full_mask_g_numeric.json`,
+7,540 raw bytes, SHA-256
+`27e937473afe495d1446cf97ed4f88d2b1e748e0be4663cb383adf2fac78b04c`.
+Executed at exact source HEAD
+`352b4b5992d2d209a6b76a556aac6abe9d1eedd0`.
+Raw JSON remains user-owned. This section records the measured
+facts and strict next-gate decision.
+
+Result: `schema=htrc-full-mask-g-numeric-v1`,
+`status=PASS_FULL_MASK_G_NUMERIC_ONLY`, `completed=true`,
+`parity_admission=PASS_FULL_WINDOW_PARTIALS_AND_MERGE_ONLY`,
+`mask_g_full_numeric_bit_exact=true`,
+`mirror_full_numeric_bit_exact=true` and
+`baseline_window_graph_parity=true`.
+
+Target and scope: NVIDIA RTX 5070 Ti SM120, two independent
+BF16 QKV banks, 15,275 key tokens; pinned four heads,
+32 tiles and one 2,048-query-row materialized window.
+The original full attention was used to establish first-call
+and bank-B eager/Graph parity. The candidate was validated
+on **one window only** with Balanced/512 near selection,
+954 full leaves, four BN64 far splits and 11 tail tokens
+merged by the existing `launch_prepared_merge_batch`.
+The candidate has not run through all 56 model heads,
+other query windows or real model/video denoising.
+
+Each bank's `EXCL/IDX` mask fingerprint matches the
+preceding far numeric studies:
+- Bank A: `bd56312c61e4c5f950c1a1dfea718faed0ac50c7aa18c0d3c862cd156dee4a32`.
+- Bank B: `05dc41bf73bcc98204739f708a86b6c8e39343f24adb39fa9b952c195a341264`.
+
+### Exact full-window numerical results
+
+The unchanged original one-pass `_tile_kernel(PASS=0)` plus
+unchanged Merge was independently verified against the
+prepared Graph window output, with **0/1,048,576 output
+bit mismatches** on each bank. The unmasked research
+`mirror` also matched original partials and Merge on
+both banks before the mask-G candidate was evaluated.
+
+On **each** independent bank the mask-G candidate
+achieved exactly zero raw FP32-bit mismatches:
+
+| Field | Elements checked per bank | Bank A | Bank B |
+|---|---:|---:|---:|
+| PM partials | 32,768 | 0 mismatches | 0 mismatches |
+| PL partials | 32,768 | 0 mismatches | 0 mismatches |
+| PACC partials | 4,194,304 | 0 mismatches | 0 mismatches |
+| Final original Merge (11-token tail) | 1,048,576 | 0 mismatches | 0 mismatches |
+
+No error tolerance was applied. Both individual-bank
+first complete and separate bank-B eager/Graph parity
+gates also PASS, and the banks have distinct selection
+masks. The original far BN64 groups, exact near order,
+four split boundaries and original Merge are retained.
+
+Actual compiled Tile resources on BOTH banks:
+
+| Kernel | Registers/thread | Shared bytes/CTA | Spills |
+|---|---:|---:|---:|
+| Original full Tile | **255** | **49,664** | **0** |
+| Unmasked research mirror | 254 | 49,664 | 0 |
+| Full mask-G Tile | **255** | **49,664** | **0** |
+
+This means the full mask-G research kernel had **no
+measured additional register/SMEM allocation compared
+with the full baseline**, and no compiler spills.
+It does **not** establish equal runtime or achieved
+occupancy; the generated machine code may still
+schedule masked memory requests differently.
+
+### Decision: numerical PASS, authorize only a separate performance gate
+
+`timing_scope=NUMERIC_ONLY_NO_CANDIDATE_TIMING`,
+`speed_measurement=UNRUN_NUMERIC_ONLY`,
+`no_cuda_event_timing=true`,
+`speed_capture_blocks=[]`,
+`production_promotion=PROHIBITED_RESEARCH_ONLY`,
+H3 model/video UNRUN.
+
+**PASS the pinned full-window numerical gate for mask-G.**
+It is now reasonable to design a **research-only**
+independent-capture Tile A/B/B/A on the same true prepared
+QKV source states, with original full Tile and unchanged
+mask-G full Tile, both protected by the existing two-bank
+strict numeric gate. Do not conflate original full Tile
+resource counters with the earlier far-only resource figures.
+
+Require deterministic independent captures and repeated
+measurements, complete per-arm PM/PL/PACC rechecks, explicit
+compiler register/SMEM/spill accounting and a pinned identical
+2,048-row window. Use the previous study's **>=5% consistent
+Tile-only speedup criterion** before considering expanded
+full attention coverage. Distinguish Tile-only event timing
+from full call, preload/selection and model/video inference.
+
+If mask-G is slower or inconclusive on A/B/B/A, report
+NO_GO_TILE_ONLY or INCONCLUSIVE rather than presenting a
+theoretical 53.7% reduction in eligible G leaf loads as
+a speedup. No pack buffers are needed for this method;
+Tensor Core far-dot block count remains 1,920.
+
+The present result is a documentation-only update: no
+new GPU experiments, production modifications, or source
+kernel edits were performed while recording it.
