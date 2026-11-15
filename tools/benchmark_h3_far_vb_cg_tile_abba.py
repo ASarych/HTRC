@@ -30,6 +30,7 @@ from benchmark_h3_far_masked_loads_numeric import (
 from benchmark_h3_full_mask_g_numeric import (
     _compare_bitwise, _merge,
 )
+from htrc_tile_steady_gate import run_steady_precondition
 
 ARMS = ('control', 'far_vb_cg', 'far_vb_cg', 'control')
 REPLAYS = 16
@@ -42,6 +43,8 @@ def validate_request(args):
         raise ValueError('Requires 7..12 event samples and 5..12 warmups')
     if args.replays_per_sample != REPLAYS:
         raise ValueError('Pinned timing requires 16 replays per event sample')
+    if getattr(args, 'steady_precondition', False) and args.warmups != 5:
+        raise ValueError('Fixed steady mode requires five warmup replays')
 
 
 def _relative_spread_pct(values):
@@ -325,6 +328,43 @@ def run_gpu(args):
                                'speed_capture_blocks': [], 'tile_only_speed': None})
                 return report
             states = last_item['states']
+            if getattr(args, 'steady_precondition', False):
+                # Fixed unprofiled original-only precondition before any A/B
+                # capture; no adaptive stopping or post-hoc block exclusion.
+                steady_out = _alloc_partials(torch, device)
+                compiled = _launch('control', torch, batch, states, cfg, tr,
+                                   full_far_vb_cg_partial, steady_out)
+                if _compiled_resources(compiled) != ctrl_res:
+                    raise AssertionError('Control resources drift before steady gate')
+                steady_graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(steady_graph):
+                    _launch('control', torch, batch, states, cfg, tr,
+                            full_far_vb_cg_partial, steady_out)
+                torch.cuda.synchronize(device)
+                steady_report = run_steady_precondition(torch, steady_graph, device)
+                report['steady_precondition'] = steady_report
+                steady_parity = _verify_partials_and_merge(
+                    torch, batch, states, cfg, tr, last_control, last_merged,
+                    last_tail, steady_out, 'steady_control_post')
+                steady_report['post_control_parity'] = steady_parity
+                if not steady_parity['full_window_bit_exact']:
+                    report.update({'status': 'FAIL_CLOSED', 'completed': False,
+                                   'parity_admission': 'NO_GO_CAPTURE_BIT_EXACT',
+                                   'error': 'Original Tile changed during steady gate'})
+                    return report
+                del steady_graph, steady_out
+                torch.cuda.synchronize(device)
+                if not steady_report['decision']['admitted']:
+                    report.update({
+                        'status': 'INCONCLUSIVE_PRECONDITION',
+                        'completed': True,
+                        'speed_measurement': 'UNRUN_UNSTABLE_CONTROL',
+                        'parity_admission': 'PASS_TWO_BANK_FULL_TILE_MERGE_BIT_EXACT',
+                        'tile_only_speed': None,
+                        'timed_full_attention': False,
+                        'no_model_runtime_change': True,
+                    })
+                    return report
             # All gates above must be complete BEFORE creating the first measured Graph.
             for index, arm in enumerate(ARMS, 1):
                 out = _alloc_partials(torch, device)
@@ -417,13 +457,17 @@ def main() -> int:
     parser.add_argument('--expect-head', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--rounds', type=int, default=7)
+    parser.add_argument('--steady-precondition', action='store_true')
     parser.add_argument('--warmups', type=int, default=5)
     parser.add_argument('--replays-per-sample', type=int, default=REPLAYS)
     args = parser.parse_args()
     report = {
         'schema': 'htrc-far-vb-cg-tile-abba-v1',
         'status': 'FAIL_CLOSED', 'completed': False,
-        'source_head': None, 'probe': 'ORIGINAL_FULL_TILE_VS_FAR_VB_CG_TILE_ABBA',
+        'source_head': None, 'probe': ('ORIGINAL_FULL_TILE_VS_FAR_VB_CG_STEADY_ABBA'
+                                      if args.steady_precondition else
+                                      'ORIGINAL_FULL_TILE_VS_FAR_VB_CG_TILE_ABBA'),
+        'steady_precondition_requested': bool(args.steady_precondition),
         'tokens': TOKENS, 'heads': HEADS, 'tiles': TILES, 'splits': SPLITS,
         'near_leaves': KX, 'far_bn': BN, 'window_query_rows': 2048,
         'capture_order': list(ARMS), 'banks': [], 'capture_blocks': [],
@@ -450,7 +494,8 @@ def main() -> int:
     print(f"one_json={args.output} status={report['status']} numeric={report.get('numeric_gate')}")
     return 0 if report['status'] in (
         'PASS_TILE_ONLY_SPEED_GATE', 'NO_GO_TILE_ONLY',
-        'INCONCLUSIVE_TILE_ONLY', 'NO_GO_RESOURCE_GATE') else 2
+        'INCONCLUSIVE_TILE_ONLY', 'NO_GO_RESOURCE_GATE',
+        'INCONCLUSIVE_PRECONDITION') else 2
 
 
 if __name__ == '__main__':

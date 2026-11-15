@@ -91,3 +91,47 @@ diagnostic only on the RTX 5070 Ti. Output:
 
 Authoring status: CPU **UNRUN**, GPU **UNRUN**, full attention/model/video
 **UNRUN**. No `h3/` or production code modified.
+
+
+## 2026-11-15 — completed original-only host/GPU attribution
+
+Source: user-uploaded `flat_tile_host_device_attribution.json`,
+89,657 bytes, SHA-256
+`b3481a6993bd12f8b58227c387ae4c2b16dc5863400017b1caaffd09976a341a`;
+exact source HEAD `7f9b295ac1fe64a01b1bd6b93f288fdcca5d5146`.
+`RECORDED_ORIGINAL_TILE_HOST_DEVICE_DIAGNOSTIC_ONLY`,
+completed, two-bank original numeric and all raw-bit
+Tile/PM/PL/PACC/Merge checks PASS. No candidate timed.
+
+| Measured phase | Wall median ms/replay | Wall block spread | GPU Event median ms/replay | GPU Event block spread |
+|---|---:|---:|---:|---:|
+| First 12 paired blocks | 0.4060451172 | 2.679824% | 0.4048426300 | 2.670079% |
+| Next 12 paired blocks | 0.4079035156 | **0.236184%** | 0.4066060036 | **0.242358%** |
+| Final 6 wall-only blocks | 0.4081986328 | **0.069110%** | UNRUN | UNRUN |
+
+CPU enqueue medians were only 0.005011 / 0.005088 /
+0.005117 ms per replay. The early wall and Event
+trajectories rise in parallel; enqueue jitter alone
+does not plausibly account for that magnitude. The
+cause of the GPU-timeline transition remains
+**UNKNOWN** (not proof of thermal throttling,
+clock changes, contention or CUDA Graph bug).
+Late stability is descriptive and does not
+retroactively change prior FAIL/INCONCLUSIVE statuses.
+
+The WDDM GPU-client PID for Comfy `standalone-env/python.exe`
+was **26496**, exactly `process_identity.current_pid=26496`
+of the diagnostic benchmark; that entry was the benchmark
+itself, not evidence of a separate Comfy worker.
+The source interpreter path records `.venv/Scripts/python.exe`,
+which is compatible with a different Windows CUDA host
+process image path being reported by nvidia-smi.
+
+Decision: close this original-only attribution probe;
+**do not repeat it**. For the previously inconclusive
+far-VB `.cg` candidate only, a distinct fixed 24-block
+control-precondition plus robust A/B/B/A protocol has
+been specified at
+`research/H3_TILE_STEADY_ABBA_ADMISSION_2026-11-15.md`.
+No production promotion, model/video test or accepted
+full-attention speedup follows from these measurements.
