@@ -36,6 +36,10 @@ class SteadyABBAContract(unittest.TestCase):
         )
         self.assertLess(s.index('actual != args.expect_head:'), s.index('report.update(run_gpu(args))'))
         self.assertIn("ARMS = ('control', 'far_vb_cg', 'far_vb_cg', 'control')", s)
+        self.assertGreater(s.index("from htrc_tile_steady_gate import run_steady_precondition"),
+                           s.index("def run_gpu(args):"))
+        self.assertLess(s.index('actual != args.expect_head:'),
+                        s.index('report.update(run_gpu(args))'))
         self.assertIn('MIN_REDUCTION_PCT = 5.0', s)
         self.assertIn('MAX_INTER_CAPTURE_SPREAD_PCT = 3.0', s)
         self.assertIn("return _launch_full_vb_cache(states, research_kernel, out, cache_vb='.cg')", s)

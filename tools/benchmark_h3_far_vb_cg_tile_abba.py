@@ -30,7 +30,6 @@ from benchmark_h3_far_masked_loads_numeric import (
 from benchmark_h3_full_mask_g_numeric import (
     _compare_bitwise, _merge,
 )
-from htrc_tile_steady_gate import run_steady_precondition
 
 ARMS = ('control', 'far_vb_cg', 'far_vb_cg', 'control')
 REPLAYS = 16
@@ -329,6 +328,9 @@ def run_gpu(args):
                 return report
             states = last_item['states']
             if getattr(args, 'steady_precondition', False):
+                # Import only AFTER exact HEAD gate and original numeric/resource
+                # checks, preserving the old wrong-HEAD CPU smoke checkout.
+                from htrc_tile_steady_gate import run_steady_precondition
                 # Fixed unprofiled original-only precondition before any A/B
                 # capture; no adaptive stopping or post-hoc block exclusion.
                 steady_out = _alloc_partials(torch, device)
