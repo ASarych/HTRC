@@ -114,3 +114,111 @@ RTX 5070 Ti new kernel compile/numerical outcome: **UNRUN**.
 The numeric-only experiment has **no speed measurement**.
 No changes to h3/; only new tools/ research/ files, no production or
 ComfyUI modifications. Do not promote this untested candidate.
+
+## 2026-11-15 — measured far-mask PASS, resource-pressure caution
+
+Evidence: user-uploaded `flat_far_masked_loads_numeric.json`,
+**9,858 raw bytes**, SHA-256
+`252e4680532685cf4a20d2bac7db5a577226e93f0ef95eba7f8240d1f1b1cbc1`.
+Pinned exact source HEAD:
+`57b6c48667f3d0cafc141e5816acc0df43e23c06`.
+The raw uploaded JSON remains user-held; this commit
+records the exact source fingerprint and result fields.
+
+Status: `PASS_MASKED_FAR_NUMERIC_ONLY`,
+`completed=true`, schema
+`htrc-far-masked-loads-numeric-v1`, admission
+`PASS_BOTH_MASKED_FAR_ONLY`.
+Both independent BF16 QKV banks passed full original
+first-call eager/Graph bitwise parity and separate
+bank-B full eager/Graph bitwise parity. Their
+`EXCL/IDX` selection hashes match earlier probes:
+A `bd56312c61e4c5f950c1a1dfea718faed0ac50c7aa18c0d3c862cd156dee4a32`,
+B `05dc41bf73bcc98204739f708a86b6c8e39343f24adb39fa9b952c195a341264`.
+Both banks used the original 1,920 far BN64 blocks,
+identical split boundaries and 512 near-selected leaves.
+
+### Strict two-bank far-only raw-bit results
+
+Control: unchanged original `_tile_kernel(PASS=1)`.
+Research mirror: identical BN64 and arithmetic, both
+load masks disabled. Three masked options retain
+the exact same BN64 dot/online-softmax groups.
+
+All rows below mean **zero raw FP32-bit mismatches**
+on **each** QKV bank, not merely a floating point
+tolerance or an approximate quality comparison.
+
+| Candidate | Bank A PM/PL/PACC | Bank B PM/PL/PACC | Registers/thread | Shared B/CTA | Compiler spills |
+|---|---|---|---:|---:|---:|
+| Original PASS1 | Reference | Reference | 212 | 41,472 | 0 |
+| Research `mirror` | **PASS / PASS / PASS** | **PASS / PASS / PASS** | 204 | 41,472 | 0 |
+| `mask_g` | **PASS / PASS / PASS** | **PASS / PASS / PASS** | 255 | 41,472 | 0 |
+| `mask_vb` | **PASS / PASS / PASS** | **PASS / PASS / PASS** | 255 | 41,472 | **12** |
+| `mask_both` | **PASS / PASS / PASS** | **PASS / PASS / PASS** | 255 | 41,472 | **8** |
+
+For each candidate on each bank, the test inspected
+32,768 PM elements, 32,768 PL elements and
+4,194,304 PACC elements; every mismatch count = 0
+and every maximum finite absolute difference = 0.
+The mirror requirement passed independently and
+is not inferred from candidate parity.
+
+### Resource and performance interpretation
+
+The masked loads removed reads of some far leaf
+rows for which `EXCL=1`. The observed number
+of selected near leaves implies a potential 53.6688%
+reduction of **logically enabled G/VB leaf loads**,
+but this experiment did NOT measure issued GPU
+memory transactions, L2/DRAM traffic, Tensor Core
+instruction counts or complete attention runtime.
+
+All three masked variants use 255 registers/thread,
+up from 212 for original PASS1. The `mask_vb` and
+`mask_both` variants also have reported compiler
+spills (12 and 8 respectively). The increased
+register pressure can negate the traffic reduction;
+spills are an adverse resource signal, NOT a
+measured slowdown. Even `mask_g` (no spills)
+may be slower because 255 registers/thread can
+limit scheduling. Shared-memory cost is unchanged.
+Do not infer a speedup from either strict numerics
+or the preceding copy-only far-gather study.
+
+Numerical admission is **far-only**. The user JSON
+explicitly says `full_masked_attention=UNRUN`,
+`speed_measurement=UNRUN_NUMERIC_GATE_ONLY`,
+`no_cuda_event_timing=true`,
+`speed_capture_blocks=[]`,
+model/video UNRUN and production promotion prohibited.
+
+### Next admissible experiment
+
+Prioritize **`mask_g` first** as the only new
+no-spill option. Keep `mask_vb` and
+`mask_both` available as numerically accepted
+research variants; do NOT pronounce performance
+NO_GO without data. Before GPU timing:
+
+1. Check full far+near `PASS=0` against unchanged
+   original full Tile `PM/PL/PACC` on both banks,
+   including exact selection and Merge output.
+   Any two-pass diagnostic must first prove that
+   the unchanged split `PASS=1`/`PASS=2`
+   reconstruction itself matches one-pass baseline;
+   otherwise it cannot serve as a valid parity oracle.
+2. If full numeric parity holds, perform independent
+   CUDA Graph A/B/B/A for `mask_g` against original
+   on identical prepared states, including a resource
+   and spill gate and at least 5% consistently
+   improved Tile-only timing criterion.
+3. Only if Tile timing improves, investigate the
+   complete attention call, pack/prepare overhead,
+   VRAM and actual H3 model. No production write
+   or checkpoint inference until these independent
+   gates pass.
+
+This result was documented only. No new GPU execution,
+new kernel edit, runtime change or production promotion
+occurred during this recording slice.
