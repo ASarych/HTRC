@@ -1,0 +1,99 @@
+param(
+    [Parameter(Mandatory=$true)]
+    [ValidatePattern('^[0-9a-f]{40}$')]
+    [string]$ExactHead,
+    [ValidateRange(7,12)]
+    [int]$Rounds = 7
+)
+
+# Research ONLY: exact detached checkout; no ComfyUI modification or packed attention.
+$ErrorActionPreference = 'Stop'
+$repo = 'D:\HTRC-graph-group-ab-20261113'
+$branch = 'experiment/flat-memory-to-speed-balanced-20261113'
+$py = 'C:\Users\Misya\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\.venv\Scripts\python.exe'
+$output = 'D:\ComfyOutput\H3\math_probe\flat_far_pack_cost.json'
+$tmp = 'D:\HTRC-far-pack-' + ([guid]::NewGuid().ToString('N').Substring(0,10))
+
+if (-not (Test-Path -LiteralPath $repo -PathType Container)) { throw 'Research HTRC checkout missing' }
+if (-not (Test-Path -LiteralPath $py -PathType Leaf)) { throw 'ComfyUI CUDA Python missing' }
+if (Get-NetTCPConnection -LocalPort 8188 -State Listen -ErrorAction SilentlyContinue) {
+    throw 'Close ComfyUI before GPU diagnostic'
+}
+if (Get-Process -Name blender -ErrorAction SilentlyContinue) {
+    throw 'Close Blender before GPU diagnostic'
+}
+if (Test-Path -LiteralPath $tmp) { throw 'Refuse to reuse temporary checkout' }
+$previous = if (Test-Path -LiteralPath $output -PathType Leaf) {
+    (Get-Item -LiteralPath $output).LastWriteTimeUtc
+} else { [datetime]::MinValue }
+
+try {
+    $remote = (git -C $repo remote get-url origin).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $remote) { throw 'Original Git origin not configured' }
+    git clone --no-checkout --no-hardlinks $repo $tmp
+    if ($LASTEXITCODE -ne 0) { throw 'Disposable exact-head clone failed' }
+    git -C $tmp remote set-url origin $remote
+    if ($LASTEXITCODE -ne 0) { throw 'Could not restore GitHub origin' }
+    git -C $tmp fetch origin $branch
+    if ($LASTEXITCODE -ne 0) { throw 'Could not fetch research branch' }
+    git -C $tmp switch --detach $ExactHead
+    if ($LASTEXITCODE -ne 0) { throw 'Expected exact research HEAD unavailable' }
+    if ((git -C $tmp rev-parse HEAD).Trim() -ne $ExactHead) {
+        throw 'Unexpected research HEAD; abort before CPU/GPU'
+    }
+
+    & $py -B -m unittest discover -s (Join-Path $tmp 'tools') `
+        -p 'test_h3_far_pack_cpu.py' -v
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Far pack source/CPU tests failed; no GPU execution'
+    }
+
+    & $py -B (Join-Path $tmp 'tools\benchmark_h3_far_pack_cost.py') `
+        --expect-head $ExactHead --rounds $Rounds `
+        --warmups 5 --replays-per-sample 16 --output $output
+    if ($LASTEXITCODE -ne 0) {
+        throw "GPU cost diagnostic failed closed; inspect ONE JSON: $output"
+    }
+    if (-not (Test-Path -LiteralPath $output -PathType Leaf) -or
+        (Get-Item -LiteralPath $output).LastWriteTimeUtc -le $previous) {
+        throw 'No fresh ONE JSON report was produced'
+    }
+    $report = Get-Content -LiteralPath $output -Raw | ConvertFrom-Json
+    if ($report.status -ne 'PASS_PACK_COST_ONLY' -or
+        $report.completed -ne $true -or
+        $report.source_head -ne $ExactHead -or
+        $report.banks.Count -ne 2 -or
+        $report.capture_blocks.Count -ne 4 -or
+        $report.first_complete_graph_eager_bit_exact -ne $true -or
+        $report.bank_b_complete_graph_eager_bit_exact -ne $true -or
+        $report.different_selection_masks_per_bank -ne $true -or
+        $report.no_packed_attention_kernel -ne $true -or
+        $report.no_attention_candidate_timing -ne $true -or
+        $report.production_promotion -ne 'PROHIBITED_RESEARCH_ONLY') {
+        throw 'Invalid result, stale source, or missing strict validation'
+    }
+    foreach ($bank in $report.banks) {
+        if ($bank.exact_pack_validation.valid_prefixes_bit_exact -ne $true -or
+            $bank.exact_pack_validation.split_membership_and_order_exact -ne $true -or
+            $bank.exact_pack_validation.packed_valid_indices -ne 56576 -or
+            $bank.current_far_blocks -ne 1920) {
+            throw 'Packed output prefix/order/shape integrity gate failed'
+        }
+    }
+    foreach ($block in $report.capture_blocks) {
+        if ($block.independent_capture -ne $true -or
+            $block.gpu_event_ms_per_pack_samples.Count -ne $Rounds -or
+            $block.replays_per_gpu_event -ne 16 -or
+            $block.output_prefix_validation.valid_prefixes_bit_exact -ne $true) {
+            throw 'Incomplete captured GPU cost sample or bad packed output'
+        }
+    }
+    Write-Host "HTRC far pack: $($report.status)"
+    Write-Host "Measured pack-only median: $($report.pack_cost.median_of_capture_medians_ms_per_pack) ms"
+    Write-Host "ONE JSON: $output"
+}
+finally {
+    if (Test-Path -LiteralPath $tmp) {
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
