@@ -2,8 +2,8 @@ param(
     [Parameter(Mandatory=$true)]
     [ValidatePattern('^[0-9a-f]{40}$')]
     [string]$ExactHead,
-    [ValidateSet('late_q','stage1','rb2','rb2_late_q')]
-    [string]$Candidate = 'rb2_late_q',
+    [ValidateSet('late_q','stage1','rb2','rb2_late_q','near_pv_acc')]
+    [string]$Candidate = 'near_pv_acc',
     [ValidateRange(7,12)]
     [int]$Rounds = 7
 )

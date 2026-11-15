@@ -203,13 +203,14 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
     warps=int(kern.get("tile_warps",4))
     stages=int(kern.get("tile_stages",1))
     resource_late_near_q=0
+    resource_near_pv_acc=0
     resource_rb=1
     if research_resource_variant is not None:
         # Explicit non-production Tile32 register/SMEM research only.
         # Graph/eager callers omit this keyword and compile the original
         # identical specialization (LATE_NEAR_Q=0, default num_stages).
         if type(research_resource_variant) is not str or research_resource_variant not in (
-            "late_q", "stage1", "rb2", "rb2_late_q"
+            "late_q", "stage1", "rb2", "rb2_late_q", "near_pv_acc"
         ):
             raise ValueError("Only separately admitted Tile resource variants allowed")
         if (fused_vb or states.get("_vb_mode") != "materialized"
@@ -222,6 +223,7 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
                 "four-head materialized Balanced/512 Tile32 input"
             )
         resource_late_near_q = int(research_resource_variant in ("late_q", "rb2_late_q"))
+        resource_near_pv_acc = int(research_resource_variant == "near_pv_acc")
         if research_resource_variant == "stage1":
             stages=1
         if research_resource_variant in ("rb2", "rb2_late_q"):
@@ -276,7 +278,7 @@ def launch_prepared_tile_batch(states, config, triton_module, *, buffers=None,
         T=tile,D=dim,BN=bn,BN_NEAR=near_bn,LEAF=16,
         PREC="tf32",DOT=1,GR=group,FP8=0,TAIL=0,RB=resource_rb,I8=1,
         PASS=0,LATE_NEAR_Q=resource_late_near_q,FAR_PREFETCH_LZ=0,
-        FAR_PV_ACC=0,NEAR_PV_ACC=0,
+        FAR_PV_ACC=0,NEAR_PV_ACC=resource_near_pv_acc,
         BATCH_TILES_PER_HEAD=tiles,BATCH_KEY_ROWS=keys,
         Q_DIRECT=int(direct),Q_SH=qstrides[0],Q_ST=qstrides[1],
         Q_SR=qstrides[2],Q_SD=qstrides[3],

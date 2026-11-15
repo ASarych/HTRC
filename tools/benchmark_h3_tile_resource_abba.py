@@ -19,7 +19,7 @@ import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = (15275, 4, "balanced", 32, 512)
-CANDIDATES = ("late_q", "stage1", "rb2", "rb2_late_q")
+CANDIDATES = ("late_q", "stage1", "rb2", "rb2_late_q", "near_pv_acc")
 ENV_KEYS = (
     "APL_HTRC_TILE32_STATS_BT", "APL_HTRC_DIRECTFLOW_GROUP",
     "APL_HTRC_DIRECTFLOW_WARMUPS", "APL_HTRC_DIRECTFLOW_VB_MODE",
@@ -33,7 +33,7 @@ ENV_KEYS = (
 def validate_request(candidate: str, tokens: int, heads: int,
                      rounds: int, warmups: int) -> None:
     if candidate not in CANDIDATES:
-        raise ValueError("Only late_q, stage1, rb2, and rb2_late_q are admitted")
+        raise ValueError("Only explicitly allowed one-window Tile variants are admitted")
     if (tokens, heads) != PIN[:2]:
         raise ValueError("Pinned 15275 tokens and 4 distinct heads only")
     if not (7 <= rounds <= 12 and 5 <= warmups <= 12):
@@ -351,6 +351,16 @@ def run_gpu(args) -> dict:
             report["full_graph_bank_b_eager_bit_exact"] = True
             report["distinct_qkv_banks"] = True
             report["source_bank_used_for_abba"] = 1
+            if args.candidate == "near_pv_acc":
+                report["near_pv_acc_semantics"] = {
+                    "control": "acc * alpha + tl.dot(p_bf16, v_bf16)",
+                    "candidate": "tl.dot(p_bf16, v_bf16, acc=acc * alpha)",
+                    "near_field_only": True,
+                    "far_field_unchanged": True,
+                    "same_RB1_CTA_grid": rb == 1,
+                    "requires_bit_exact_partials": True,
+                    "note": "FP32 accumulation order may differ, so exact GPU parity is mandatory",
+                }
             report["status"] = "PASS_NUMERIC_TILE_ONLY"
             report["completed"] = True
             return report
@@ -367,7 +377,7 @@ def run_gpu(args) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate", choices=CANDIDATES, default="rb2_late_q")
+    parser.add_argument("--candidate", choices=CANDIDATES, default="near_pv_acc")
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--warmups", type=int, default=5)
     parser.add_argument("--expect-head", required=True)

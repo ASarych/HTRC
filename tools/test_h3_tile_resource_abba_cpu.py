@@ -178,6 +178,26 @@ class ResearchTileABBA(unittest.TestCase):
         self.assertIn('return 0 if report["status"] in ("PASS_NUMERIC_TILE_ONLY", "NO_GO_RESOURCE_GATE") else 2',src)
         self.assertIn('rb = 2 if args.candidate in ("rb2", "rb2_late_q") else 1',src)
 
+    def test_near_pv_acc_no_extra_cta_and_bit_exact_gate(self):
+        self.assertIn("near_pv_acc", mod.CANDIDATES)
+        mod.validate_request("near_pv_acc", 15275, 4, 7, 5)
+        src = SRC.read_text(encoding="utf-8")
+        self.assertIn('"same_RB1_CTA_grid": rb == 1', src)
+        self.assertIn('"near_field_only": True', src)
+        self.assertIn('"requires_bit_exact_partials": True', src)
+        self.assertIn('"candidate": "tl.dot(p_bf16, v_bf16, acc=acc * alpha)"', src)
+        self.assertIn('rb = 2 if args.candidate in ("rb2", "rb2_late_q") else 1', src)
+        self.assertLess(src.index('_verify_partials(torch, a, b, f"bank{bi}")'),
+                        src.index('for block_idx, arm in enumerate('))
+        self.assertIn('if not torch.equal(baseline[name], candidate[name]):', src)
+
+    def test_near_acc_respects_existing_full_attention_gate(self):
+        src = SRC.read_text(encoding="utf-8")
+        self.assertIn('gate.get("status") != "PASS_FIRST_REAL_CALL"', src)
+        self.assertIn('if not torch.equal(eager_b.cpu(), outputs[1]):', src)
+        self.assertIn('"production_promotion": "PROHIBITED_RESEARCH_ONLY"', src)
+        self.assertNotIn('from comfy', src)
+
     def test_optional_source_gate_exact_research_variant_only(self):
         source=Path(__file__).parents[1] / 'h3' / 'htrc_flat_head_batch.py'
         if not source.exists():
@@ -187,14 +207,25 @@ class ResearchTileABBA(unittest.TestCase):
         self.assertIn('research_resource_variant=None',s)
         self.assertIn('LATE_NEAR_Q=resource_late_near_q',s)
         self.assertIn('num_stages=stages,**vb_kernel_kwargs',s)
-        self.assertIn('"late_q", "stage1", "rb2", "rb2_late_q"',s)
+        self.assertIn('"late_q", "stage1", "rb2", "rb2_late_q", "near_pv_acc"',s)
         self.assertIn('research_resource_variant in ("late_q", "rb2_late_q")',s)
         self.assertIn('research_resource_variant in ("rb2", "rb2_late_q")',s)
         self.assertIn('resource_rb=1',s)
+        self.assertIn('resource_near_pv_acc=0',s)
+        self.assertIn('resource_near_pv_acc = int(research_resource_variant == "near_pv_acc")',s)
+        self.assertIn('FAR_PV_ACC=0,NEAR_PV_ACC=resource_near_pv_acc,',s)
+        self.assertEqual(s.count('NEAR_PV_ACC=resource_near_pv_acc'), 1)
+        self.assertIn('NEAR_PV_ACC=0,',s)
         self.assertIn('resource_rb=2',s)
         self.assertIn('[(heads*tiles,splits,resource_rb)]',s)
         self.assertIn('TAIL=0,RB=resource_rb,I8=1',s)
         self.assertIn('if research_resource_variant is not None:',s)
+        triton_path=source.parent / 'htrc_flat_triton.py'
+        if triton_path.exists():
+            t=triton_path.read_text(encoding='utf-8')
+            self.assertIn('if NEAR_PV_ACC:',t)
+            self.assertIn('acc = tl.dot(p.to(tl.bfloat16), vv, acc=acc * alpha[:, None])',t)
+            self.assertIn('acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), vv)',t)
 
 
 if __name__ == "__main__":
