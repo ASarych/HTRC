@@ -148,7 +148,26 @@ class TestGraphMemoryToSpeed(unittest.TestCase):
 
     def test_graph_sessions_key_on_policy_and_group(self):
         text=FLOW.read_text(encoding="utf8")
-        self.assertIn('compare_only, policy)',text)
+        # The Graph session identity must distinguish incompatible
+        # producer configurations and source/stats specializations, not
+        # merely the old (compare_only, policy) prefix.
+        tree=ast.parse(text,filename=str(FLOW))
+        fn=next(node for node in tree.body
+                if isinstance(node,ast.FunctionDef)
+                and node.name=="graph_attention_bthd")
+        keys=[
+            node.value for node in ast.walk(fn)
+            if isinstance(node,ast.Assign)
+            and any(isinstance(target,ast.Name) and target.id=="geom"
+                    for target in node.targets)
+        ]
+        self.assertEqual(len(keys),1)
+        self.assertIsInstance(keys[0],ast.Tuple)
+        self.assertEqual([ast.unparse(item) for item in keys[0].elts[5:]],[
+            "group_cap","vb_mode","compare_only","policy",
+            "query_provider is not None","kv_provider is not None",
+            "research_source_kind","stats_bt",
+        ])
         self.assertIn('key = (h,)',text)
         self.assertIn('group_policy":policy',text)
         self.assertIn('"head_group_cap":group_cap',text)
