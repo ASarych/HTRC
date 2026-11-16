@@ -193,3 +193,72 @@ all CUDA captures/A/B and actual model/video performance
 are **UNRUN**. Pure source/contract reviews do NOT count
 as executed Windows tests. No runtime `h3/` source or
 production dispatcher is modified.
+
+## 2026-11-16 — completed RTX 5070 Ti independent-capture ABBA: **NO_GO / CLOSED**
+
+User-provided final `flat_56head_near_kpack_graph_abba.json` is **19,691 bytes**, SHA-256
+`af9e99fee7cdf53554ccc19b645246e780ad3da651377c3652c7d1594f90e42d`.
+Exact executed source **`d47c846b3f396cdefe2f686eb52b4950bdf4a93c`**.
+Raw JSON is user-held and is not committed or overwritten.
+The experiment reports `PASS_NUMERIC_NO_GO_FULL_GRAPH`, `completed=true`,
+`PASS_TWO_BANK_FULL_56HEAD_AND_RAW_PM_PL_PACC_BIT_EXACT`, and full
+candidate timing `MEASURED_FULL_56HEAD_GRAPH_INCLUDES_PACK`.
+Both independent synthetic 56-distinct-head BF16 QKV banks pass raw
+full-output Graph/eager parity. PM/PL/PACC and Merge are raw-bit-identical
+in the two 8-head full-window checks, and full bank-B output remains
+bit-exact after each timed capture. This is not model/video evidence.
+
+Four **independent captures**, each with five post-capture warmups and
+**all seven** unfiltered full-attention GPU Event samples, in
+CONTROL / PACKED / PACKED / CONTROL order:
+
+| Arm | Capture | GPU Event median (ms) | Within-capture max/min spread | Wall median (ms) |
+|---|---:|---:|---:|---:|
+| Original control | 1 | **67.246658** | 2.705% | 68.9745 |
+| Near K8+scale packed | 2 | **92.351936** | 2.762% | 94.2890 |
+| Near K8+scale packed | 3 | **92.393631** | 2.417% | 94.0138 |
+| Original control | 4 | **67.051102** | 0.904% | 68.6300 |
+
+Control capture-median median **67.148880005 ms**; packed capture-median
+median **92.372783661 ms**. Candidate is **25.223904 ms slower** per
+complete 56-head Graph call, or **37.564146% slower** than original.
+The worst-pair reduction is **-37.795843%** (negative = slower).
+Between-capture control medians vary only **0.291653%**, packed medians
+**0.045148%**, both below the 3% stability gate. Every timed block's
+within-block spread is also below 3%. This is a stable, repeatable
+negative result, not a timing-precondition failure. The pre-registered
+>=5% median and worst-pair speed improvement is **NOT met**.
+
+The K8 and scale scratch is one stable **138,412,032-byte (132 MiB)**
+buffer per 8-head Graph session, shared by both captured window geometries
+(Tile15 and Tile16). It is repopulated in each captured window, so its
+packing cost is included in full-call timing. Source says
+`captured_tile_launches=12` per session during construction/warmup,
+not the number of replays measured in the full call. The difference
+between packed and original full-call times is a **net** cost of packing
+plus changed Tile access, not a separately measured packing kernel time.
+No isolated kernel attribution is inferred from this +25.22-ms difference.
+
+The *first-call* reported added Graph reserved memory increases from
+**590 MiB original** to **738 MiB packed** (+148 MiB), within the
+unmodified 768-MiB research gate but leaving only **30 MiB** margin.
+The shared-process `reserved_after_timing_mib` snapshots are
+2,270 MiB (original) vs 2,578 MiB (packed); these snapshots are NOT
+isolated model-resident/private Graph-pool VRAM measurements and
+must not be treated as a +308-MiB intrinsic cost.
+CUDA H3 checkpoint, actual denoising/video, 16-GiB model residency,
+and end-to-end quality are **UNRUN**.
+
+**FINAL DECISION: NO_GO_FULL_GRAPH / CLOSED.** Do not port K8+scale
+near packing to `h3/` production, do not increase reserved-memory
+limits, do not seek a positive result by retuning sample count or
+repeating isolated Tile measurements. Keep research source and raw
+numeric gate for historical reproducibility. The next distinct
+approach should reduce *actual* work or materialized state without
+adding 132 MiB of per-window repacking. Compare existing split-stream
+VB / fused-VB candidates first; they already exist in HTRC and their
+GPU numeric/performance admission must be recovered, **not assumed PASS**.
+
+All earlier sections describing the ABBA as `UNRUN` represent the
+state at authoring time. They are superseded for this exact source and
+run by the completed outcome above.

@@ -225,3 +225,28 @@ Tile-only sweep. Never enable on production defaults
 without complete H3/video evidence. No new GPU
 execution or candidate kernel was made by recording
 this result.
+
+## 2026-11-16 — near K8+scale reindexing tested and closed
+
+The opt-in full 56-head Graph A/B/B/A downstream of this kernel
+profile has completed, exact source
+`d47c846b3f396cdefe2f686eb52b4950bdf4a93c`, raw JSON SHA-256
+`af9e99fee7cdf53554ccc19b645246e780ad3da651377c3652c7d1594f90e42d`.
+Two independent BF16 full-output and PM/PL/PACC+Merge checks **PASS**.
+Original Graph **67.148880 ms** vs K8+scale prepacked Graph **92.372784 ms**:
+**37.564% slower** in full 56-head unprofiled measurements including
+all packing; both independent arms stable (capture median spreads
+0.2917% and 0.0451%). First-call Graph extra reserved memory increased
+from **590 to 738 MiB** within a **768-MiB** cap, leaving 30 MiB margin.
+Conclusion **NO_GO_FULL_GRAPH**, no production promotion, no further
+repacking trials on the same mechanism. Detailed report and memory/
+numeric caveats in
+`research/H3_NEAR_KPACK_FULL_GRAPH_ABBA_2026-11-16.md`.
+
+The earlier proposal to investigate near-path work remains open in
+general, but the specific *K8+scale reindexing by copying 132 MiB per
+window* is now proven counterproductive on this exact 56-head geometry.
+Before inventing a new VB/Stats/Tile algorithm, inspect the already
+implemented opt-in `split_stream`/`fused_vb` VB paths and recover
+whether their GPU acceptance gates ever executed. No duplicate passes,
+no result claims for those unrun pathways.
