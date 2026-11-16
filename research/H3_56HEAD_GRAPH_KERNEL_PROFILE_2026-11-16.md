@@ -113,3 +113,115 @@ At authoring: 8 self-contained CPU tests PASS,
 Windows checkout yet), Python py_compile PASS.
 Full Windows CPU/source suite, RTX GPU profile, and
 model/video performance remain **UNRUN**.
+
+## 2026-11-16 — uploaded full 56-head kernel profile: corrected evidence
+
+Raw user-uploaded `flat_56head_graph_kernel_profile.json`:
+**13,064 bytes**, SHA-256
+`9e8fa930b74aea4d09a787d166af52c4788110532090db1d2e8a8dca32e28cc6`.
+Exact tested source SHA:
+`d2bd8d1480298ea3fc6750d9121de2c51b9ad7ab`.
+Raw JSON remains user-held and is NOT overwritten.
+`status=PASS_GRAPH_KERNEL_PROFILE_DIAGNOSTIC_ONLY`,
+`completed=true`, both distinct BF16 QKV banks **full-output
+Graph-vs-eager bit-exact** for all 56 heads, independent final
+whole-output bit-exact and profiled-call exactness PASS.
+This test uses synthetic, distinct BF16 QKV, 15,275 tokens,
+Balanced/512, group size 8, NOT a model/video run.
+
+Normal full 56-head Graph CUDA Event median: **66.667778015 ms**
+(seven timings, max/min spread **0.850032%**); host wall
+median **68.250600000 ms**; additional first-call reserved
+**590 MiB**. One instrumented Graph call:
+**73.319488525 ms** GPU Event, **82.208 ms** host wall,
+ratio to uninstrumented median **1.099774** (~+9.98%).
+No GPU hardware counter permissions/counters were needed.
+
+### Critical aggregation bug found in this successful report
+
+The original Python aggregator counted **1,212** CUDA-typed
+profiler events totaling **133.545215 ms** and labeled
+**52.3345%** of that sum `unclassified`.
+But the top event is NOT a kernel:
+`HTRC_56HEAD_FULL_GRAPH_KERNEL_PROFILE`, a parent
+`torch.profiler.record_function` annotation lasting
+**67.469985 ms**. The profiler exposed that enclosing
+range among CUDA-typed FunctionEvents and the aggregator
+improperly summed it **in addition to its child kernels**.
+This is double-counting, not a 133.5-ms execution and
+not evidence of unclassified compute taking 52.33%.
+
+The source-accurate, post-processed device activity sums
+computed from the **14 other original per-name rows**:
+
+| Actual CUDA activity type | Calls | Device total ms | % of corrected device duration |
+|---|---:|---:|---:|
+| `_tile_kernel` | 105 | **41.456084** | **62.7407%** |
+| `_stats_kernel` | 105 | **15.082391** | **22.8261%** |
+| `_rowmax_kernel` | 105 | 2.305353 | 3.4890% |
+| Named ATen TopK kernel | 105 | 1.926413 | 2.9155% |
+| `_merge_tail_kernel` | 105 | 1.894362 | 2.8670% |
+| Memcpy DtoD | 14 | 0.990393 | 1.4989% |
+| Other non-marker activities | 672 | 2.420234 | 3.6628% |
+| **Total excluding enclosing annotation** | **1,211** | **66.075230** | **100%** |
+
+The marker itself is separately preserved as
+`excluded_non_kernel_profile_annotation`, 1 entry /
+67.469985 ms in the *updated profiler implementation*.
+It is excluded from count, percentages and device duration.
+This correction does NOT alter the original raw JSON or
+GPU readings, and does NOT require another GPU run.
+The corrected 66.07523-ms sum is **not** supposed to
+equal the 73.31949-ms profiled full CUDA Event interval:
+the difference ~7.24426 ms is not proven compute,
+and activity/event times may differ due to queue gaps,
+launch/profile overhead and timeline semantics.
+
+### Conclusion and next engineering boundary
+
+**Tile + Stats constitute 85.5668% of the corrected
+recorded GPU activity duration**, across exactly 105
+calls of each; per invocation they average
+**394.820 us Tile** and **143.642 us Stats**.
+This identifies the dominating recorded compute families,
+not a full-model quality or A/B speed improvement.
+Do not infer that removing either kernel saves its
+entire recorded time in a different implementation.
+The `torch.profiler` device activity names are only
+heuristically linked to source.
+
+The source of `_tile_kernel` at this exact HEAD
+contains far-field online softmax over ~954 full leaves,
+then exact-near online softmax over **512 x 16 = 8192**
+selected exact key tokens, across four splits, using
+BN64 for far and near in the pinned kernel. The near
+path has substantially more QK/PV dot columns; that is
+a **source-level workload hypothesis**, not an isolated
+measured near-vs-far time ratio. It makes a distinct
+near-path useful-work/dataflow hypothesis worth
+considering next, rather than retesting occupancy-only
+changes or altering far associative groups.
+
+Prior results already close these specific mechanisms:
+- RB2+Late-Q: 36.40% *slower* standalone Tile A/B/B/A;
+- near-PV-acc: 0.465% *slower* standalone Tile;
+- mask-G: numeric PASS but ~3.60% Tile-only gain,
+  below pre-registered 5% promotion gate;
+- cross-BN64 far compaction: FAIL strict numeric
+  bit-exact PL/PACC (PACC ~75% mismatches);
+- far-VB `.cg`: speed unresolved under unstable
+  precondition, repeated timing closed.
+
+**Engineering decision:** correct the profiler's
+parent-marker double-counting and add a CPU regression.
+Then build ONE materially different near-path
+work-reduction hypothesis, with source/geometry and
+strict two-bank PM/PL/PACC bit-exact gate BEFORE any
+timing. If numeric parity fails, STOP; do not relax
+numerical/quality contract. If it passes, test one
+complete **56-head Graph A/B/B/A** under matched inputs,
+stability and VRAM gates, not a new standalone
+Tile-only sweep. Never enable on production defaults
+without complete H3/video evidence. No new GPU
+execution or candidate kernel was made by recording
+this result.

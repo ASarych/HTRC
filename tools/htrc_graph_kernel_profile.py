@@ -15,6 +15,10 @@ CATEGORIES = (
     'leaf_stats', 'rowmax_selection', 'topk_named',
     'tile', 'merge', 'device_copy', 'unclassified',
 )
+# PyTorch/Kineto may expose this Python record_function annotation as a
+# CUDA-typed FunctionEvent whose duration encloses all child kernels.
+# It is NOT a separate CUDA kernel and must not be summed with children.
+PROFILE_ANNOTATION = 'HTRC_56HEAD_FULL_GRAPH_KERNEL_PROFILE'
 
 
 def classify_gpu_activity(name):
@@ -66,6 +70,8 @@ def summarize_gpu_activities(events, *, profiled_gpu_event_ms,
                                    'min_us': float('inf'), 'max_us': 0.0})
     count = 0
     nonpositive = 0
+    annotation_count = 0
+    annotation_duration_us = 0.0
     for event in events:
         device_type = getattr(event, 'device_type', None)
         if getattr(device_type, 'name', None) != 'CUDA':
@@ -74,6 +80,12 @@ def summarize_gpu_activities(events, *, profiled_gpu_event_ms,
         duration = _get_gpu_us(event)
         if not name or duration is None:
             nonpositive += 1
+            continue
+        if name == PROFILE_ANNOTATION:
+            # Explicitly exclude the parent record_function timer from
+            # device-kernel aggregation; keep it visible as diagnostics.
+            annotation_count += 1
+            annotation_duration_us += duration
             continue
         record = by_name[name]
         record['count'] += 1
@@ -113,6 +125,12 @@ def summarize_gpu_activities(events, *, profiled_gpu_event_ms,
         'cuda_activity_count': count,
         'unique_cuda_activity_names': len(details),
         'cuda_activities_missing_positive_duration': nonpositive,
+        'excluded_non_kernel_profile_annotation': {
+            'name': PROFILE_ANNOTATION,
+            'count': annotation_count,
+            'duration_ms_not_added_to_kernel_total': annotation_duration_us / 1000,
+        },
+        'non_kernel_profile_annotation_excluded_from_device_total': True,
         'gpu_device_activity_total_ms': total_ms,
         'category_gpu_activity_ms': category,
         'classified_device_activity_pct': known_ms / total_ms * 100,
@@ -134,9 +152,10 @@ def summarize_gpu_activities(events, *, profiled_gpu_event_ms,
         'not_production_speedup_evidence': True,
         'hardware_counters_unrun': True,
         'warning': ('CUDA Graph replay activity visibility depends on PyTorch/'
-                    'CUPTI. Kernel labels are source-name heuristics; '
-                    'profiler overhead and queue overlap prevent direct '
-                    'speed claims from these percentages.'),
+                    'CUPTI. The enclosing HTRC record_function is excluded '
+                    'from CUDA-device activity sums. Kernel labels are '
+                    'source-name heuristics; device duration totals are not '
+                    'elapsed Graph wall time and cannot establish speedups.'),
     }
 
 

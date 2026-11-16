@@ -51,6 +51,28 @@ class GraphKernelProfileCPU(unittest.TestCase):
         self.assertTrue(p['all_cpu_events_excluded'])
         self.assertTrue(p['not_production_speedup_evidence'])
 
+    def test_gpu_typed_enclosing_record_function_does_not_double_count(self):
+        # Captured on the actual RTX profiler: the HTRC range was incorrectly
+        # represented as a CUDA-typed 67.47-ms event enclosing other kernels.
+        data = [ev('HTRC_56HEAD_FULL_GRAPH_KERNEL_PROFILE', 67469.985),
+                ev('_tile_kernel', 41456.084),
+                ev('_stats_kernel', 15082.391),
+                ev('generic_aten_kernel', 2420.234)]
+        p = summary(data)
+        self.assertEqual(p['cuda_activity_count'], 3)
+        self.assertAlmostEqual(p['gpu_device_activity_total_ms'], 58.958709, places=6)
+        self.assertAlmostEqual(
+            p['excluded_non_kernel_profile_annotation']['duration_ms_not_added_to_kernel_total'],
+            67.469985, places=6)
+        self.assertEqual(p['excluded_non_kernel_profile_annotation']['count'], 1)
+        self.assertTrue(p['non_kernel_profile_annotation_excluded_from_device_total'])
+        self.assertNotIn('HTRC_56HEAD_FULL_GRAPH_KERNEL_PROFILE',
+                         [row['name'] for row in p['all_gpu_activity_names_by_duration']])
+
+    def test_only_parent_marker_has_no_gpu_kernel_evidence(self):
+        with self.assertRaisesRegex(RuntimeError, 'no positive CUDA'):
+            summary([ev('HTRC_56HEAD_FULL_GRAPH_KERNEL_PROFILE', 67469.985)])
+
     def test_no_device_activities_fails_closed(self):
         with self.assertRaisesRegex(RuntimeError, 'no positive CUDA'):
             summary([ev('cudaGraphLaunch', 2500, gpu=False)])
