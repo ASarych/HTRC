@@ -67,7 +67,7 @@ def near_kpacked_tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG
                  FUSED_VB: tl.constexpr = 0, KBF = None,
                  KB_SH: tl.constexpr = 0,
                  KB_SS: tl.constexpr = 0,
-                 KB_SD: tl.constexpr = 0):
+                 KB_SD: tl.constexpr = 0, REAL_TILES_PER_HEAD: tl.constexpr = 32):
     """Split-K over leaves: program (tile t, split sp) covers far leaves [sp*lps, +lps) and
     exact tokens [sp*eps, +eps); writes partial (max, sum, acc) merged on the host."""
     t = tl.program_id(0)
@@ -226,7 +226,7 @@ def near_kpacked_tile_kernel(Q, MU, G, LZ, VB, EXCL, IDX, K, V, PM, PL, PACC, SG
             tok = leaf * LEAF + j % LEAF
             kk = tl.load(K + (key_base + j)[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)
             if V_DIRECT:
-                vv=tl.load(V+(t // 32)*V_SH+tok[:,None]*V_SS+d[None,:]*V_SD,
+                vv=tl.load(V+(t // REAL_TILES_PER_HEAD)*V_SH+tok[:,None]*V_SS+d[None,:]*V_SD,
                            mask=jm[:,None],other=0.0)
             else:
                 vv = tl.load(V + (key_base + tok)[:, None] * D + d[None, :], mask=jm[:, None], other=0.0)

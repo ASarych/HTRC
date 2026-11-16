@@ -157,3 +157,74 @@ waive bit-exact requirements just to make a candidate run.
 As of authoring: new numeric RTX GPU experiment,
 full 56-head candidate, full model/video and
 production promotion **UNRUN / NOT IMPLEMENTED**.
+
+## 2026-11-16 — RTX 5070 Ti numerical PASS, no timing
+
+User-uploaded `flat_near_kpack_numeric.json`: **5,348 bytes**,
+SHA-256
+`331200a6ffd863608e62d51dd5bb44408d637d4794065e254c498d8d856d1fab`,
+exact run source HEAD
+`a01929baefd165a03207d88f5661f731917b5356`.
+Raw JSON is user-held and is NOT committed here.
+
+`schema=htrc-near-kpack-numeric-v1`,
+`status=PASS_NEAR_KPACK_NUMERIC_ONLY`,
+`completed=true`,
+`parity_admission=PASS_TWO_BANK_WINDOW_PARTIALS_AND_MERGE`.
+Two independently seeded BF16 QKV banks gave distinct,
+previously pinned EXCL fingerprints:
+A `bd56312c61e4c5f950c1a1dfea718faed0ac50c7aa18c0d3c862cd156dee4a32`;
+B `05dc41bf73bcc98204739f708a86b6c8e39343f24adb39fa9b952c195a341264`.
+
+Both original complete Graph-vs-eager BF16 head banks PASS.
+Both banks have **0 raw FP32-bit differences** in every
+original vs K8-packed full-window Tile field: PM
+0/32,768, PL 0/32,768, PACC 0/4,194,304 and the
+original Merge output 0/1,048,576. Direct packed
+K8 and FP32 scale bit comparisons passed for 12
+sampled centres per bank. Other 116 centres are
+covered by the full-window PM/PL/PACC and Merge
+comparison, **not** by direct bytewise packed-buffer
+verification. The original standalone Tile+Merge also
+agrees with its captured Graph window on both banks.
+
+Compiler resources (control -> research) matched exactly:
+**255 -> 255 registers/thread**, **49,664 -> 49,664
+shared bytes/CTA**, **0 -> 0 spills**. This is *not*
+evidence of faster execution or same generated
+instructions. Additional CUDA memory allocation from
+K8 and FP32 scale scratch was **138,412,032 bytes =
+132 MiB** for each 4-head, 32-centre source geometry.
+
+`candidate_speed_measurement=UNRUN_NUMERIC_GATE_ONLY`,
+`speed_capture_blocks=[]`,
+`full_candidate_56head_graph=UNRUN`,
+`h3_model_or_video=UNRUN`,
+and `memory_admission_for_56head_model=UNRUN_NOT_ISOLATED`.
+The 590+132=722 MiB estimate versus the 768 MiB
+hard gate is **optimistic** and cannot be promoted
+to a model-resident VRAM decision.
+
+**NEXT RESEARCH STEP**: a distinct full 56-head,
+15,275-token, group8, Tile16 A/B/B/A with one
+external shared 132 MiB scratch buffer per captured
+8-head session across BOTH full and last-partial
+query windows. Packing must execute after topk
+INSIDE each captured Graph replay and must be
+included in timed 105-replay complete-Graph calls.
+Use one untimed strict two-bank gate before ANY
+timing, and 5% median plus worst-pair full-call
+improvement under <=3% independent capture
+control/candidate drift. Do NOT use the 4-head
+partial-only numerical PASS to skip 56-head
+full-output numerical checks.
+
+The research Tile source is generalized only via
+a new explicit constexpr `REAL_TILES_PER_HEAD`
+(32 for existing numeric probe, 16/15 for full
+Graph windows), retaining the original near V
+address mapping. The canonical source-clone CPU
+contract must now check **five** constrained textual
+changes (including the one constexpr signature
+addition), otherwise fail closed. No production
+`h3/` source or Graph dispatcher is modified.

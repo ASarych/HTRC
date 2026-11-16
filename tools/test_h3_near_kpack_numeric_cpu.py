@@ -17,7 +17,9 @@ CHANGES = (
     ('ksc = tl.load(KS + key_base + tok, mask=jm, other=0.0)',
      'ksc = tl.load(KS + key_base + j, mask=jm, other=0.0)'),
     ('vv=tl.load(V+head*V_SH+tok[:,None]*V_SS+d[None,:]*V_SD,',
-     'vv=tl.load(V+(t // 32)*V_SH+tok[:,None]*V_SS+d[None,:]*V_SD,'),
+     'vv=tl.load(V+(t // REAL_TILES_PER_HEAD)*V_SH+tok[:,None]*V_SS+d[None,:]*V_SD,'),
+    ('KB_SD: tl.constexpr = 0):',
+     'KB_SD: tl.constexpr = 0, REAL_TILES_PER_HEAD: tl.constexpr = 32):'),
 )
 
 
