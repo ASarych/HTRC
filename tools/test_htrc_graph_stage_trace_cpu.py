@@ -80,6 +80,26 @@ class TraceCPU(unittest.TestCase):
                                  reference=object(), unprofiled_gpu_median_ms=66)
         self.assertIs(flow._replay, original)
 
+    def test_runner_passes_atomic_graph_trace_switch(self):
+        # The PowerShell if-expression used to unwrap the one-item array;
+        # splatting its scalar string sent one argument per character.
+        runner = Path(__file__).with_name('run_h3_56head_stage_attribution_safe.ps1').read_text('utf-8')
+        self.assertNotIn('@traceArgs', runner)
+        self.assertNotIn('$traceArgs = if', runner)
+        lines = runner.splitlines()
+        with_trace = ('& $py -B $benchmark --expect-head $ExactHead --output $output '
+                      '--quiet-confirmed --rounds 7 --warmups 5 --graph-stage-trace')
+        no_trace = ('& $py -B $benchmark --expect-head $ExactHead --output $output '
+                    '--quiet-confirmed --rounds 7 --warmups 5')
+        found = [i for i, line in enumerate(lines) if line.strip() == with_trace]
+        plain = [i for i, line in enumerate(lines) if line.strip() == no_trace]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(len(plain), 1)
+        self.assertEqual(lines[found[0]-1].strip(), 'if ($GraphStageTrace) {')
+        self.assertEqual(lines[plain[0]-1].strip(), '} else {')
+        self.assertLess(found[0], plain[0])
+        self.assertIn('    $benchmark = Join-Path $tmp ', runner)
+
     def test_trace_source_parse(self):
         path = Path(__file__).with_name('htrc_graph_stage_trace.py')
         ast.parse(path.read_text('utf-8'))

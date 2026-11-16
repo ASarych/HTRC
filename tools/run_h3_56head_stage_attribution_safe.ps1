@@ -62,8 +62,15 @@ try {
         & $py -B -m unittest discover -s (Join-Path $tmp 'tools') -p $suite -v
         if ($LASTEXITCODE -ne 0) { throw "CPU/source suite $suite failed; CUDA not started" }
     }
-    $traceArgs = if ($GraphStageTrace) { @('--graph-stage-trace') } else { @() }
-    & $py -B (Join-Path $tmp 'tools\benchmark_h3_56head_stage_attribution.py') --expect-head $ExactHead --output $output --quiet-confirmed --rounds 7 --warmups 5 @traceArgs
+    # PowerShell unwraps the one-item array returned by an if expression.
+    # A scalar string splatted with @name becomes separate CLI characters.
+    # Use two explicit invocations so the opt-in flag is ONE argument.
+    $benchmark = Join-Path $tmp 'tools\benchmark_h3_56head_stage_attribution.py'
+    if ($GraphStageTrace) {
+        & $py -B $benchmark --expect-head $ExactHead --output $output --quiet-confirmed --rounds 7 --warmups 5 --graph-stage-trace
+    } else {
+        & $py -B $benchmark --expect-head $ExactHead --output $output --quiet-confirmed --rounds 7 --warmups 5
+    }
     $code = $LASTEXITCODE
     if (-not (Test-Path -LiteralPath $output -PathType Leaf) -or
         (Get-Item -LiteralPath $output).LastWriteTimeUtc -le $old) {
