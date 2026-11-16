@@ -74,7 +74,10 @@ def run_case(*, tokens, heads, mode, tiles, rounds, budget_mib,
         sample_queries<1 or budget_mib<=reserve_mib+128 or
         reserve_mib<0):
         raise ValueError("Invalid geometry, mode or memory budget")
-    if not variants or any(v not in ("split_stream","fused_vb") for v in variants):
+    # Empty variants means a native, materialized-only mode baseline.
+    # Used by the separate matched fast-vs-balanced dense-quality pilot;
+    # the existing two-VB-variant experiment retains its prior semantics.
+    if variants is None or any(v not in ("split_stream","fused_vb") for v in variants):
         raise ValueError("Unexpected research variant")
     order=("materialized",)+tuple(variants)
     positions=query_positions(tokens,min(tokens,sample_queries))
