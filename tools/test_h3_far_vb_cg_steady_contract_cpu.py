@@ -29,11 +29,9 @@ class SteadyABBAContract(unittest.TestCase):
         self.assertLess(
             s.index("steady_report = run_steady_precondition("),
             s.index('for index, arm in enumerate(ARMS'))
-        )
         self.assertLess(
             s.index("if not steady_report['decision']['admitted']:"),
             s.index('for index, arm in enumerate(ARMS'))
-        )
         self.assertLess(s.index('actual != args.expect_head:'), s.index('report.update(run_gpu(args))'))
         self.assertIn("ARMS = ('control', 'far_vb_cg', 'far_vb_cg', 'control')", s)
         self.assertGreater(s.index("from htrc_tile_steady_gate import run_steady_precondition"),
