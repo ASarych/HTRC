@@ -164,3 +164,86 @@ RTX 5070 Ti GPU test **UNRUN** pending Windows execution.
 
 Production, model/video and candidate speed admission:
 **UNCHANGED / UNRUN**.
+
+## 2026-11-16 — RTX 5070 Ti fixed steady-control run: inconclusive precondition
+
+Source: user-provided \`flat_full_far_vb_cg_steady_tile_abba.json\`,
+**33,927 bytes**, SHA-256
+\`f46911955db21fb75bb3a1e61c6f86da83592c080c807216f8c21e6fc2f5b7ae\`,
+tested at exact source HEAD
+\`d871eba7d58f20d244f900aed04e067f4965a799\`.
+Raw JSON is user-held and is not committed. Schema
+\`htrc-far-vb-cg-tile-abba-v1\`,
+\`status=INCONCLUSIVE_PRECONDITION\`, \`completed=true\`,
+\`numeric_gate=PASS_TWO_BANK_FULL_TILE_MERGE_BIT_EXACT\`,
+\`speed_measurement=UNRUN_UNSTABLE_CONTROL\`,
+\`capture_blocks=[]\`, \`tile_only_speed=null\`.
+
+The two different, pinned BF16 QKV source banks pass the
+unchanged original Graph/eager, mirror and research
+far-VB \`.cg\` raw-bit PM/PL/PACC/Merge checks.
+All resource gates pass: control 255 registers/thread,
+candidate 254, both 49,664 bytes shared/CTA, both zero spills.
+The precondition control's post-run parity is also exact.
+No candidate speed was sampled. These statements are
+**numeric/resource evidence**, not performance evidence.
+
+Exactly 24 original-only control blocks were recorded, each
+with five wall-clock samples of 256 persistent CUDA Graph replays;
+**120 raw samples, 30,720 replay calls**. All raw samples and
+outliers remain present in the original user-held report.
+The pre-registered decision uses the last 12 block medians
+and both late half-medians:
+
+| Metric | Observed | Required | Decision |
+|---|---:|---:|---|
+| First 12 block-median spread (descriptive) | 11.074111% | none | transitional |
+| Last 12 block-median spread | **6.552325%** | <=1% | FAIL |
+| Late blocks 13-18 median | 422.862695 us | - | first late half |
+| Late blocks 19-24 median | 405.856445 us | - | second late half |
+| Late half-median drift | **4.190213%** | <=0.5% | FAIL |
+
+**Additional description, NOT a new admission decision:**
+within blocks 19–24 alone, the block-median max/min
+spread is **0.10594159%**, median **405.856445 us**.
+Those last six were unusually stable, but discarding
+blocks 13–18 would silently change the fixed experiment
+after seeing the result. Do not do that, reinterpret the
+whole run as passing, or issue an unregistered candidate
+benchmark on the back of the final-six observation.
+The first 12 control block medians ranged from about
+404.935 to 449.778 us. The last 12 included swings
+through block 17 before late stability appeared.
+
+**Outcome: .cg speed remains UNRESOLVED, not NO_GO
+on numerical parity and not PASS on speed.** The
+previous \`.cg\` A/B/B/A was itself
+\`INCONCLUSIVE_TILE_ONLY\` due to unstable control
+capture medians (32.3267% spread); its apparent 15.98%
+reduction was inadmissible. The present precondition
+properly prevented a new misleading speed claim.
+
+**Decision: STOP repeated .cg Tile microbenchmark retries.**
+Do not relax the 1.0%/0.5% control precondition or the
+3%/5% independent-capture speed gates; do not promote
+\`.cg\` or combine it with the closed mask-G <5%
+result. Keep the opt-in research code intact for
+reproducibility. Revisit only if independently justified
+environment control or materially different algorithm
+makes a new experiment informative.
+
+Return to the already identified whole-pipeline
+bottlenecks: graph input Q/K/V staging, quantization,
+top-k/state preparation, grouped CUDA Graph work,
+and output Merge/write-back. See
+\`H3_FLAT_MEMORY_TO_SPEED_BALANCED_2026-11-13.md\`.
+The previously measured research-only 8-head grouping
+was 4.34%/6.94% faster than legacy11 in the 15,275/
+18,723-token *synthetic complete-attention* test,
+but still lacks full-output and real-H3 model gates.
+A future implementation should target a distinct
+full-call mechanism with measured stage attribution,
+not infer video speed from this Tile-only evidence.
+
+Evidence-recording only: **no source, kernel, dispatcher,
+production or benchmark change**; new GPU tests UNRUN.

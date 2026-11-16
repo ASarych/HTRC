@@ -382,3 +382,38 @@ Q staging, Graph kernels, and output write-back before
 proposing another kernel change. Group-replay count alone
 did not predict latency. No code changes or GPU validations
 are claimed by this documentation commit.
+
+## 2026-11-16 — priority reset after unsuccessful .cg steady precondition
+
+The second, fixed steady-state far-VB \`.cg\` experiment
+(\`flat_full_far_vb_cg_steady_tile_abba.json\`; exact
+\`d871eba7d58f20d244f900aed04e067f4965a799\`)
+completed both-bank raw-bit numeric and resource checks
+but could NOT time the candidate: late-control block-median
+spread 6.552% (required <=1.0%) and late half drift
+4.190% (required <=0.5%). \`capture_blocks=[]\`.
+Do not recast this as a negative speed measurement.
+A post-hoc stable final-six control cohort does not
+override the pinned 12-block decision.
+
+**Stop far-VB .cg timing retries and Tile compiler-knob
+sweeps at this state.** The useful next stage is
+complete 56-head Flat input-to-output latency
+attribution in an exact-source CUDA Graph runtime:
+(1) Q staging, (2) K/V staging + quantization,
+(3) stats/exclusion/TopK, (4) Tile+Merge,
+(5) output copy/write-back and Graph replay overhead.
+First recover/extend the existing attribution code
+rather than write duplicate kernels. Use comparable
+QKV and a strict complete-output numeric gate;
+separate cold compile/capture from warmed GPU time.
+Measure peak allocated/reserved VRAM without treating
+allocator caches as intrinsic private-pool usage.
+
+The research-only group-8 results (4.34% / 6.94%
+short-N full-attention time reductions against
+legacy11) are the *measured* optimization lead, but
+only sampled query rows were bit-equal in the compare-only
+sweep; full-output and real-H3 video/speed/VRAM gating
+must occur before any default runtime promotion.
+No production behavior changed in this evidence slice.
