@@ -156,3 +156,118 @@ At authoring, Python/Windows full source gate,
 GPU numeric, full 56-head performance,
 model-resident H3/video all **UNRUN**.
 No production promotion or default change.
+
+
+## 2026-11-16 — completed two-bank PASS1/PASS2: resource gate NO_GO
+
+Uploaded raw evidence: `flat_tile_far_near_pass12_numeric.json`,
+**4,644 bytes**, SHA-256
+`98ad49e7aacc31d61006762607548a3ba31e982644bf20fa41b22880c98e7f0c`,
+tested exact source
+`6549e75117b5d2585357a4702f673fe781d5fc74`.
+The report is user-held; source JSON was not modified or substituted.
+`schema=htrc-tile-far-near-pass12-numeric-v1`;
+`status=PASS_TWO_PASS_NUMERIC_ONLY`, `completed=true`,
+`parity_admission=PASS_TWO_BANK_PM_PL_PACC_MERGE_BIT_EXACT`.
+Two independent BF16 QKV banks and different IDX/EXCL fingerprints:
+A `bd56312c61e4c5f950c1a1dfea718faed0ac50c7aa18c0d3c862cd156dee4a32`,
+B `05dc41bf73bcc98204739f708a86b6c8e39343f24adb39fa9b952c195a341264`.
+Original first complete Graph/eager and independent bank-B
+complete Graph/eager both pass. On EACH bank:
+
+- PASS0 original vs sequential original PASS1/PASS2 FP32
+  **PM**: 0 bit mismatches / 32,768;
+  **PL**: 0 / 32,768;
+  **PACC**: 0 / 4,194,304.
+- Original Merge result: 0 / 1,048,576 FP32 elements.
+- Original standalone Tile+Merge vs original captured Graph
+  window also bit-exact. Same original partial pointers reused,
+  and no extra K/V scratch was allocated by the adapter.
+- No speed timing in the report: `speed_capture_blocks=[]`;
+  `candidate_speed_measurement=UNRUN_NUMERIC_ONLY`;
+  full candidate 56-head Graph and real model/video both UNRUN.
+
+Actual compiled resources match on both banks:
+
+| Pinned 4-head Tile32 kernel | Reg/thread | Shared bytes/CTA | Spills |
+|---|---:|---:|---:|
+| Original PASS0 | 255 | 49,664 | 0 |
+| Far-only PASS1 | 212 | 41,472 | 0 |
+| Near-resume PASS2 | 255 | 41,216 | 0 |
+
+Resource-only occupancy *upper bound*, four warps (=128 threads)
+per CTA, nominal 65,536 32-bit registers and 102,400 bytes
+shared memory per SM:
+
+- PASS0: min(floor(65536/(255*128))=2,
+  floor(102400/49664)=2) = **2 CTAs/SM**.
+- PASS1: min(floor(65536/(212*128))=2,
+  floor(102400/41472)=2) = **2 CTAs/SM**.
+- PASS2: min(floor(65536/(255*128))=2,
+  floor(102400/41216)=2) = **2 CTAs/SM**.
+
+This is only a **resource-based ceiling**, not an observed
+occupancy measurement or throughput prediction. Neither pass
+crosses the previously documented threshold for 3 CTAs/SM:
+<=170 registers/thread AND <=34,133 shared B/CTA,
+before compiler allocation granularity. Near PASS2 still
+needs all 255 registers; a lower shared-memory allocation
+does not help its CTA count. There are no new spills.
+
+PASS1 writes FP32 PM/PL/PACC and PASS2 reads them, whereas
+fused PASS0 maintains the intermediate in registers.
+For an 8-head, 16-centre full window, each such partial
+state is **16.25 MiB**, so an extra write plus read adds
+**32.5 MiB of logical traffic**, plus one more CUDA launch
+and repeated Q operands. At the equivalent 56-head,
+14 x Tile16 and 1 x Tile15 window per head group,
+the source-only extrapolation is **3.318634 GiB** of
+extra logical partial traffic for 105 windows; this
+is not measured DRAM traffic and L2 caching may change
+external-memory costs.
+
+**DECISION: NO_GO_RESOURCE_ONLY** for the existing two-pass
+structure at the measured 4-head Tile32 compiler shape.
+The prior registered resource gate required a plausible
+register/shared residency gain before a full 56-head
+speed experiment. It did not occur. Thus do **not**
+build/timing-chase a 56-head PASS1/PASS2 Graph A/B/B/A
+on the basis of this result. **No slowdown has been
+measured for the 56-head shape**, and no universal
+performance claim is made. Numeric success remains
+valid independently of resource rejection.
+
+A distinct strategy for material acceleration must
+reduce useful work or establish a better dataflow
+than splitting a live softmax accumulator into
+more global memory operations. Avoid retrying K8
+prepack, Vbar split-stream/recompute, and previously
+closed RB2/near-PV-acc/BT32 knobs.
+
+### Ownership: quality is measured against dense, not Flat parity
+
+`research/H3_FLAT_DENSE_QUALITY_PERCENT_2026-11-13.md`
+explicitly defines the quality oracle as full FP32
+dense attention over **all keys**, sampled evenly
+across query positions, on two independent QKV banks.
+Bitwise equality with another Flat mode is a *diagnostic*,
+not a general admission gate for approximate algorithms.
+Strict parity remains required for mathematics-preserving
+implementation changes and current production defaults.
+
+A practical next research direction is near-leaf budget,
+not near-leaf reordering/copy: current public modes are
+`fast=256` and `balanced=512`, both seq Tile64.
+Exact source `h3/htrc_flat_directflow_live.py` enforces
+`expected_leaves = {'fast':256,'balanced':512}[mode]`;
+a 384-leaf Graph may not simply be patched into a
+production mode or reused in an incompatible Graph
+session. Before authoring any 384 variant, first
+compare the existing **fast vs balanced** modes using
+THE SAME native BF16 QKV pairs, **% rel-L2 vs dense
+FP32** and tail per-query/per-head error, paired
+complete-Graph latency and measured VRAM. Do not
+invent a quality threshold or confuse synthetic
+error with real-video perceptual acceptance.
+User approval and real-model/video proof would still
+be required before any different default.

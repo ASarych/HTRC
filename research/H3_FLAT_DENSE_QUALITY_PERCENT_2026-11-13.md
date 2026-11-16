@@ -114,3 +114,54 @@ research workflow.
 - Old production strict parity, eager and materialized defaults:
   unchanged.
 - Sol crossover and real H3 quality: UNKNOWN.
+
+
+## 2026-11-16 — 56-head acceleration pivot after resource-gate NO_GO
+
+The original PASS0 vs source PASS1->PASS2 numeric experiment
+(`flat_tile_far_near_pass12_numeric.json`; SHA-256
+`98ad49e7aacc31d61006762607548a3ba31e982644bf20fa41b22880c98e7f0c`;
+exact source `6549e75117b5d2585357a4702f673fe781d5fc74`)
+passed strict two-bank PM/PL/PACC+Merge parity. But far-pass
+212 regs/41,472 shared bytes and near-pass
+255 regs/41,216 shared bytes do NOT increase the 2-CTA/SM
+resource-based ceiling over original 255 regs/49,664
+shared bytes, and add a second kernel and intermediate FP32
+traffic. Thus **NO_GO_RESOURCE_ONLY**, without full 56-head
+speed timing. See
+`H3_TILE_FAR_NEAR_TWO_PASS_NUMERIC_2026-11-16.md`
+for evidence, limits and closed mechanisms.
+
+**Owner quality contract remains the one here, NOT a universal
+bit-exactness rule.** All research changes that intentionally
+change the approximation MUST compare % error vs FP32 exact
+dense all-key attention for identical sampled queries on the
+same TWO independent BF16 QKV banks. Track per-head and per-query
+tail errors and full Graph GPU + wall and VRAM independently.
+Do not silently promote a faster mode or equate synthetic
+dense-relative errors with perceptual video validation.
+
+The existing live configurations differ in exact-near budget:
+`fast=256` and `balanced=512`, both sequential leaf ordering;
+the 56-head DirectFlow code currently enforces these values
+in its public modes. The highest-value first step is a **paired,
+same-QKV fast/balanced quality/speed comparison** at the
+15,275-token 56-distinct-head geometry using the already
+implemented FP32 dense sampled-query reference and quality
+metrics. This compares existing *legal* modes. The current
+`tools/h3_flat_quality_ab.py` accepts one fixed mode per
+invocation and optional streamed/fused VB variants, so a new
+minimal paired-mode orchestrator should reuse its exact-dense
+helper while **not** rerunning the closed slow VB arms.
+
+A 384-leaf variant is NOT available by simply injecting a
+different config: `h3/htrc_flat_directflow_live.py` checks
+`expected_leaves={'fast':256,'balanced':512}[mode]` and
+Graph session correctness depends on the fixed geometry.
+Any third budget would require a separate opt-in research
+dispatch and independent numeric/quality and VRAM gates;
+do not patch production defaults or cheat this guard.
+
+No near-budget 56-head paired GPU run, no 384-leaf kernel,
+no real H3 video quality check and no production change
+were made in this evidence-recording update.
