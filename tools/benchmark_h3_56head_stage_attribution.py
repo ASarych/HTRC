@@ -1,7 +1,7 @@
 """Two-bank full-output HTRC Graph parity, warmed timing, eager stage attribution.
 
 Research-only, synthetic DISTINCT 56-head BF16 input, balanced/512, 15,275 tokens.
-The existing eager observer is NOT a profiling breakdown of CUDA Graph internals.
+The eager observer is NOT Graph timings; optional event tracing marks only Graph boundaries.
 One atomic JSON; no production dispatch, kernels or model weights are modified.
 """
 from __future__ import annotations
@@ -206,6 +206,13 @@ def run_gpu(args, report):
             # This is distinct from graph timing; profile intervals never treated as graph internals.
             graph_out = graph_call()
             torch.cuda.synchronize(device)
+            if args.graph_stage_trace:
+                # Only after BOTH strict-bank numerical gates and normal
+                # uninstrumented Graph timing. No modifications to h3/ math.
+                from htrc_graph_stage_trace import trace_graph_call
+                report['graph_stage_trace'] = trace_graph_call(
+                    torch, flow, graph_call, graph_out,
+                    unprofiled_gpu_median_ms=report['warmed_graph']['gpu_event_median_ms'])
             observed = []
             def stage_observer(event, payload):
                 observed.append((event, payload))
@@ -219,7 +226,8 @@ def run_gpu(args, report):
             report['independent_full_output_bit_exact'] = bool(torch.equal(graph_out, eager_out))
             if not report['independent_full_output_bit_exact']:
                 raise AssertionError('Independent final 56-head full Graph/Eager output differed')
-            report['status'] = 'PASS_ATTRIBUTION_ONLY'
+            report['status'] = ('PASS_GRAPH_BOUNDARY_TRACE_DIAGNOSTIC_ONLY'
+                                if args.graph_stage_trace else 'PASS_ATTRIBUTION_ONLY')
             report['completed'] = True
     finally:
         try:
@@ -240,6 +248,8 @@ def main():
     ap.add_argument('--quiet-confirmed', action='store_true')
     ap.add_argument('--rounds', type=int, default=ROUNDS)
     ap.add_argument('--warmups', type=int, default=WARMUPS)
+    ap.add_argument('--graph-stage-trace', action='store_true',
+                    help='Research-only CUDA Events around existing Graph call boundaries')
     args = ap.parse_args()
     result = {'schema': SCHEMA, 'status': 'FAIL_CLOSED', 'completed': False,
               'source_head': None, 'input_kind': 'SYNTHETIC_DISTINCT_BF16_NO_MODEL',
@@ -247,6 +257,8 @@ def main():
               'mode': 'balanced', 'exact_leaves': 512,
               'strict_bank_checks': [], 'numeric_gate': 'UNRUN',
               'warmed_graph': None, 'eager_stage_attribution': None,
+              'graph_stage_trace_requested': bool(args.graph_stage_trace),
+              'graph_stage_trace': None,
               'h3_model_or_video': 'UNRUN', 'production_promotion': 'PROHIBITED_RESEARCH_ONLY',
               'not_a_graph_internal_stage_profile': True,
               'no_new_kernel_or_dispatch_change': True}
@@ -263,7 +275,8 @@ def main():
                       traceback_tail=traceback.format_exc()[-5000:])
     _write_one(args.output, result)
     print(f'one_json={args.output} status={result["status"]} numeric={result["numeric_gate"]}')
-    return 0 if result['status'] == 'PASS_ATTRIBUTION_ONLY' else 2
+    return 0 if result['status'] in (
+        'PASS_ATTRIBUTION_ONLY', 'PASS_GRAPH_BOUNDARY_TRACE_DIAGNOSTIC_ONLY') else 2
 
 
 if __name__ == '__main__':

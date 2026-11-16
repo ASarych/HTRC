@@ -105,3 +105,62 @@ At authoring: new Python `py_compile` **PASS**; 10 self-contained CPU tests
 partial test tree. The target Windows full CPU suite, RTX GPU measurement,
 full H3 denoise/video, and production integration are **UNRUN**.
 `h3/` kernel/dispatcher/defaults and `main` remain unchanged.
+
+
+## 2026-11-16 — completed full 56-head source-attribution experiment
+
+User-uploaded `flat_56head_stage_attribution.json`,
+**4,871 bytes**, SHA-256
+`405908d7b751e18926c0aaf69ec1942bc714d0b700bc1e24b99221e4f3660309`,
+tested exact source commit
+`e87d135573a18b40cd6a27ae48b475ea6a1786fb`.
+Raw report remains user-held. Status
+`PASS_ATTRIBUTION_ONLY`, `completed=true`,
+`PASS_TWO_BANK_FULL_OUTPUT_GRAPH_EAGER_BIT_EXACT`.
+The independent source banks both checked ALL output rows from
+56 distinct synthetic BF16 heads in seven 8-head groups.
+Bank 0/1 both passed strict Graph/eager bit-exact output parity;
+independent final whole-output parity also passed.
+
+Warmed complete Graph call (QKV refresh, native K8 quant, all 15
+query windows per head group, captured Graph kernels, Merge and
+output writes), seven unfiltered measurements:
+
+| Metric | Observed |
+|---|---:|
+| GPU Event median | **66.636764526 ms** |
+| Synchronized host-wall median | **68.300000000 ms** |
+| GPU Event max/min spread | **2.886776%** |
+| First-call extra reserved (both banks) | **590 MiB** |
+| Peak allocated (shared process) | 1045.299 MiB |
+| Peak reserved (shared process) | 1430 MiB |
+
+This synthetic complete-attention timing cannot be directly
+substituted for H3 video denoising or compared as a matched
+A/B with other report sessions. No real model/video was run.
+
+**Separate existing EAGER stage observer (NOT Graph):**
+the eager head planner selected capacity 13 and 15 windows.
+Event interval sums (ms) were:
+`kv_workspace_setup=95.848`,
+`query_stats_selection=3313.251`,
+`tile=1166.718`,
+`merge_tail=4.152`,
+`output_copy=2.879`.
+The observed eager GPU event interval sum is 4582.849 ms;
+query/selection contributes **72.3%** and Tile **25.5%** to
+THIS event-interval sum, not to the Graph call time.
+Eager phase GPU intervals include queue gaps, CPU enqueue and
+instrumentation delays, so these are not pure GPU kernel costs.
+Different group capacities (Graph 8 vs eager 13) also preclude
+direct stage-time comparison. Do not target Graph query
+selection merely because 3313 ms appears in the eager report.
+
+**Conclusion:** the numerical and 56-head full-call baseline
+are now measured. The missing evidence is the split between
+K/V staging+quant, Q staging, captured per-window Graph work
+(stats/TopK/Tile/Merge together), and output write-back ON
+the Graph path itself. A new opt-in diagnostic records those
+external Graph boundaries, without modifying `h3/` code,
+and preserves the uninstrumented reference and full-output
+bitwise result. See `H3_56HEAD_GRAPH_BOUNDARY_TRACE_2026-11-16.md`.
