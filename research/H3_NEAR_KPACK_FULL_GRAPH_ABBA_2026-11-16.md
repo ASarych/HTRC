@@ -262,3 +262,55 @@ GPU numeric/performance admission must be recovered, **not assumed PASS**.
 All earlier sections describing the ABBA as `UNRUN` represent the
 state at authoring time. They are superseded for this exact source and
 run by the completed outcome above.
+
+## Recovered alternative-VB evidence: avoid duplicate candidates
+
+Before proposing another on-the-fly Vbar scheme, the source-of-truth
+research documents were checked at the same HTRC branch:
+
+- `research/H3_FLAT_SPLIT_STREAMED_VB_2026-11-13.md` documents
+  a completed RTX 5070 Ti **4-head, Tile32, 15,275-token,
+  Balanced/512** synthetic A/B. Full Graph materialized
+  **5.658144 ms** vs split_stream **8.031245 ms**:
+  **+41.94% slower**, full-output bitwise parity PASS.
+  Status **NO_GO for speed at that geometry**. The first-call
+  VRAM delta (320 vs 0 MiB in a shared process) is not
+  isolated proof of model-memory savings.
+- `research/H3_FLAT_FUSED_VB_TILE_2026-11-13.md` documents
+  a completed STRICT independent-capture A/B/B/A on RTX
+  5070 Ti, also **4-head, Tile32, 15,275-token,
+  Balanced/512**. Materialized medians
+  **4.287584 / 4.281728 ms**; fused_vb
+  **13.432864 / 13.512032 ms**. Median control
+  **4.284656 ms**, candidate **13.472448 ms**,
+  fused **3.14435x slower** (+214.43%);
+  two-bank full-output bit parity PASS. The earlier
+  single-order apparent 1.805x fused speedup was
+  NOT replicated and must NOT be resurrected.
+  Status **NO_GO / CLOSED** for that per-leaf
+  in-Tile Vbar recomputation mechanism.
+
+These are NOT 56-head head-to-head tests. Do not compare
+their absolute milliseconds or claim the same slowdown
+at the present 56-head Tile16 geometry.
+
+The new near K8+scale pack measured here is a distinct
+56-head original-vs-candidate result and is likewise
+NO_GO. Avoid three overlapping, already measured
+mechanisms: repeated global K8+scale prepacking,
+separate split-stream Vbar regeneration, and
+one-leaf-at-a-time Vbar recomputation inside Tile.
+
+Future math/kernel work should start with a **written
+ownership / traffic / occupancy model** for a genuinely
+different algorithm, such as cooperative multi-centre
+K/V reuse with *fewer* global materializations and no
+per-centre re-computation. Its expected operation counts
+must be audited against the existing STATS_BT16
+multi-centre reuse (which already loads 16 centres in
+each dot block), and exact topk/near/far softmax
+association must be preserved or explicitly accepted
+under a separately authorized non-bit-exact experiment.
+No such new cooperative kernel or full-output proof
+exists at this closure. No GPU run is requested by
+this evidence recovery.
