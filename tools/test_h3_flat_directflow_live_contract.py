@@ -85,15 +85,30 @@ class LiveDirectFlowContract(unittest.TestCase):
         self.assertIn('tr._quant_key_int8_native[',refresh)
         self.assertIn('tk.copy_(stage["k"][0, :, -count:, :])',refresh)
         replay=graph[graph.index("def _replay("):graph.index("def _measurement(")]
-        self.assertLess(replay.index("_refresh_kv(stage, bank, tr)"),
-                        replay.index('item["graph"].replay()'))
+        replay_ast=ast.parse(replay).body[0]
+        calls=[n for n in ast.walk(replay_ast) if isinstance(n,ast.Call)]
+        refresh_calls=[n for n in calls
+                       if isinstance(n.func,ast.Name) and n.func.id=="_refresh_kv"]
+        graph_replays=[n for n in calls
+                       if isinstance(n.func,ast.Attribute) and n.func.attr=="replay"
+                       and isinstance(n.func.value,ast.Subscript)
+                       and isinstance(n.func.value.value,ast.Name)
+                       and n.func.value.value.id=="item"
+                       and isinstance(n.func.value.slice,ast.Constant)
+                       and n.func.value.slice.value=="graph"]
+        self.assertEqual(len(refresh_calls),1)
+        self.assertEqual(len(graph_replays),1)
+        self.assertLess(refresh_calls[0].lineno,graph_replays[0].lineno)
+        self.assertEqual(
+            [(kw.arg,ast.unparse(kw.value)) for kw in refresh_calls[0].keywords],
+            [("kv_provider","kv_provider")])
         self.assertLess(replay.index('_copy_q(bank[0], geom, item["q"])'),
                         replay.index('item["graph"].replay()'))
         self.assertIn('torch.equal(group_out, eager_out[0])',graph)
-        self.assertIn('if not exact:',graph)
+        self.assertIn('if not exact and not compare_only:',graph)
         self.assertIn('if verify:',graph)
         self.assertIn('quality_coefficient_used":False',graph)
-        self.assertIn('fixed_exact_leaves":256',graph)
+        self.assertIn('fixed_exact_leaves":int(cfg["exact_leaves"])',graph)
         self.assertIn('status":"FAIL_CLOSED"',graph)
 
     def test_cross_stream_staging_dependency(self):
