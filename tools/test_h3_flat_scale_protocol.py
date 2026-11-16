@@ -182,7 +182,21 @@ class ScaleProtocolContracts(unittest.TestCase):
     def test_graph_research_only_relaxes_eager_exact_gate(self):
         graph=(ROOT/"h3"/"htrc_flat_directflow_live.py").read_text(
             encoding="utf-8")
-        self.assertIn('compare_only=False):',graph)
+        # The signature may gain research-only keyword arguments after
+        # compare_only. Inspect the real keyword-only default rather than
+        # requiring compare_only to be the final argument in source text.
+        parsed=ast.parse(graph)
+        methods=[node for node in parsed.body
+                 if isinstance(node,ast.FunctionDef)
+                 and node.name=="graph_attention_bthd"]
+        self.assertEqual(len(methods),1)
+        defaults=dict(zip(
+            (arg.arg for arg in methods[0].args.kwonlyargs),
+            methods[0].args.kw_defaults,
+        ))
+        self.assertIn("compare_only",defaults)
+        self.assertIsInstance(defaults["compare_only"],ast.Constant)
+        self.assertIs(defaults["compare_only"].value,False)
         self.assertIn('if not exact and not compare_only:',graph)
         self.assertIn('"relative_l2_to_eager_flat_percent":rel_l2_pct',graph)
         self.assertIn('"strict_parity_required":not compare_only',graph)
