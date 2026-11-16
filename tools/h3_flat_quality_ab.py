@@ -52,6 +52,22 @@ def _timed(call, rounds):
     }
 
 
+def _graph_attention_inference(torch, flow, bank, *, heads, mode,
+                               tiles, budget_mib, reserve_mib):
+    """Call inference-only HTRC Graph with grad disabled for THIS call.
+
+    This helper is CPU-testable with a fake flow and never changes the
+    caller's global autograd state. The original pilot called the Graph
+    directly in default grad mode, which the runtime rejects.
+    """
+    with torch.inference_mode():
+        return flow.graph_attention_bthd(
+            *bank, heads=heads, mode=mode, tiles=tiles,
+            budget_mib=budget_mib, reserve_mib=reserve_mib,
+            workspace=True, compare_only=True,
+        )
+
+
 def run_case(*, tokens, heads, mode, tiles, rounds, budget_mib,
              reserve_mib, variants, sample_queries=64,
              seed=42026, on_update=None):
@@ -116,10 +132,10 @@ def run_case(*, tokens, heads, mode, tiles, rounds, budget_mib,
                     os.environ["APL_HTRC_DIRECTFLOW_VB_MODE"]=arm
                     torch.cuda.reset_peak_memory_stats()
                     def attention(bank):
-                        return flow.graph_attention_bthd(
-                            *bank,heads=heads,mode=mode,tiles=tiles,
-                            budget_mib=budget_mib,reserve_mib=reserve_mib,
-                            workspace=True,compare_only=True
+                        return _graph_attention_inference(
+                            torch, flow, bank, heads=heads, mode=mode,
+                            tiles=tiles, budget_mib=budget_mib,
+                            reserve_mib=reserve_mib,
                         )
                     saved=[]
                     for bank_index,bank in enumerate(banks):

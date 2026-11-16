@@ -4,9 +4,10 @@ import ast
 from copy import deepcopy
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from benchmark_h3_fast_balanced_dense_quality_pilot import (
-    interpret, MODES, ROUNDS, SEED, TOKENS, HEADS, TILES,
+    interpret, run_gpu, MODES, ROUNDS, SEED, TOKENS, HEADS, TILES,
 )
 ROOT=Path(__file__).resolve().parents[1]
 PILOT=ROOT/'tools'/'benchmark_h3_fast_balanced_dense_quality_pilot.py'
@@ -104,9 +105,91 @@ class NearBudgetQualityCPU(unittest.TestCase):
         self.assertIn('quality_against_exact(',helper)
         self.assertIn('if variants is None or any(',helper)
         self.assertLess(pilot.index('if actual!=args.expect_head:'),
-                        pilot.index('report.update(run_gpu())'))
-        self.assertNotIn('import torch\n',pilot[:pilot.index('def run_gpu():')])
+                        pilot.index('        run_gpu(report)'))
+        self.assertNotIn('import torch\n',pilot[:pilot.index('def run_gpu(report):')])
         self.assertIn("speed_admission':'UNRUN_INDEPENDENT_CAPTURE_ABBA'",pilot)
+
+    def test_inference_helper_disables_grad_and_restores_state(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest('CPU torch unavailable')
+        from h3_flat_quality_ab import _graph_attention_inference
+        class FakeFlow:
+            def graph_attention_bthd(self, *qkv, **kw):
+                self_assert=(
+                    not torch.is_grad_enabled()
+                    and torch.is_inference_mode_enabled()
+                    and kw['compare_only'] is True
+                    and kw['mode']=='balanced'
+                    and len(qkv)==3
+                )
+                if not self_assert:
+                    raise AssertionError('HTRC Graph called with autograd enabled')
+                return 'observed inference mode'
+        previous_grad=torch.is_grad_enabled()
+        with torch.enable_grad():
+            self.assertTrue(torch.is_grad_enabled())
+            result=_graph_attention_inference(
+                torch,FakeFlow(),(1,2,3),heads=56,mode='balanced',
+                tiles=16,budget_mib=1024,reserve_mib=256)
+            self.assertEqual(result,'observed inference mode')
+            self.assertTrue(torch.is_grad_enabled())
+        self.assertEqual(torch.is_grad_enabled(),previous_grad)
+
+    def test_inference_helper_restores_grad_on_graph_error(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest('CPU torch unavailable')
+        from h3_flat_quality_ab import _graph_attention_inference
+        class FakeFlow:
+            def graph_attention_bthd(self, *qkv, **kwargs):
+                if torch.is_grad_enabled():
+                    raise AssertionError('Expected inference mode even on failure')
+                raise RuntimeError('synthetic graph refusal')
+        with torch.enable_grad():
+            with self.assertRaisesRegex(RuntimeError,'synthetic graph refusal'):
+                _graph_attention_inference(
+                    torch,FakeFlow(),(1,2,3),heads=56,mode='fast',
+                    tiles=16,budget_mib=1024,reserve_mib=256)
+            self.assertTrue(torch.is_grad_enabled())
+
+    def test_preserve_both_modes_when_one_arm_has_runtime_error(self):
+        report={'arms':{}}
+        def fake_run_case(*,mode,on_update,**kw):
+            self.assertEqual(kw['variants'],())
+            case_result=case(mode,5 if mode=='balanced' else 8,
+                             70 if mode=='balanced' else 50)
+            if mode=='fast':
+                case_result['status']='PARTIAL_RUNTIME_FAILURE'
+                record=case_result['results']['materialized']
+                record['status']='RUNTIME_FAILED'
+                record['runtime_error']='RuntimeError: H3 Direct-Flow is inference-only'
+            on_update('materialized',case_result['results']['materialized'])
+            return case_result
+        with patch('h3_flat_quality_ab.run_case',side_effect=fake_run_case):
+            with self.assertRaisesRegex(
+                ValueError,"fast: dense quality arm status='PARTIAL_RUNTIME_FAILURE'"):
+                run_gpu(report)
+        self.assertEqual(list(report['arms']),['balanced','fast'])
+        self.assertEqual(report['arms']['balanced']['status'],'MEASURED')
+        self.assertEqual(report['arms']['fast']['status'],'PARTIAL_RUNTIME_FAILURE')
+        self.assertIn('inference-only',
+                      report['arms']['fast']['results']['materialized']['runtime_error'])
+        self.assertIsNone(report['active_mode'])
+        self.assertNotIn('comparison',report)
+
+    def test_interpret_error_names_failed_mode_and_internal_failure(self):
+        arms={'balanced':case('balanced',5,70),'fast':case('fast',8,50)}
+        fast=arms['fast']
+        fast['status']='PARTIAL_RUNTIME_FAILURE'
+        fast['results']['materialized']['status']='RUNTIME_FAILED'
+        fast['results']['materialized']['runtime_error']='RuntimeError: synthetic CUDA failure'
+        with self.assertRaises(ValueError) as caught:
+            interpret(arms)
+        self.assertIn("fast: dense quality arm status=",str(caught.exception))
+        self.assertIn('synthetic CUDA failure',str(caught.exception))
 
     def test_exact_runner_and_one_json(self):
         p=RUNNER.read_text('utf-8')
@@ -120,6 +203,8 @@ class NearBudgetQualityCPU(unittest.TestCase):
         self.assertLess(p.index('test_h3_fast_balanced_dense_quality_pilot_cpu.py'),
                         p.index('& $py -B $benchmark --expect-head'))
         self.assertNotIn('@traceArgs',p)
+        self.assertIn('original error: $($arm.results.materialized.runtime_error)',p)
+        self.assertIn("foreach($mode in @('balanced','fast')){",p)
 
 if __name__=='__main__':
     unittest.main()

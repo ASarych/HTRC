@@ -33,19 +33,35 @@ def interpret(arms):
         raise ValueError('Missing ordered balanced/fast arms')
     a,b=(arms[name] for name in MODES)
     for mode,r in zip(MODES,(a,b)):
-        if (r.get('status')!='MEASURED' or
-            r.get('bank_count')!=2 or
-            r.get('rng_seed')!=SEED or
-            r.get('mode')!=mode or
-            r.get('tokens')!=TOKENS or
-            r.get('heads')!=HEADS or
-            r.get('window_tiles')!=TILES or
-            r.get('sampled_query_positions')!=a.get('sampled_query_positions') or
-            r.get('reference',{}).get('name')!='dense_exact_scaled_dot_product'):
-            raise ValueError('Invalid two-bank dense quality input or geometry')
+        result=r.get('results',{}).get('materialized',{})
+        if r.get('status')!='MEASURED':
+            # run_case intentionally records a CUDA failure inside its
+            # materialized arm rather than raising it. NEVER hide the
+            # underlying cause behind a generic geometry ValueError.
+            reason=result.get('runtime_error') or result.get('cleanup_error')
+            raise ValueError(
+                f"{mode}: dense quality arm status={r.get('status')!r}; "
+                f"materialized_status={result.get('status')!r}; "
+                f"runtime_error={reason!r}")
+        expected={
+            'bank_count':2,'rng_seed':SEED,'mode':mode,'tokens':TOKENS,
+            'heads':HEADS,'window_tiles':TILES,
+        }
+        wrong=[key for key,value in expected.items()
+               if r.get(key)!=value]
+        if r.get('sampled_query_positions')!=a.get('sampled_query_positions'):
+            wrong.append('sampled_query_positions')
+        if r.get('reference',{}).get('name')!='dense_exact_scaled_dot_product':
+            wrong.append('reference.name')
+        if wrong:
+            raise ValueError(f"{mode}: dense quality geometry mismatch fields={wrong!r}")
         x=r.get('results',{})
         if list(x)!=['materialized']:
-            raise ValueError('Unwanted VB experiment or missing materialized Graph')
+            raise ValueError(f"{mode}: missing/extra VB arms: {list(x)!r}")
+        if result.get('status')!='QUALITY_MEASURED':
+            raise ValueError(
+                f"{mode}: materialized quality status={result.get('status')!r}; "
+                f"runtime_error={result.get('runtime_error')!r}")
         q=x['materialized'].get('quality',[])
         if len(q)!=2 or any(not z.get('valid') or not math.isfinite(
                    z.get('relative_l2_percent',float('nan'))) for z in q):
@@ -91,16 +107,33 @@ def interpret(arms):
     }
 
 
-def run_gpu():
+def run_gpu(report):
     # No torch/CUDA import prior to exact pinned git source verification.
+    # Save arm-level progress IN report before interpret can raise. The
+    # previous return expression lost BOTH measured arms on any failure.
     from h3_flat_quality_ab import run_case
-    arms={}
+    arms=report['arms']
     for mode in MODES:
+        report['active_mode']=mode
+
+        def retain_arm(variant, outcome, *, _mode=mode):
+            if variant!='materialized':
+                raise RuntimeError('Closed VB variant unexpectedly executed')
+            # The callback is invoked on start and on completion/failure.
+            # Copy the metadata snapshot; no Q/K/V or output tensors enter JSON.
+            arms[_mode]={
+                'status':'IN_PROGRESS',
+                'mode':_mode,
+                'results':{'materialized':dict(outcome)},
+            }
+
         arms[mode]=run_case(
             tokens=TOKENS,heads=HEADS,mode=mode,tiles=TILES,
             rounds=ROUNDS,budget_mib=1024,reserve_mib=256,
-            variants=(),sample_queries=SAMPLED,seed=SEED)
-    return {'arms':arms,'comparison':interpret(arms)}
+            variants=(),sample_queries=SAMPLED,seed=SEED,
+            on_update=retain_arm)
+    report['active_mode']=None
+    report['comparison']=interpret(arms)
 
 
 def main():
@@ -124,7 +157,7 @@ def main():
         if actual!=args.expect_head:
             raise RuntimeError('Wrong exact source SHA '+actual+' expected '+args.expect_head)
         report['source_head']=actual
-        report.update(run_gpu())
+        run_gpu(report)
         report.update(status='QUALITY_MEASURED_SPEED_PRELIMINARY_ONLY',
                       completed=True)
     except BaseException as exc:

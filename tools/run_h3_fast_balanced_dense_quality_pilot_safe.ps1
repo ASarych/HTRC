@@ -75,6 +75,20 @@ try {
         throw 'Wrong exact-source pilot report schema / safety contract'
     }
     if($r.status -eq 'FAIL_CLOSED'){
+        # The one JSON now retains both arm outputs, including the
+        # original materialized runtime error; do not mask it again.
+        foreach($mode in @('balanced','fast')){
+            $arm=$r.arms.$mode
+            if($null -ne $arm){
+                Write-Host "Arm $mode status: $($arm.status)"
+                if($null -ne $arm.results.materialized){
+                    Write-Host "  materialized: $($arm.results.materialized.status)"
+                    if($arm.results.materialized.runtime_error){
+                        Write-Host "  original error: $($arm.results.materialized.runtime_error)"
+                    }
+                }
+            }
+        }
         Write-Host $r.error
         Write-Host $r.traceback_tail
         throw 'Pilot FAIL_CLOSED; inspect ONE JSON'
