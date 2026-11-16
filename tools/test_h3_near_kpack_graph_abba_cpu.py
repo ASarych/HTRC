@@ -44,11 +44,22 @@ class NearKGraphABBAContract(unittest.TestCase):
         self.assertFalse(d['promising_full_graph_signal'])
 
     def test_worst_pair_blocks_spurious_median_gain(self):
-        d=decide_abba(blocks(67.0,62.0,64.3,68.5))
+        # Candidate capture drift must be <=3% to isolate the *worst pair*
+        # gate. 62.0 -> 64.3 ms would exceed 3%, making this INCONCLUSIVE.
+        d=decide_abba(blocks(67.0,62.0,63.8,68.5))
         self.assertTrue(d['strict_capture_stability'])
         self.assertGreater(d['median_full_graph_reduction_pct'],5)
         self.assertLess(d['worst_pair_full_graph_reduction_pct'],5)
         self.assertEqual(d['decision'],'NO_GO_FULL_GRAPH')
+
+    def test_unstable_candidate_inconclusive_even_if_median_fast(self):
+        # Preserve the former fixture as a real, distinct 3% drift test;
+        # it must NOT be reported as a stable speed comparison.
+        d=decide_abba(blocks(67.0,62.0,64.3,68.5))
+        self.assertFalse(d['strict_capture_stability'])
+        self.assertGreater(d['median_full_graph_reduction_pct'],5)
+        self.assertEqual(d['decision'],'INCONCLUSIVE_CAPTURE_DRIFT')
+        self.assertFalse(d['promising_full_graph_signal'])
 
     def test_unstable_controls_inconclusive(self):
         d=decide_abba(blocks(66.0,60.0,60.1,76.0))
