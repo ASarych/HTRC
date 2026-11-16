@@ -95,7 +95,8 @@ class TraceCPU(unittest.TestCase):
         plain = [i for i, line in enumerate(lines) if line.strip() == no_trace]
         self.assertEqual(len(found), 1)
         self.assertEqual(len(plain), 1)
-        self.assertEqual(lines[found[0]-1].strip(), 'if ($GraphStageTrace) {')
+        self.assertIn(lines[found[0]-1].strip(),
+                      ('if ($GraphStageTrace) {', '} elseif ($GraphStageTrace) {'))
         self.assertEqual(lines[plain[0]-1].strip(), '} else {')
         self.assertLess(found[0], plain[0])
         self.assertIn('    $benchmark = Join-Path $tmp ', runner)

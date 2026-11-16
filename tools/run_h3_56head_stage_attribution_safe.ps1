@@ -3,7 +3,8 @@ param(
     [ValidatePattern('^[0-9a-f]{40}$')]
     [string]$ExactHead,
     [switch]$IClosedOtherGpuWorkloads,
-    [switch]$GraphStageTrace
+    [switch]$GraphStageTrace,
+    [switch]$GraphKernelProfile
 )
 
 # Research-only full 56-head Graph and separate eager stage event attribution.
@@ -12,7 +13,12 @@ $ErrorActionPreference = 'Stop'
 $repo = 'D:\HTRC-graph-group-ab-20261113'
 $branch = 'experiment/flat-memory-to-speed-balanced-20261113'
 $py = 'C:\Users\Misya\AppData\Local\Comfy-Desktop\ComfyUI-Installs\Misyau\ComfyUI\.venv\Scripts\python.exe'
-$output = if ($GraphStageTrace) {
+if ($GraphStageTrace -and $GraphKernelProfile) {
+    throw 'Choose only one Graph diagnostic mode: stage trace OR kernel profiler'
+}
+$output = if ($GraphKernelProfile) {
+    'D:\ComfyOutput\H3\math_probe\flat_56head_graph_kernel_profile.json'
+} elseif ($GraphStageTrace) {
     'D:\ComfyOutput\H3\math_probe\flat_56head_graph_stage_trace.json'
 } else {
     'D:\ComfyOutput\H3\math_probe\flat_56head_stage_attribution.json'
@@ -58,7 +64,8 @@ try {
     foreach ($suite in @('test_h3_56head_stage_attribution_cpu.py',
                          'test_h3_flat_directflow_live_contract.py',
                          'test_h3_graph_group_plan.py',
-                         'test_htrc_graph_stage_trace_cpu.py')) {
+                         'test_htrc_graph_stage_trace_cpu.py',
+                         'test_htrc_graph_kernel_profile_cpu.py')) {
         & $py -B -m unittest discover -s (Join-Path $tmp 'tools') -p $suite -v
         if ($LASTEXITCODE -ne 0) { throw "CPU/source suite $suite failed; CUDA not started" }
     }
@@ -66,7 +73,9 @@ try {
     # A scalar string splatted with @name becomes separate CLI characters.
     # Use two explicit invocations so the opt-in flag is ONE argument.
     $benchmark = Join-Path $tmp 'tools\benchmark_h3_56head_stage_attribution.py'
-    if ($GraphStageTrace) {
+    if ($GraphKernelProfile) {
+        & $py -B $benchmark --expect-head $ExactHead --output $output --quiet-confirmed --rounds 7 --warmups 5 --graph-kernel-profile
+    } elseif ($GraphStageTrace) {
         & $py -B $benchmark --expect-head $ExactHead --output $output --quiet-confirmed --rounds 7 --warmups 5 --graph-stage-trace
     } else {
         & $py -B $benchmark --expect-head $ExactHead --output $output --quiet-confirmed --rounds 7 --warmups 5
@@ -82,7 +91,9 @@ try {
         Write-Host $report.traceback_tail
         throw 'FAIL_CLOSED: see real Python error above'
     }
-    $accepted = if ($GraphStageTrace) {
+    $accepted = if ($GraphKernelProfile) {
+        'PASS_GRAPH_KERNEL_PROFILE_DIAGNOSTIC_ONLY'
+    } elseif ($GraphStageTrace) {
         'PASS_GRAPH_BOUNDARY_TRACE_DIAGNOSTIC_ONLY'
     } else { 'PASS_ATTRIBUTION_ONLY' }
     if ($report.schema -ne 'htrc-56head-graph-eager-stage-attribution-v1' -or
@@ -100,6 +111,23 @@ try {
     }
     if ($report.graph_stage_trace_requested -ne [bool]$GraphStageTrace) {
         throw 'Graph trace opt-in flag mismatch'
+    }
+    if ($report.graph_kernel_profile_requested -ne [bool]$GraphKernelProfile) {
+        throw 'Kernel profiler opt-in flag mismatch'
+    }
+    if ($GraphKernelProfile) {
+        $profile = $report.graph_kernel_profile
+        if ($profile.status -ne 'PASS_PROFILED_CUDA_ACTIVITIES_NOT_SPEED_ADMISSION' -or
+            $profile.full_output_bit_exact -ne $true -or
+            $profile.cuda_activity_count -le 0 -or
+            $profile.gpu_device_activity_total_ms -le 0 -or
+            $profile.not_production_speedup_evidence -ne $true -or
+            $profile.all_cpu_events_excluded -ne $true) {
+            throw 'Incomplete profiled Graph internal activity report'
+        }
+        Write-Host "CUDA kernel activities: $($profile.cuda_activity_count)"
+        Write-Host "Unclassified kernel time: $($profile.unclassified_device_activity_pct)%"
+        Write-Host "Profiler overhead >20%: $($profile.profiled_execution_more_than_20pct_slowdown)"
     }
     if ($GraphStageTrace) {
         $trace = $report.graph_stage_trace

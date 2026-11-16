@@ -43,6 +43,9 @@ def validate_request(args):
         raise ValueError('Pinned 56-head attribution requires 7 rounds, 5 warmups')
     if not args.quiet_confirmed:
         raise ValueError('Explicit quiet-GPU confirmation required')
+    if (getattr(args, 'graph_kernel_profile', False) and
+            getattr(args, 'graph_stage_trace', False)):
+        raise ValueError('Graph boundary and kernel profiling are exclusive')
     if len(args.expect_head) != 40 or any(c not in '0123456789abcdef' for c in args.expect_head):
         raise ValueError('Expected lowercase 40-hex exact HEAD')
 
@@ -206,6 +209,13 @@ def run_gpu(args, report):
             # This is distinct from graph timing; profile intervals never treated as graph internals.
             graph_out = graph_call()
             torch.cuda.synchronize(device)
+            if args.graph_kernel_profile:
+                # After two-bank strict bitwise parity and seven ordinary
+                # Graph samples. One separate profiled full Graph call.
+                from htrc_graph_kernel_profile import profile_one_verified_graph_call
+                report['graph_kernel_profile'] = profile_one_verified_graph_call(
+                    torch, graph_call, graph_out,
+                    unprofiled_gpu_median_ms=report['warmed_graph']['gpu_event_median_ms'])
             if args.graph_stage_trace:
                 # Only after BOTH strict-bank numerical gates and normal
                 # uninstrumented Graph timing. No modifications to h3/ math.
@@ -226,8 +236,10 @@ def run_gpu(args, report):
             report['independent_full_output_bit_exact'] = bool(torch.equal(graph_out, eager_out))
             if not report['independent_full_output_bit_exact']:
                 raise AssertionError('Independent final 56-head full Graph/Eager output differed')
-            report['status'] = ('PASS_GRAPH_BOUNDARY_TRACE_DIAGNOSTIC_ONLY'
-                                if args.graph_stage_trace else 'PASS_ATTRIBUTION_ONLY')
+            report['status'] = ('PASS_GRAPH_KERNEL_PROFILE_DIAGNOSTIC_ONLY'
+                                if args.graph_kernel_profile else
+                                ('PASS_GRAPH_BOUNDARY_TRACE_DIAGNOSTIC_ONLY'
+                                 if args.graph_stage_trace else 'PASS_ATTRIBUTION_ONLY'))
             report['completed'] = True
     finally:
         try:
@@ -250,6 +262,8 @@ def main():
     ap.add_argument('--warmups', type=int, default=WARMUPS)
     ap.add_argument('--graph-stage-trace', action='store_true',
                     help='Research-only CUDA Events around existing Graph call boundaries')
+    ap.add_argument('--graph-kernel-profile', action='store_true',
+                    help='One post-parity PyTorch GPU kernel activity profile; NOT speed A/B')
     args = ap.parse_args()
     result = {'schema': SCHEMA, 'status': 'FAIL_CLOSED', 'completed': False,
               'source_head': None, 'input_kind': 'SYNTHETIC_DISTINCT_BF16_NO_MODEL',
@@ -259,6 +273,8 @@ def main():
               'warmed_graph': None, 'eager_stage_attribution': None,
               'graph_stage_trace_requested': bool(args.graph_stage_trace),
               'graph_stage_trace': None,
+              'graph_kernel_profile_requested': bool(args.graph_kernel_profile),
+              'graph_kernel_profile': None,
               'h3_model_or_video': 'UNRUN', 'production_promotion': 'PROHIBITED_RESEARCH_ONLY',
               'not_a_graph_internal_stage_profile': True,
               'no_new_kernel_or_dispatch_change': True}
@@ -276,7 +292,8 @@ def main():
     _write_one(args.output, result)
     print(f'one_json={args.output} status={result["status"]} numeric={result["numeric_gate"]}')
     return 0 if result['status'] in (
-        'PASS_ATTRIBUTION_ONLY', 'PASS_GRAPH_BOUNDARY_TRACE_DIAGNOSTIC_ONLY') else 2
+        'PASS_ATTRIBUTION_ONLY', 'PASS_GRAPH_BOUNDARY_TRACE_DIAGNOSTIC_ONLY',
+        'PASS_GRAPH_KERNEL_PROFILE_DIAGNOSTIC_ONLY') else 2
 
 
 if __name__ == '__main__':
